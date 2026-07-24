@@ -7,7 +7,7 @@
 //! effect instantly without a restart; changing the *topology* (which lights,
 //! where) requires a stop/start, which the UI does for you.
 
-use crate::capture::{FrameSource, XcapSource};
+use crate::capture::{check_monitor_index, FrameSource, XcapSource};
 use lueur_core::config::AppConfig;
 use lueur_core::engine::{Ambilight, EngineSettings};
 use lueur_core::geometry::zone_for_light;
@@ -90,10 +90,11 @@ pub fn start(config: &AppConfig) -> Result<Handle, String> {
         return Err("no lights are bound to a bulb — assign bulbs in the Devices tab".into());
     }
 
-    // Bring up the capture source before touching the network, so a bad monitor
-    // choice fails fast without leaving bulbs in music mode.
-    let source =
-        XcapSource::for_index(config.capture.monitor_index).map_err(|e| e.to_string())?;
+    // Validate the monitor choice before touching the network, so a bad one
+    // fails fast without leaving bulbs in music mode. The source itself is
+    // opened on the capture thread: its handle is not `Send`.
+    let monitor_index = config.capture.monitor_index;
+    check_monitor_index(monitor_index)?;
 
     // Establish music mode for each bulb. We tolerate individual failures (a
     // bulb may be off) as long as at least one connects.
@@ -130,7 +131,19 @@ pub fn start(config: &AppConfig) -> Result<Handle, String> {
         let stop = Arc::clone(&stop);
         std::thread::Builder::new()
             .name("lueur-ambilight".into())
-            .spawn(move || run_loop(source, connected, live, stop, frame_budget))
+            .spawn(move || {
+                // Opened here, not in `start`: the capture handle stays on this
+                // thread for its whole life.
+                let source = match XcapSource::for_index(monitor_index) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("lueur: capture unavailable: {e}");
+                        stop.store(true, Ordering::SeqCst);
+                        return;
+                    }
+                };
+                run_loop(source, connected, live, stop, frame_budget)
+            })
             .map_err(|e| format!("failed to spawn ambilight thread: {e}"))?
     };
 

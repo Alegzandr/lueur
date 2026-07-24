@@ -15,7 +15,11 @@ use lueur_core::engine::{Frame, PixelFormat};
 use xcap::Monitor;
 
 /// Something the ambilight loop can pull frames from.
-pub trait FrameSource: Send {
+///
+/// Deliberately *not* `Send`: platform capture handles (a Windows `HMONITOR`, a
+/// macOS display ref) are raw pointers and stay on the thread that opened them.
+/// The loop builds its source inside the capture thread — see [`XcapSource`].
+pub trait FrameSource {
     /// Grab the current screen contents as an RGBA frame.
     fn grab(&mut self) -> Result<Frame, String>;
 }
@@ -46,7 +50,25 @@ pub fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
     Ok(out)
 }
 
+/// Check that a monitor exists at `index` without holding onto it.
+///
+/// Lets the caller fail fast on a stale monitor choice from a thread that will
+/// never own the capture handle (see [`FrameSource`]).
+pub fn check_monitor_index(index: usize) -> Result<(), String> {
+    let monitors = Monitor::all().map_err(|e| format!("failed to list monitors: {e}"))?;
+    if monitors.is_empty() {
+        return Err("no monitors detected".into());
+    }
+    if index >= monitors.len() {
+        return Err(format!("monitor #{index} not found"));
+    }
+    Ok(())
+}
+
 /// A [`FrameSource`] backed by one `xcap` monitor.
+///
+/// Build this on the thread that will pull frames from it — the underlying
+/// handle is not thread-safe.
 pub struct XcapSource {
     monitor: Monitor,
 }
