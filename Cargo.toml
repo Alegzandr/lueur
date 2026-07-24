@@ -1,0 +1,24 @@
+# Cargo workspace for Lueur.
+#
+# `lueur-core` is a dependency-light, GUI-free crate that holds all the logic
+# we want to unit-test in isolation (room geometry, the Yeelight protocol,
+# colour processing, the ambilight engine and config persistence).
+#
+# `src-tauri` is the desktop shell. It depends on `lueur-core` and wires it up
+# to real screen capture (xcap) and the Tauri webview. It is intentionally kept
+# thin so that the interesting, security-sensitive logic lives in the core crate
+# where it can be tested without a display server or webview.
+[workspace]
+resolver = "2"
+members = ["crates/lueur-core", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Lueur contributors"]
+rust-version = "1.77"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

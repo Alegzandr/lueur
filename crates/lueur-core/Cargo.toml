@@ -1,0 +1,16 @@
+[package]
+name = "lueur-core"
+description = "Core logic for the Lueur ambilight app: geometry, Yeelight protocol, colour engine and config."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints.rust]
+# The core crate is security-sensitive; be strict about the obvious footguns.
+unsafe_code = "forbid"
