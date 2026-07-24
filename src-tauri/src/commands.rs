@@ -22,6 +22,26 @@ pub struct EffectStatus {
     pub connected_lights: usize,
 }
 
+/// Outcome of a bulk power command. Individual bulbs are allowed to fail (one
+/// may be unplugged); the UI reports the tally rather than erroring out.
+#[derive(serde::Serialize)]
+pub struct PowerResult {
+    pub total: usize,
+    pub succeeded: usize,
+    /// Human-readable "name (ip): reason" entries for the bulbs that failed.
+    pub failures: Vec<String>,
+}
+
+/// How long we give a single bulb to accept a power command.
+const POWER_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Blocking helper: open a control connection and flip the bulb's power.
+fn power_one(ip: &str, port: u16, on: bool) -> Result<(), String> {
+    let mut ctrl = YeelightControl::connect(ip, port, POWER_TIMEOUT)
+        .map_err(|e| format!("connect failed: {e}"))?;
+    ctrl.set_power(on).map_err(|e| e.to_string())
+}
+
 /// Return the current configuration.
 #[tauri::command]
 pub fn get_config(state: State<AppState>) -> Result<AppConfig, String> {
@@ -96,6 +116,92 @@ pub async fn test_device(
     })
     .await
     .map_err(|e| format!("test task failed: {e}"))?
+}
+
+/// Turn a single bulb on or off by address. Used by the per-light power button
+/// and by anything that knows an address but not a room light.
+#[tauri::command]
+pub async fn set_device_power(ip: String, port: Option<u16>, on: bool) -> Result<(), String> {
+    validate_ip(&ip)?;
+    let port = port.unwrap_or(yeelight::DEFAULT_CONTROL_PORT);
+    tauri::async_runtime::spawn_blocking(move || power_one(&ip, port, on))
+        .await
+        .map_err(|e| format!("power task failed: {e}"))?
+}
+
+/// Turn the bulb bound to a room light on or off.
+///
+/// Resolving the binding here (rather than in the UI) keeps the address the
+/// backend acts on the one it persisted itself.
+#[tauri::command]
+pub async fn set_light_power(
+    state: State<'_, AppState>,
+    light_id: String,
+    on: bool,
+) -> Result<(), String> {
+    let binding = {
+        let cfg = state.config.lock().map_err(|_| "config lock poisoned")?;
+        cfg.binding_for(&light_id)
+            .cloned()
+            .ok_or_else(|| format!("no bulb bound to light {light_id}"))?
+    };
+    validate_ip(&binding.ip)?;
+    tauri::async_runtime::spawn_blocking(move || power_one(&binding.ip, binding.port, on))
+        .await
+        .map_err(|e| format!("power task failed: {e}"))?
+}
+
+/// Turn every bound bulb on or off at once.
+///
+/// Turning everything off stops the effect first: the running loop would keep
+/// streaming colours (and its shutdown fade would light the bulbs back up),
+/// so an "all off" that left it running wouldn't stick.
+#[tauri::command]
+pub async fn set_all_power(state: State<'_, AppState>, on: bool) -> Result<PowerResult, String> {
+    if !on {
+        stop_effect(state.clone()).await?;
+    }
+
+    let bindings = {
+        let cfg = state.config.lock().map_err(|_| "config lock poisoned")?;
+        cfg.bindings.clone()
+    };
+    if bindings.is_empty() {
+        return Err("no bulbs are bound — add bulbs in the Devices tab".into());
+    }
+
+    // One thread per bulb: a bulb that is unplugged costs the full timeout, and
+    // serialising those would make a handful of dead bulbs feel like a hang.
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let outcomes: Vec<Result<(), String>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = bindings
+                .iter()
+                .map(|b| {
+                    scope.spawn(move || {
+                        validate_ip(&b.ip)?;
+                        power_one(&b.ip, b.port, on)
+                            .map_err(|e| format!("{} ({}): {e}", b.name, b.ip))
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap_or_else(|_| Err("power thread panicked".into())))
+                .collect()
+        });
+
+        let total = outcomes.len();
+        let failures: Vec<String> = outcomes.into_iter().filter_map(|r| r.err()).collect();
+        PowerResult {
+            total,
+            succeeded: total - failures.len(),
+            failures,
+        }
+    })
+    .await
+    .map_err(|e| format!("power task failed: {e}"))?;
+
+    Ok(result)
 }
 
 /// Start the ambilight effect from the saved config.

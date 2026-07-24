@@ -3,7 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
     <title>Lueur</title>
+    <!-- Paints the window dark on the very first frame, before the stylesheet
+         lands. Without it the app flashes white on launch. -->
+    <style>
+      html {
+        background: #0e0e10;
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>

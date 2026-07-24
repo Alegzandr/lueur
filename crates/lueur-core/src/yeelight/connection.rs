@@ -13,7 +13,7 @@
 //!   rate limit** on this channel, which is what makes fluid ambilight possible.
 
 use super::protocol::{self, Effect};
-use crate::color::Rgb;
+use crate::color::{BulbOutput, Rgb, MAX_BRIGHT, MIN_BRIGHT};
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -155,6 +155,106 @@ impl MusicConnection {
         let line = protocol::set_bright(next_id(), brightness, effect, duration_ms);
         self.stream.write_all(line.as_bytes())?;
         self.stream.flush()
+    }
+
+    /// Set a white colour temperature (Kelvin) on the music channel.
+    pub fn set_ct(&mut self, kelvin: u16, effect: Effect, duration_ms: u32) -> io::Result<()> {
+        let line = protocol::set_ct_abx(next_id(), kelvin, effect, duration_ms);
+        self.stream.write_all(line.as_bytes())?;
+        self.stream.flush()
+    }
+
+    /// Push one [`BulbOutput`] — the correct pairing of chromaticity and
+    /// brightness for this bulb.
+    ///
+    /// `last` is the previously-sent output for this bulb (if any) and is used to
+    /// skip redundant commands: brightness and colour temperature only move when
+    /// they actually change, so a steady scene costs one `set_rgb` per frame
+    /// rather than three commands.
+    ///
+    /// Returns whether anything was actually sent, so a caller can tell a quiet
+    /// frame from a busy one.
+    pub fn push(
+        &mut self,
+        output: BulbOutput,
+        last: Option<BulbOutput>,
+        effect: Effect,
+        duration_ms: u32,
+    ) -> io::Result<()> {
+        if bright_needs_update(last.map(BulbOutput::bright), output.bright()) {
+            self.set_bright(output.bright(), effect, duration_ms)?;
+        }
+        match output {
+            BulbOutput::Color { rgb, .. } => self.set_rgb(rgb, effect, duration_ms),
+            BulbOutput::White { kelvin, .. } => {
+                // Re-sending the same temperature every frame would be pure
+                // noise; the bulb holds it until we change modes.
+                match last {
+                    Some(BulbOutput::White { kelvin: k, .. }) if k == kelvin => Ok(()),
+                    _ => self.set_ct(kelvin, effect, duration_ms),
+                }
+            }
+        }
+    }
+}
+
+/// Smallest brightness change worth a command, in percentage points.
+///
+/// Brightness is derived from a frame average, so it jitters by a point or two
+/// even on still content. Without a deadband that jitter becomes a `set_bright`
+/// every frame, racing the `set_rgb` stream and visibly destabilising the bulb.
+/// A 1-point error is imperceptible; a command storm is not.
+pub const BRIGHT_DEADBAND: u8 = 2;
+
+/// Whether a brightness change is worth sending.
+fn bright_needs_update(last: Option<u8>, next: u8) -> bool {
+    match last {
+        None => true,
+        // Always honour the extremes: they are what "off-dark" and "full" look
+        // like, and a deadband must never leave the bulb stranded short of them.
+        Some(prev) => {
+            next != prev
+                && (next == MIN_BRIGHT
+                    || next == MAX_BRIGHT
+                    || prev.abs_diff(next) >= BRIGHT_DEADBAND)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_brightness_always_sends() {
+        assert!(bright_needs_update(None, 50));
+    }
+
+    #[test]
+    fn identical_brightness_is_skipped() {
+        assert!(!bright_needs_update(Some(50), 50));
+    }
+
+    #[test]
+    fn single_point_jitter_is_absorbed() {
+        // The command storm this prevents is what destabilises the bulb.
+        assert!(!bright_needs_update(Some(50), 51));
+        assert!(!bright_needs_update(Some(50), 49));
+    }
+
+    #[test]
+    fn real_movement_gets_through() {
+        assert!(bright_needs_update(Some(50), 52));
+        assert!(bright_needs_update(Some(50), 48));
+        assert!(bright_needs_update(Some(50), 90));
+    }
+
+    #[test]
+    fn extremes_are_never_absorbed() {
+        // Drifting to 2 and stopping would leave the bulb visibly glowing when
+        // the scene is black; same story at the top of the range.
+        assert!(bright_needs_update(Some(2), MIN_BRIGHT));
+        assert!(bright_needs_update(Some(99), MAX_BRIGHT));
     }
 }
 

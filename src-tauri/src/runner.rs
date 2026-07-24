@@ -10,9 +10,9 @@
 use crate::capture::{check_monitor_index, FrameSource, XcapSource};
 use lueur_core::config::AppConfig;
 use lueur_core::engine::{Ambilight, EngineSettings};
-use lueur_core::geometry::zone_for_light;
+use lueur_core::geometry::{map_light, LightMapping};
+use lueur_core::color::BulbOutput;
 use lueur_core::yeelight::{Effect, MusicConnection};
-use lueur_core::{Rgb, SampleZone};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -64,8 +64,11 @@ impl Drop for Handle {
 
 /// One connected, ready-to-drive light.
 struct ConnectedLight {
-    zone: SampleZone,
+    mapping: LightMapping,
     conn: MusicConnection,
+    /// What we last pushed, so brightness and colour temperature are only re-sent
+    /// when they actually move.
+    last: Option<BulbOutput>,
 }
 
 /// Start the ambilight effect from `config`.
@@ -74,15 +77,14 @@ struct ConnectedLight {
 /// or none of the bulbs accept a music-mode connection.
 pub fn start(config: &AppConfig) -> Result<Handle, String> {
     // Resolve the enabled lights that have a device binding, in room order, and
-    // compute each one's screen sample zone.
-    let mut targets: Vec<(SampleZone, &lueur_core::config::DeviceBinding)> = Vec::new();
+    // compute each one's screen mapping (zone plus distance shaping).
+    let mut targets: Vec<(LightMapping, &lueur_core::config::DeviceBinding)> = Vec::new();
     for light in &config.room.lights {
         if !light.enabled {
             continue;
         }
         if let Some(binding) = config.binding_for(&light.id) {
-            let zone = zone_for_light(&config.room.screen, light).0;
-            targets.push((zone, binding));
+            targets.push((map_light(&config.room.screen, light), binding));
         }
     }
 
@@ -101,9 +103,13 @@ pub fn start(config: &AppConfig) -> Result<Handle, String> {
     let handshake = Duration::from_secs(3);
     let mut connected: Vec<ConnectedLight> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
-    for (zone, binding) in targets {
+    for (mapping, binding) in targets {
         match MusicConnection::establish(&binding.ip, binding.port, handshake) {
-            Ok(conn) => connected.push(ConnectedLight { zone, conn }),
+            Ok(conn) => connected.push(ConnectedLight {
+                mapping,
+                conn,
+                last: None,
+            }),
             Err(e) => errors.push(format!("{} ({}): {e}", binding.name, binding.ip)),
         }
     }
@@ -155,6 +161,27 @@ pub fn start(config: &AppConfig) -> Result<Handle, String> {
     })
 }
 
+/// Fit a transition into the time available before the next frame replaces it.
+///
+/// The user's transition setting is an upper bound on *smoothness*, not a
+/// promise the bulb can keep: at 60 fps there are only ~17 ms between commands.
+/// Anything longer is cut short by the next write, so we shorten it ourselves —
+/// and when even Yeelight's 30 ms floor doesn't fit, we drop to `Sudden`. The
+/// engine's own temporal smoothing is what makes the result look gradual;
+/// asking the bulb to also interpolate just makes the two fight.
+fn pace(effect: Effect, duration_ms: u32, frame_budget: Duration) -> (Effect, u32) {
+    if effect == Effect::Sudden {
+        return (Effect::Sudden, 0);
+    }
+    let budget = frame_budget.as_millis().min(u32::MAX as u128) as u32;
+    let fitted = duration_ms.min(budget);
+    if fitted < lueur_core::yeelight::MIN_SMOOTH_DURATION_MS {
+        (Effect::Sudden, 0)
+    } else {
+        (Effect::Smooth, fitted)
+    }
+}
+
 fn run_loop(
     mut source: XcapSource,
     mut lights: Vec<ConnectedLight>,
@@ -179,22 +206,34 @@ fn run_loop(
         let settings = live.lock().map(|g| *g).unwrap_or(initial);
         engine.set_settings(settings.engine);
 
+        // A bulb transition must finish before the next command replaces it.
+        // Left unclamped, a 300 ms fade issued every 17 ms is overwritten 18
+        // times before it lands, and the bulb ends up chasing a target it never
+        // reaches — which reads as fast, erratic colour swings.
+        let (effect, duration_ms) = pace(settings.effect, settings.duration_ms, frame_budget);
+
         match source.grab() {
             Ok(frame) => {
-                let zones: Vec<SampleZone> = lights.iter().map(|l| l.zone).collect();
-                let colors: Vec<Rgb> = engine.process(&frame, &zones);
+                let mappings: Vec<LightMapping> = lights.iter().map(|l| l.mapping).collect();
+                let outputs = engine.process_outputs(&frame, &mappings);
                 for (i, light) in lights.iter_mut().enumerate() {
                     if !alive[i] {
                         continue;
                     }
-                    let color = colors.get(i).copied().unwrap_or(Rgb::BLACK);
+                    let Some(&output) = outputs.get(i) else { continue };
+                    // Chromaticity and brightness must both be pushed: `set_rgb`
+                    // alone only carries hue, so a dark scene would otherwise
+                    // stay at whatever brightness the bulb happened to have.
                     if light
                         .conn
-                        .set_rgb(color, settings.effect, settings.duration_ms)
+                        .push(output, light.last, effect, duration_ms)
                         .is_err()
                     {
                         // Bulb dropped; stop trying to write to it.
                         alive[i] = false;
+                        light.last = None;
+                    } else {
+                        light.last = Some(output);
                     }
                 }
                 if alive.iter().all(|&a| !a) {
@@ -216,10 +255,52 @@ fn run_loop(
     }
 
     // On stop, fade the bulbs to a gentle warm glow and leave them on, so the
-    // room stays cosy rather than snapping to black.
+    // room stays cosy rather than snapping to black. Brightness has to be set
+    // explicitly: the effect may have ended on a dark frame, and the bulb would
+    // otherwise hold that 1-2% brightness and look off.
     for light in lights.iter_mut() {
-        let _ = light
-            .conn
-            .set_rgb(Rgb::new(255, 147, 41), Effect::Smooth, 400);
+        let _ = light.conn.set_bright(40, Effect::Smooth, 400);
+        let _ = light.conn.set_ct(2700, Effect::Smooth, 400);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fps(n: u64) -> Duration {
+        Duration::from_secs_f64(1.0 / n as f64)
+    }
+
+    #[test]
+    fn sudden_stays_sudden() {
+        assert_eq!(pace(Effect::Sudden, 300, fps(30)), (Effect::Sudden, 0));
+    }
+
+    #[test]
+    fn transition_is_cut_to_the_frame_interval() {
+        // The reported bug: 300 ms fades issued every ~17 ms at 60 fps.
+        assert_eq!(pace(Effect::Smooth, 300, fps(60)), (Effect::Sudden, 0));
+        // 30 fps leaves 33 ms, which clears Yeelight's 30 ms floor.
+        assert_eq!(pace(Effect::Smooth, 300, fps(30)), (Effect::Smooth, 33));
+    }
+
+    #[test]
+    fn a_short_request_is_left_alone() {
+        // Well inside a 10 fps budget (100 ms): nothing to clamp.
+        assert_eq!(pace(Effect::Smooth, 80, fps(10)), (Effect::Smooth, 80));
+    }
+
+    #[test]
+    fn never_emits_a_smooth_below_the_protocol_floor() {
+        for f in [15u64, 24, 30, 45, 60, 90, 120] {
+            let (effect, ms) = pace(Effect::Smooth, 300, fps(f));
+            if effect == Effect::Smooth {
+                assert!(
+                    ms >= lueur_core::yeelight::MIN_SMOOTH_DURATION_MS,
+                    "{f} fps produced a {ms} ms smooth"
+                );
+            }
+        }
     }
 }

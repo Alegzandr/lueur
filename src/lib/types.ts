@@ -23,6 +23,9 @@ export interface Light {
   id: string;
   name: string;
   pos: Vec2;
+  /** 0 = floor, 1 = ceiling, 0.5 = level with the screen. Selects the
+   *  horizontal band of the picture this light mirrors. */
+  height: number;
   zone_override: SampleZone | null;
   enabled: boolean;
 }
@@ -53,6 +56,8 @@ export interface EngineSettings {
   saturation: number;
   sample_step: number;
   black_threshold: number;
+  white_threshold: number;
+  white_kelvin: number;
 }
 
 export type Effect = "smooth" | "sudden";
@@ -102,6 +107,12 @@ export interface EffectStatus {
   connected_lights: number;
 }
 
+export interface PowerResult {
+  total: number;
+  succeeded: number;
+  failures: string[];
+}
+
 // A sensible default config used when running outside Tauri (browser preview)
 // or before the backend responds.
 export function defaultConfig(): AppConfig {
@@ -125,6 +136,8 @@ export function defaultConfig(): AppConfig {
       saturation: 0.35,
       sample_step: 4,
       black_threshold: 6,
+      white_threshold: 0.18,
+      white_kelvin: 4000,
     },
     transition: { effect: "smooth", duration_ms: 80 },
     behavior: {

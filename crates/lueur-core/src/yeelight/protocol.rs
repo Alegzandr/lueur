@@ -58,6 +58,20 @@ pub fn set_rgb(id: u32, color: Rgb, effect: Effect, duration_ms: u32) -> String 
     )
 }
 
+/// `set_ct_abx`: set a white colour temperature in Kelvin (1700..=6500).
+///
+/// Unlike [`set_rgb`], this drives the bulb's calibrated white point, so a grey
+/// scene renders as an actual neutral white rather than an uncalibrated RGB mix.
+pub fn set_ct_abx(id: u32, kelvin: u16, effect: Effect, duration_ms: u32) -> String {
+    let k = kelvin.clamp(crate::color::MIN_KELVIN, crate::color::MAX_KELVIN);
+    let duration = normalise_duration(effect, duration_ms);
+    encode(
+        id,
+        "set_ct_abx",
+        serde_json::json!([k, effect.as_str(), duration]),
+    )
+}
+
 /// `set_bright`: set brightness (1..=100).
 pub fn set_bright(id: u32, brightness: u8, effect: Effect, duration_ms: u32) -> String {
     let b = brightness.clamp(1, 100);
@@ -218,6 +232,16 @@ mod tests {
     #[test]
     fn set_rgb_ends_with_crlf() {
         assert!(set_rgb(1, Rgb::BLACK, Effect::Sudden, 0).ends_with("\r\n"));
+    }
+
+    #[test]
+    fn set_ct_abx_clamps_kelvin() {
+        assert!(set_ct_abx(1, 900, Effect::Sudden, 0).contains("[1700,\"sudden\",0]"));
+        assert!(set_ct_abx(1, 9000, Effect::Sudden, 0).contains("[6500,\"sudden\",0]"));
+        assert_eq!(
+            set_ct_abx(4, 4000, Effect::Smooth, 80),
+            "{\"id\":4,\"method\":\"set_ct_abx\",\"params\":[4000,\"smooth\",80]}\r\n"
+        );
     }
 
     #[test]

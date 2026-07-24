@@ -1,29 +1,29 @@
 <script lang="ts">
-  import { config, updateConfig, notify, errMsg } from "../stores";
+  import {
+    config,
+    updateConfig,
+    notify,
+    errMsg,
+    discovered,
+    hasScanned,
+    scanning,
+    scanDevices,
+    powerState,
+    powerBusy,
+    toggleLightPower,
+    setAllPower,
+    busy,
+  } from "../stores";
   import * as ipc from "../ipc";
+  import Icon from "./Icon.svelte";
   import type { DiscoveredDevice, Light } from "../types";
 
-  let scanning = $state(false);
-  let discovered = $state<DiscoveredDevice[]>([]);
-  let hasScanned = $state(false);
+  // Warm white, so an identify flash reads as "this is the bulb" rather than as
+  // a colour the effect would ever pick on its own.
+  const IDENTIFY_RGB: [number, number, number] = [255, 190, 120];
 
   // Device ids already bound to a room light.
   const boundIds = $derived(new Set($config.bindings.map((b) => b.device_id)));
-
-  async function scan() {
-    scanning = true;
-    try {
-      discovered = await ipc.discoverDevices(3000);
-      hasScanned = true;
-      if (discovered.length === 0) {
-        notify("info", "No bulbs found. Make sure LAN Control is enabled in the Yeelight app.");
-      }
-    } catch (e) {
-      notify("error", `Scan failed: ${errMsg(e)}`);
-    } finally {
-      scanning = false;
-    }
-  }
 
   function prettyName(d: DiscoveredDevice): string {
     if (d.name && d.name.trim()) return d.name;
@@ -42,6 +42,7 @@
         id: crypto.randomUUID(),
         name: prettyName(d),
         pos: { x: 250 + ((n * 160) % 600), y: 110 + (n % 2) * 60 },
+        height: 0.5,
         zone_override: null,
         enabled: true,
       };
@@ -56,12 +57,12 @@
       });
       return c;
     });
-    notify("info", `${prettyName(d)} added — position it in the Room tab.`);
+    notify("info", `${prettyName(d)} added. Position it in the Room tab.`);
   }
 
-  async function flash(ip: string, port: number, rgb: [number, number, number]) {
+  async function flash(ip: string, port: number) {
     try {
-      await ipc.testDevice(ip, port, rgb[0], rgb[1], rgb[2]);
+      await ipc.testDevice(ip, port, ...IDENTIFY_RGB);
       notify("info", "Sent identify flash.");
     } catch (e) {
       notify("error", `Could not reach bulb: ${errMsg(e)}`);
@@ -90,6 +91,12 @@
     });
   }
 
+  // Optimistic: we have no push channel from the bulbs, so an unknown light is
+  // assumed on (they are on whenever the effect has driven them).
+  function isOn(id: string): boolean {
+    return $powerState[id] ?? true;
+  }
+
   function removeLight(id: string) {
     updateConfig((c) => {
       c.room.lights = c.room.lights.filter((x) => x.id !== id);
@@ -99,63 +106,94 @@
   }
 </script>
 
-<div class="panel">
-  <div class="col main">
-    <div class="head row spread">
-      <div>
-        <div class="section-title">Discover bulbs</div>
-        <p class="muted intro">
-          Lueur controls bulbs over your local network — nothing leaves the house. Enable
-          <b>LAN Control</b> in the Yeelight app first. We currently support Yeelight Color (v2);
-          more models are on the way.
+<div class="panels">
+  <section class="col">
+    <header class="head">
+      <div class="grow">
+        <h2 class="section-title">Discover</h2>
+        <p class="intro muted">
+          Bulbs are controlled over your local network. Enable LAN Control in the Yeelight app
+          before scanning. Supported today: Yeelight Color (v2).
         </p>
       </div>
-      <button class="btn primary" onclick={scan} disabled={scanning}>
-        {scanning ? "Scanning…" : "Scan network"}
+      <button class="btn primary" onclick={() => scanDevices()} disabled={$scanning}>
+        <Icon name="search" />
+        {$scanning ? "Scanning" : "Scan network"}
       </button>
-    </div>
+    </header>
 
-    <div class="card list">
-      {#if scanning}
-        <div class="empty faint">Listening for bulbs on the LAN…</div>
-      {:else if discovered.length === 0}
-        <div class="empty faint">
-          {hasScanned ? "No bulbs found yet — try scanning again." : "Scan to find bulbs on your network."}
-        </div>
+    <div class="panel list">
+      {#if $scanning}
+        <p class="empty faint">Listening for bulbs on the network.</p>
+      {:else if $discovered.length === 0}
+        <p class="empty faint">
+          {$hasScanned
+            ? "No bulbs found. Check that LAN Control is on in the Yeelight app, then scan again."
+            : "Scan to find bulbs on your network."}
+        </p>
       {:else}
-        {#each discovered as d (d.id)}
+        {#each $discovered as d (d.id)}
           <div class="devrow">
-            <span class="swatch"></span>
+            <Icon name="bulb" size={18} />
             <div class="grow">
               <div class="name">{prettyName(d)}</div>
               <div class="meta faint">
-                {d.model || "bulb"} · {d.ip}:{d.port}
-                {#if !supportsMusic(d)}· <span class="warn">no music mode</span>{/if}
+                {d.model || "bulb"} · {d.ip}:{d.port}{#if !supportsMusic(d)}
+                  · <span class="alert">no music mode</span>
+                {/if}
               </div>
             </div>
-            <button class="btn ghost" onclick={() => flash(d.ip, d.port, [56, 232, 255])}>Identify</button>
+            <button class="btn ghost" onclick={() => flash(d.ip, d.port)}>Identify</button>
             {#if boundIds.has(d.id)}
-              <span class="added">Added ✓</span>
+              <span class="added"><Icon name="check" size={14} /> Added</span>
             {:else}
-              <button class="btn" onclick={() => addAsLight(d)}>+ Add as light</button>
+              <button class="btn" onclick={() => addAsLight(d)}>
+                <Icon name="plus" size={14} /> Add
+              </button>
             {/if}
           </div>
         {/each}
       {/if}
     </div>
-  </div>
+  </section>
 
-  <div class="col side">
-    <div class="section-title">Your lights</div>
-    <div class="card list">
+  <section class="col">
+    <header class="head">
+      <h2 class="section-title grow">Your lights</h2>
+      {#if $config.bindings.length > 0}
+        <div class="bulk">
+          <button class="btn ghost small" disabled={$busy} onclick={() => setAllPower(true)}>
+            All on
+          </button>
+          <button
+            class="btn ghost small"
+            title="Turns every bulb off and stops the effect"
+            disabled={$busy}
+            onclick={() => setAllPower(false)}
+          >
+            All off
+          </button>
+        </div>
+      {/if}
+    </header>
+
+    <div class="panel list">
       {#if $config.room.lights.length === 0}
-        <div class="empty faint">No lights yet. Add bulbs from the list on the left.</div>
+        <p class="empty faint">No lights yet. Add bulbs from the list on the left.</p>
       {:else}
         {#each $config.room.lights as l (l.id)}
           {@const b = bindingFor(l.id)}
-          <div class="lightrow">
-            <label class="switch" title="Enable / disable">
-              <input type="checkbox" checked={l.enabled} onchange={() => toggleLight(l.id)} />
+          <div class="lightrow" class:off={!l.enabled}>
+            <label
+              class="switch"
+              title={l.enabled ? "Exclude from the effect" : "Include in the effect"}
+            >
+              <input
+                type="checkbox"
+                checked={l.enabled}
+                aria-label="Include {l.name} in the effect"
+                onchange={() => toggleLight(l.id)}
+              />
               <span class="track"></span>
             </label>
             <div class="grow">
@@ -163,116 +201,159 @@
                 class="rename"
                 type="text"
                 value={l.name}
+                aria-label="Light name"
                 oninput={(e) => renameLight(l.id, (e.target as HTMLInputElement).value)}
               />
               <div class="meta faint">
-                {#if b}{b.ip}{:else}<span class="warn">not bound</span>{/if}
+                {#if b}{b.ip}{:else}<span class="alert">not bound to a bulb</span>{/if}
               </div>
             </div>
             {#if b}
               <button
-                class="btn ghost small"
-                title="Identify"
-                onclick={() => flash(b.ip, b.port, [155, 108, 255])}>◉</button
+                class="btn ghost icon power"
+                class:on={isOn(l.id)}
+                title={isOn(l.id) ? "Turn bulb off" : "Turn bulb on"}
+                aria-label={isOn(l.id) ? `Turn ${l.name} off` : `Turn ${l.name} on`}
+                disabled={$powerBusy.has(l.id)}
+                onclick={() => toggleLightPower(l.id)}
               >
+                <Icon name="power" />
+              </button>
+              <button
+                class="btn ghost icon"
+                title="Identify"
+                aria-label="Flash {l.name} to identify it"
+                onclick={() => flash(b.ip, b.port)}
+              >
+                <Icon name="target" />
+              </button>
             {/if}
-            <button class="btn ghost small danger" title="Remove" onclick={() => removeLight(l.id)}
-              >✕</button
+            <button
+              class="btn ghost icon danger"
+              title="Remove"
+              aria-label="Remove {l.name}"
+              onclick={() => removeLight(l.id)}
             >
+              <Icon name="trash" />
+            </button>
           </div>
         {/each}
       {/if}
     </div>
-  </div>
+  </section>
 </div>
 
 <style>
-  .panel {
+  .panels {
     display: grid;
-    grid-template-columns: 1.5fr 1fr;
-    gap: 22px;
+    grid-template-columns: 1.4fr 1fr;
+    gap: var(--s-5);
     height: 100%;
   }
   .col {
     display: flex;
     flex-direction: column;
     min-height: 0;
+    min-width: 0;
   }
+
   .head {
-    margin-bottom: 14px;
+    display: flex;
     align-items: flex-start;
-    gap: 16px;
+    gap: var(--s-4);
+    min-height: 32px;
+    margin-bottom: var(--s-3);
   }
   .intro {
-    font-size: 13px;
-    max-width: 52ch;
-    line-height: 1.5;
-    margin: 0;
+    font-size: var(--t-2);
+    max-width: 62ch;
+    margin: var(--s-2) 0 0;
   }
+  .bulk {
+    display: flex;
+    gap: var(--s-1);
+    flex: none;
+  }
+  .btn.small {
+    min-height: 28px;
+    padding: 0 var(--s-2);
+    font-size: var(--t-2);
+  }
+
   .list {
-    padding: 8px;
+    padding: var(--s-1);
     overflow: auto;
     flex: 1;
   }
   .empty {
-    padding: 40px 16px;
+    padding: var(--s-7) var(--s-4);
     text-align: center;
-    font-size: 13.5px;
+    margin: 0;
+    text-wrap: balance;
   }
+
   .devrow,
   .lightrow {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 11px 12px;
-    border-radius: var(--radius-sm);
+    gap: var(--s-3);
+    padding: var(--s-2) var(--s-3);
+    border-radius: var(--r-1);
+    color: var(--text-3);
+    transition: background var(--dur) var(--ease);
   }
   .devrow:hover,
   .lightrow:hover {
-    background: var(--surface-hover);
+    background: var(--surface-raised);
   }
-  .swatch {
-    width: 26px;
-    height: 26px;
-    border-radius: 8px;
-    flex: none;
-    background: var(--accent-grad);
-    box-shadow: 0 0 12px rgba(155, 108, 255, 0.5);
+  .lightrow.off .rename {
+    color: var(--text-3);
   }
-  .name {
-    font-size: 14px;
-    font-weight: 550;
+
+  .name,
+  .rename {
+    font-size: var(--t-3);
+    font-weight: 500;
+    color: var(--text);
   }
   .meta {
-    font-size: 12px;
-    margin-top: 2px;
+    font-size: var(--t-1);
+    font-variant-numeric: tabular-nums;
   }
-  .warn {
-    color: var(--amber);
+  .alert {
+    color: var(--danger);
   }
+
   .added {
-    color: var(--green);
-    font-size: 13px;
-    font-weight: 550;
-    padding: 0 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-1);
+    color: var(--ok);
+    font-size: var(--t-2);
+    font-weight: 500;
+    padding: 0 var(--s-2);
   }
+
   .rename {
     width: 100%;
+    min-height: 22px;
     background: transparent;
-    border: 1px solid transparent;
-    padding: 4px 6px;
-    font-size: 14px;
-    font-weight: 550;
-    border-radius: 8px;
+    border-color: transparent;
+    padding: 0 var(--s-1);
+    margin-left: calc(var(--s-1) * -1);
   }
   .rename:hover {
     border-color: var(--border);
   }
-  .btn.small {
-    padding: 6px 10px;
-    font-size: 13px;
+
+  /* The power glyph reads as the bulb's current state at a glance. */
+  .power {
+    color: var(--text-3);
   }
-  .danger:hover {
-    color: var(--red);
+  .power.on {
+    color: var(--ok);
+  }
+  .power:disabled {
+    color: var(--border-strong);
   }
 </style>

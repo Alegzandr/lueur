@@ -10,6 +10,7 @@ import {
   type DiscoveredDevice,
   type EffectStatus,
   type MonitorInfo,
+  type PowerResult,
 } from "./types";
 
 /** True when we're running inside the Tauri webview. */
@@ -55,6 +56,24 @@ export async function testDevice(
 ): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>("test_device", { ip, port, r, g, b });
+}
+
+/** Power a bulb on/off by address. */
+export async function setDevicePower(ip: string, port: number, on: boolean): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("set_device_power", { ip, port, on });
+}
+
+/** Power the bulb bound to a room light on/off. */
+export async function setLightPower(lightId: string, on: boolean): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("set_light_power", { lightId, on });
+}
+
+/** Power every bound bulb on/off. Turning off also stops the effect. */
+export async function setAllPower(on: boolean): Promise<PowerResult> {
+  if (!inTauri()) return { total: 0, succeeded: 0, failures: [] };
+  return invoke<PowerResult>("set_all_power", { on });
 }
 
 export async function startEffect(): Promise<EffectStatus> {

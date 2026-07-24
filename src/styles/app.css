@@ -1,37 +1,66 @@
-/* Lueur — cosy night-gaming theme.
-   Deep near-black backdrop, soft neon accents (cyan → violet → magenta),
-   rounded cards and gentle glows. Everything is dark-first. */
+/* Lueur design tokens.
+   The chrome is greyscale on purpose. It carries no hue of its own, so the only
+   colours on screen are the three screen zones and two semantic states. When
+   something is coloured here, it means something. */
 
 :root {
-  --bg-0: #0a0912;
-  --bg-1: #0f0e1c;
-  --bg-2: #15142a;
-  --surface: rgba(30, 28, 54, 0.55);
-  --surface-solid: #191833;
-  --surface-hover: rgba(46, 43, 82, 0.7);
-  --border: rgba(140, 130, 210, 0.14);
-  --border-strong: rgba(150, 140, 230, 0.3);
+  /* Surfaces — neutral greys, no readable temperature, never pure black */
+  --bg: oklch(0.17 0.003 250);
+  --surface: oklch(0.21 0.004 250);
+  --surface-raised: oklch(0.245 0.004 250);
+  --surface-hover: oklch(0.285 0.005 250);
+  --surface-sunken: oklch(0.145 0.003 250);
 
-  --text: #ecebff;
-  --text-dim: #a7a4cc;
-  --text-faint: #6f6c93;
+  --border: oklch(0.3 0.005 250);
+  --border-strong: oklch(0.42 0.006 250);
 
-  --cyan: #38e8ff;
-  --violet: #9b6cff;
-  --magenta: #ff5c9d;
-  --amber: #ffb03a;
-  --green: #57e39a;
-  --red: #ff5a6e;
+  /* Text */
+  --text: oklch(0.94 0.003 250);
+  --text-2: oklch(0.75 0.004 250);
+  --text-3: oklch(0.63 0.005 250);
 
-  --accent: var(--violet);
-  --accent-grad: linear-gradient(120deg, var(--cyan), var(--violet) 55%, var(--magenta));
-  --glow: 0 0 26px rgba(155, 108, 255, 0.35);
+  /* No accent hue: primary actions and selection are plain white on dark. */
+  --accent: var(--text);
+  --accent-hover: oklch(0.99 0.001 250);
+  --on-accent: var(--bg);
 
-  --radius: 16px;
-  --radius-sm: 10px;
-  --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  /* Semantic state */
+  --ok: oklch(0.78 0.14 155);
+  --danger: oklch(0.7 0.17 25);
+  --danger-quiet: oklch(0.7 0.17 25 / 0.16);
 
-  --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Screen zones — data, not decoration. Equal lightness so none dominates. */
+  --zone-left: oklch(0.72 0.13 30);
+  --zone-center: oklch(0.74 0.12 90);
+  --zone-right: oklch(0.72 0.09 220);
+
+  /* Type scale, ratio ≈1.14 */
+  --t-1: 0.6875rem; /* 11px — meta, section labels */
+  --t-2: 0.75rem; /* 12px — hints, captions */
+  --t-3: 0.875rem; /* 14px — body, controls, buttons */
+  --t-4: 1rem; /* 16px — inspector headings */
+  --t-5: 1.125rem; /* 18px — app title */
+
+  /* Spacing, 4px base */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+
+  --r-1: 6px;
+  --r-2: 10px;
+  --r-full: 999px;
+
+  --dur: 160ms;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* No webfont: this is a portable app and the native UI face is the right one
+     here. Listing a font we never ship would only split the rendering between
+     machines that happen to have it installed and machines that don't. */
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
   color-scheme: dark;
 }
@@ -48,13 +77,10 @@ body {
 
 body {
   font-family: var(--font);
+  font-size: var(--t-3);
+  line-height: 1.45;
   color: var(--text);
-  background:
-    radial-gradient(1100px 700px at 15% -10%, rgba(56, 232, 255, 0.08), transparent 60%),
-    radial-gradient(1000px 800px at 110% 20%, rgba(255, 92, 157, 0.09), transparent 55%),
-    radial-gradient(900px 900px at 50% 120%, rgba(155, 108, 255, 0.1), transparent 55%),
-    linear-gradient(180deg, var(--bg-1), var(--bg-0));
-  background-attachment: fixed;
+  background: var(--bg);
   -webkit-font-smoothing: antialiased;
   user-select: none;
   overflow: hidden;
@@ -68,8 +94,7 @@ h1,
 h2,
 h3 {
   margin: 0;
-  font-weight: 650;
-  letter-spacing: 0.2px;
+  font-weight: 600;
 }
 
 button {
@@ -80,72 +105,108 @@ button {
   background: none;
 }
 
-button:focus-visible,
-input:focus-visible,
-select:focus-visible {
-  outline: 2px solid var(--cyan);
+:focus-visible {
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
+  border-radius: var(--r-1);
 }
 
-/* --- Reusable surfaces --- */
-.card {
+/* --- Surfaces --- */
+.panel {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  backdrop-filter: blur(14px);
-  box-shadow: var(--shadow);
+  border-radius: var(--r-2);
 }
 
 .section-title {
-  font-size: 12px;
+  font-size: var(--t-1);
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 1.6px;
-  color: var(--text-faint);
-  margin-bottom: 12px;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
 }
 
 .muted {
-  color: var(--text-dim);
+  color: var(--text-2);
 }
 
 .faint {
-  color: var(--text-faint);
+  color: var(--text-3);
 }
 
 /* --- Buttons --- */
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 16px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-solid);
+  justify-content: center;
+  gap: var(--s-2);
+  min-height: 32px;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-1);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   color: var(--text);
-  font-size: 13.5px;
-  font-weight: 550;
-  transition: background 0.15s, border-color 0.15s, transform 0.08s;
+  font-size: var(--t-3);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
 }
-.btn:hover {
+.btn:hover:not(:disabled) {
   background: var(--surface-hover);
   border-color: var(--border-strong);
 }
-.btn:active {
-  transform: translateY(1px);
+.btn:active:not(:disabled) {
+  background: var(--surface);
 }
 .btn:disabled {
-  opacity: 0.45;
+  color: var(--text-3);
   cursor: not-allowed;
 }
+
 .btn.primary {
-  background: var(--accent-grad);
-  border: none;
-  color: #12091f;
-  font-weight: 650;
-  box-shadow: var(--glow);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
 }
+.btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.btn.primary:active:not(:disabled) {
+  background: var(--accent);
+}
+.btn.primary:disabled {
+  background: var(--surface-raised);
+  border-color: var(--border);
+  color: var(--text-3);
+}
+
 .btn.ghost {
   background: transparent;
+  border-color: transparent;
+  color: var(--text-2);
+}
+.btn.ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: transparent;
+  color: var(--text);
+}
+
+/* Square icon-only button. Keeps a 32px hit target at a 16px glyph. */
+.btn.icon {
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  flex: none;
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: var(--danger-quiet);
+  color: var(--danger);
 }
 
 /* --- Form controls --- */
@@ -153,17 +214,23 @@ input[type="text"],
 input[type="number"],
 select {
   font-family: inherit;
-  font-size: 13.5px;
+  font-size: var(--t-3);
   color: var(--text);
-  background: rgba(10, 9, 20, 0.6);
+  background: var(--surface-sunken);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  border-radius: var(--r-1);
+  min-height: 32px;
+  padding: 0 var(--s-2);
+  transition: border-color var(--dur) var(--ease);
+}
+input[type="text"]:hover,
+select:hover {
+  border-color: var(--border-strong);
 }
 input[type="text"]:focus,
 input[type="number"]:focus,
 select:focus {
-  border-color: var(--border-strong);
+  border-color: var(--accent);
 }
 
 /* Range sliders */
@@ -171,97 +238,118 @@ input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 6px;
-  border-radius: 999px;
-  background: rgba(120, 110, 180, 0.2);
-  outline: none;
+  height: 4px;
+  margin: 0;
+  border-radius: var(--r-full);
+  background: var(--surface-hover);
+  outline-offset: 6px;
 }
+/* Resting thumb sits below full white so hover and drag still register. */
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
-  background: var(--accent-grad);
-  box-shadow: 0 0 10px rgba(155, 108, 255, 0.6);
-  cursor: pointer;
-  border: 2px solid #0c0b18;
+  background: var(--text-2);
+  border: none;
+  cursor: grab;
+  transition: background var(--dur) var(--ease);
+}
+input[type="range"]:hover::-webkit-slider-thumb {
+  background: var(--text);
+}
+input[type="range"]:active::-webkit-slider-thumb {
+  cursor: grabbing;
+  background: var(--text);
 }
 input[type="range"]::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
-  background: var(--violet);
-  border: 2px solid #0c0b18;
-  cursor: pointer;
+  background: var(--text-2);
+  border: none;
+  cursor: grab;
+}
+input[type="range"]:hover::-moz-range-thumb {
+  background: var(--text);
 }
 
 /* Toggle switch */
 .switch {
   position: relative;
   display: inline-block;
-  width: 44px;
-  height: 25px;
+  width: 36px;
+  height: 20px;
   flex: none;
 }
 .switch input {
+  position: absolute;
   opacity: 0;
-  width: 0;
-  height: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
 }
 .switch .track {
   position: absolute;
   inset: 0;
-  border-radius: 999px;
-  background: rgba(120, 110, 180, 0.22);
-  transition: background 0.2s;
+  border-radius: var(--r-full);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+  pointer-events: none;
 }
 .switch .track::before {
   content: "";
   position: absolute;
-  height: 19px;
-  width: 19px;
-  left: 3px;
-  top: 3px;
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  top: 2px;
   border-radius: 50%;
-  background: #d9d7f5;
-  transition: transform 0.2s;
+  background: var(--text-2);
+  transition:
+    transform var(--dur) var(--ease),
+    background var(--dur) var(--ease);
+}
+.switch input:hover + .track {
+  border-color: var(--border-strong);
 }
 .switch input:checked + .track {
-  background: var(--accent-grad);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 .switch input:checked + .track::before {
-  transform: translateX(19px);
-  background: #fff;
+  transform: translateX(16px);
+  background: var(--on-accent);
+}
+.switch input:focus-visible + .track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
-/* Custom scrollbars */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(120, 110, 180, 0.28);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(140, 130, 210, 0.45);
-  background-clip: content-box;
-}
-
+/* --- Layout helpers --- */
 .row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--s-3);
 }
 .spread {
   justify-content: space-between;
 }
-.wrap {
-  flex-wrap: wrap;
-}
 .grow {
   flex: 1;
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

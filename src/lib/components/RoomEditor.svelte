@@ -1,12 +1,20 @@
 <script lang="ts">
   import { config, updateConfig, notify } from "../stores";
   import * as ipc from "../ipc";
-  import { classify, endpoints, facing, EDGE_COLOR, EDGE_LABEL } from "../geometry";
-  import type { Light, Vec2 } from "../types";
+  import { describe, endpoints, facing, mapLight, EDGE_COLOR, EDGE_LABEL } from "../geometry";
+  import { defaultConfig, type Light, type Vec2 } from "../types";
+  import Slider from "./Slider.svelte";
+  import Icon from "./Icon.svelte";
+
+  const DEF = defaultConfig();
 
   const VIEW_W = 1000;
   const VIEW_H = 750;
   const M = 10; // clamp margin
+
+  // Warm white, matching the Lights panel, so an identify flash always looks the
+  // same wherever it is triggered from.
+  const IDENTIFY_RGB: [number, number, number] = [255, 190, 120];
 
   let svgEl: SVGSVGElement;
 
@@ -108,6 +116,7 @@
       id: crypto.randomUUID(),
       name: `Light ${n + 1}`,
       pos: { x: 200 + ((n * 140) % 620), y: 130 },
+      height: 0.5,
       zone_override: null,
       enabled: true,
     };
@@ -116,6 +125,13 @@
       return c;
     });
     selected = { kind: "light", id: light.id };
+  }
+  function setHeight(id: string, v: number) {
+    updateConfig((c) => {
+      const l = c.room.lights.find((x) => x.id === id);
+      if (l) l.height = v;
+      return c;
+    });
   }
   function removeSelected() {
     if (!selected) return;
@@ -181,11 +197,11 @@
   async function identify(id: string) {
     const b = bindingFor(id);
     if (!b) {
-      notify("info", "This light isn't bound to a bulb yet (Lights tab).");
+      notify("info", "This light is not bound to a bulb yet. Bind it in the Lights tab.");
       return;
     }
     try {
-      await ipc.testDevice(b.ip, b.port, 155, 108, 255);
+      await ipc.testDevice(b.ip, b.port, ...IDENTIFY_RGB);
     } catch {
       notify("error", "Could not reach the bulb.");
     }
@@ -195,16 +211,24 @@
   const scr = $derived($config.room.screen);
   const ends = $derived(endpoints($config.room.screen));
   const faceVec = $derived(facing($config.room.screen));
+  const selectedLight = $derived.by(() => {
+    const s = selected;
+    if (s?.kind !== "light") return undefined;
+    return $config.room.lights.find((l) => l.id === s.id);
+  });
+
+  const heightLabel = (v: number) =>
+    v < 0.18 ? "floor" : v < 0.42 ? "low" : v < 0.58 ? "screen level" : v < 0.82 ? "high" : "ceiling";
 </script>
 
 <div class="editor">
-  <div class="canvas-wrap card">
+  <div class="stage-col">
     <div class="toolbar">
-      <button class="btn small" onclick={addLight}>+ Light</button>
-      <button class="btn small" onclick={addCorner}>+ Corner</button>
-      <button class="btn small ghost" onclick={resetRoom}>Reset room</button>
-      <div class="grow"></div>
-      <div class="hint faint">Drag the screen and lights to match your room</div>
+      <button class="btn small" onclick={addLight}><Icon name="plus" size={14} /> Light</button>
+      <button class="btn small" onclick={addCorner}><Icon name="plus" size={14} /> Corner</button>
+      <button class="btn ghost small" onclick={resetRoom}>Reset room</button>
+      <span class="grow"></span>
+      <span class="hint faint">Drag the screen and lights to match your room</span>
     </div>
 
     <div class="stage">
@@ -219,13 +243,8 @@
         onpointercancel={endDrag}
       >
         <defs>
-          <linearGradient id="screenGrad" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stop-color="#ff5c9d" />
-            <stop offset="0.5" stop-color="#9b6cff" />
-            <stop offset="1" stop-color="#38e8ff" />
-          </linearGradient>
           <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
-            <path d="M50 0H0V50" fill="none" stroke="rgba(140,130,210,0.06)" stroke-width="1" />
+            <path d="M50 0H0V50" fill="none" stroke="var(--border)" stroke-width="1" />
           </pattern>
         </defs>
 
@@ -234,9 +253,10 @@
         <!-- Room outline -->
         <polygon
           points={wallPoints}
-          fill="rgba(56,232,255,0.03)"
-          stroke="rgba(150,140,230,0.4)"
-          stroke-width="3"
+          fill="var(--surface)"
+          fill-opacity="0.55"
+          stroke="var(--border-strong)"
+          stroke-width="2"
           stroke-linejoin="round"
         />
 
@@ -245,19 +265,19 @@
           <rect
             class="corner"
             class:sel={selected?.kind === "corner" && selected.index === i}
-            x={w.x - 9}
-            y={w.y - 9}
-            width="18"
-            height="18"
-            rx="4"
+            x={w.x - 8}
+            y={w.y - 8}
+            width="16"
+            height="16"
+            rx="3"
             onpointerdown={(e) => startCorner(e, i)}
           />
         {/each}
 
-        <!-- Connectors + lights -->
+        <!-- Connectors: opacity tracks the distance falloff the engine applies -->
         {#each $config.room.lights as l (l.id)}
-          {@const cls = classify(scr, l)}
-          {@const t = Math.max(0, Math.min(1, (cls.u + 1) / 2))}
+          {@const m = mapLight(scr, l)}
+          {@const t = Math.max(0, Math.min(1, (m.u + 1) / 2))}
           {@const target = {
             x: ends.left.x + (ends.right.x - ends.left.x) * t,
             y: ends.left.y + (ends.right.y - ends.left.y) * t,
@@ -267,44 +287,52 @@
             y1={l.pos.y}
             x2={target.x}
             y2={target.y}
-            stroke={EDGE_COLOR[cls.edge]}
+            stroke={EDGE_COLOR[m.edge]}
             stroke-width="1.5"
-            stroke-dasharray="4 5"
-            opacity={l.enabled ? 0.5 : 0.15}
+            stroke-dasharray="3 6"
+            stroke-linecap="round"
+            opacity={l.enabled ? 0.15 + 0.4 * m.gain : 0.1}
           />
         {/each}
 
-        <!-- Screen / PC -->
+        <!-- Screen, and the direction you sit in -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
         <g class="screen" class:sel={selected?.kind === "screen"} onpointerdown={startScreen}>
-          <!-- viewing direction -->
           <line
             x1={scr.center.x}
             y1={scr.center.y}
-            x2={scr.center.x + faceVec.x * 70}
-            y2={scr.center.y + faceVec.y * 70}
-            stroke="rgba(236,235,255,0.5)"
-            stroke-width="2"
-            stroke-dasharray="3 4"
+            x2={scr.center.x + faceVec.x * 72}
+            y2={scr.center.y + faceVec.y * 72}
+            stroke="var(--text-3)"
+            stroke-width="1.5"
+            stroke-dasharray="3 5"
           />
-          <circle cx={scr.center.x + faceVec.x * 70} cy={scr.center.y + faceVec.y * 70} r="6" fill="rgba(236,235,255,0.5)" />
+          <circle
+            cx={scr.center.x + faceVec.x * 72}
+            cy={scr.center.y + faceVec.y * 72}
+            r="5"
+            fill="none"
+            stroke="var(--text-3)"
+            stroke-width="1.5"
+          />
           <line
+            class="screen-face"
             x1={ends.left.x}
             y1={ends.left.y}
             x2={ends.right.x}
             y2={ends.right.y}
-            stroke="url(#screenGrad)"
-            stroke-width="16"
+            stroke-width="12"
             stroke-linecap="round"
           />
-          <circle cx={scr.center.x} cy={scr.center.y} r="9" fill="#0c0b18" stroke="#ecebff" stroke-width="2" />
+          <circle class="knob" cx={scr.center.x} cy={scr.center.y} r="7" />
         </g>
-        <text x={scr.center.x} y={scr.center.y - 18} class="screen-label" text-anchor="middle">
-          Screen / PC
+        <text x={scr.center.x} y={scr.center.y - 20} class="screen-label" text-anchor="middle">
+          Screen
         </text>
 
-        <!-- Light dots on top -->
+        <!-- Lights on top -->
         {#each $config.room.lights as l (l.id)}
-          {@const cls = classify(scr, l)}
+          {@const m = mapLight(scr, l)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <g
             class="light"
@@ -312,112 +340,178 @@
             onpointerdown={(e) => startLight(e, l)}
           >
             <circle
+              class="ring"
               cx={l.pos.x}
               cy={l.pos.y}
-              r="15"
-              fill={EDGE_COLOR[cls.edge]}
-              opacity={l.enabled ? 1 : 0.35}
+              r="17"
+              fill="none"
+              stroke={EDGE_COLOR[m.edge]}
+              stroke-width="2"
             />
-            <circle cx={l.pos.x} cy={l.pos.y} r="15" fill="none" stroke="#0c0b18" stroke-width="2" />
-            <text x={l.pos.x} y={l.pos.y + 34} class="light-label" text-anchor="middle">{l.name}</text>
+            <circle
+              cx={l.pos.x}
+              cy={l.pos.y}
+              r="10"
+              fill={EDGE_COLOR[m.edge]}
+              opacity={l.enabled ? 0.45 + 0.55 * m.gain : 0.25}
+            />
+            <text x={l.pos.x} y={l.pos.y + 32} class="light-label" text-anchor="middle">
+              {l.name}
+            </text>
           </g>
         {/each}
       </svg>
     </div>
   </div>
 
-  <aside class="inspector">
-    <div class="card pad">
-      <div class="section-title">Screen / PC</div>
-      <label class="field">
-        <span>Facing <b>{$config.room.screen.facing_deg}°</b></span>
-        <input
-          type="range"
-          min="-180"
-          max="180"
-          step="1"
+  <aside class="inspector panel">
+    <section class="block">
+      <h2 class="section-title">Screen</h2>
+      <div class="fields">
+        <Slider
+          label="Facing"
           value={$config.room.screen.facing_deg}
-          oninput={(e) => setFacing(+(e.target as HTMLInputElement).value)}
+          min={-180}
+          max={180}
+          step={1}
+          def={DEF.room.screen.facing_deg}
+          format={(v) => `${v}°`}
+          tip="The dashed line points at where you sit. Drag the centre knob to move the screen."
+          onchange={setFacing}
         />
-      </label>
-      <label class="field">
-        <span>Width <b>{Math.round($config.room.screen.width)}</b></span>
-        <input
-          type="range"
-          min="120"
-          max="520"
-          step="5"
+        <Slider
+          label="Width"
           value={$config.room.screen.width}
-          oninput={(e) => setWidth(+(e.target as HTMLInputElement).value)}
+          min={120}
+          max={520}
+          step={5}
+          def={DEF.room.screen.width}
+          format={(v) => String(Math.round(v))}
+          onchange={setWidth}
         />
-      </label>
-      <p class="tip faint">
-        The dashed arrow points where you sit. Drag the screen's centre knob to move it.
-      </p>
-    </div>
+      </div>
+    </section>
 
-    <div class="card pad">
-      <div class="section-title">Selected</div>
-      {#if selected?.kind === "light"}
-        {#each $config.room.lights.filter((x) => selected?.kind === "light" && x.id === selected.id) as l (l.id)}
-          {@const cls = classify($config.room.screen, l)}
-          <div class="sel-name">{l.name}</div>
-          <div class="chip" style="--c:{EDGE_COLOR[cls.edge]}">
-            mirrors the {EDGE_LABEL[cls.edge]}
-          </div>
-          <div class="row" style="margin-top:14px; gap:8px;">
-            <button class="btn small" onclick={() => identify(l.id)}>Identify</button>
-            <button class="btn small ghost danger" onclick={removeSelected}>Remove</button>
-          </div>
-        {/each}
+    <section class="block">
+      <h2 class="section-title">Selection</h2>
+      {#if selectedLight}
+        {@const m = mapLight(scr, selectedLight)}
+        <div class="sel-name">{selectedLight.name}</div>
+        <div class="chip" style="--c:{EDGE_COLOR[m.edge]}">{describe(m)}</div>
+
+        <!-- What this light actually samples, drawn on a 16:9 screen. -->
+        <svg class="preview" viewBox="0 0 160 90" role="img" aria-label="Sampled region of the screen">
+          <rect x="0.5" y="0.5" width="159" height="89" rx="3" class="preview-bg" />
+          <rect
+            x={m.zone.x * 160}
+            y={m.zone.y * 90}
+            width={m.zone.w * 160}
+            height={m.zone.h * 90}
+            rx="2"
+            fill={EDGE_COLOR[m.edge]}
+            fill-opacity={0.12 + 0.2 * (1 - m.spread)}
+            stroke={EDGE_COLOR[m.edge]}
+            stroke-width="1.5"
+          />
+        </svg>
+
+        <div class="fields">
+          <Slider
+            label="Height in the room"
+            value={selectedLight.height}
+            min={0}
+            max={1}
+            step={0.01}
+            def={0.5}
+            format={heightLabel}
+            tip="Picks the horizontal band of the picture this light mirrors."
+            onchange={(v) => setHeight(selectedLight.id, v)}
+          />
+        </div>
+
+        <dl class="stats">
+          <div><dt>Brightness</dt><dd>×{m.gain.toFixed(2)}</dd></div>
+          <div><dt>Response</dt><dd>×{m.responsiveness.toFixed(2)}</dd></div>
+        </dl>
+
+        <div class="actions">
+          <button class="btn small" onclick={() => identify(selectedLight.id)}>Identify</button>
+          <button class="btn ghost small danger" onclick={removeSelected}>
+            <Icon name="trash" size={14} /> Remove
+          </button>
+        </div>
       {:else if selected?.kind === "corner"}
-        <p class="muted">Room corner selected.</p>
-        <button class="btn small ghost danger" onclick={removeSelected}>Remove corner</button>
+        <p class="note muted">Room corner selected.</p>
+        <div class="actions">
+          <button class="btn ghost small danger" onclick={removeSelected}>
+            <Icon name="trash" size={14} /> Remove corner
+          </button>
+        </div>
       {:else if selected?.kind === "screen"}
-        <p class="muted">Screen selected. Use the sliders above to rotate and resize it.</p>
+        <p class="note muted">Screen selected. Use the sliders above to rotate and resize it.</p>
       {:else}
-        <p class="faint">Click a light, the screen, or a corner to edit it.</p>
+        <p class="note faint">Click a light, the screen, or a corner to edit it.</p>
       {/if}
-    </div>
+    </section>
 
-    <div class="card pad legend">
-      <div class="section-title">Mapping</div>
-      <div class="leg"><span class="d" style="background:{EDGE_COLOR.left}"></span> Left of screen → left edge</div>
-      <div class="leg"><span class="d" style="background:{EDGE_COLOR.center}"></span> Behind screen → matching slice</div>
-      <div class="leg"><span class="d" style="background:{EDGE_COLOR.right}"></span> Right of screen → right edge</div>
-    </div>
+    <section class="block">
+      <h2 class="section-title">Mapping</h2>
+      <ul class="rules">
+        <li>Sideways position picks the slice of the picture.</li>
+        <li>Height picks the band, floor to ceiling.</li>
+        <li>Distance widens the slice, then dims and slows it.</li>
+      </ul>
+      <p class="note faint">
+        Close behind the screen a light mirrors a tight slice. Out across the room it settles into
+        the whole picture, softer and slower, the way indirect light actually behaves.
+      </p>
+      <div class="key">
+        {#each ["left", "center", "right"] as const as edge}
+          <span class="key-item">
+            <span class="d" style="background:{EDGE_COLOR[edge]}"></span>
+            {EDGE_LABEL[edge]}
+          </span>
+        {/each}
+      </div>
+    </section>
   </aside>
 </div>
 
 <style>
   .editor {
     display: grid;
-    grid-template-columns: 1fr 300px;
-    gap: 20px;
+    grid-template-columns: 1fr 296px;
+    gap: var(--s-5);
     height: 100%;
   }
-  .canvas-wrap {
+
+  .stage-col {
     display: flex;
     flex-direction: column;
     min-width: 0;
-    padding: 12px;
+    gap: var(--s-3);
   }
   .toolbar {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
+    gap: var(--s-2);
+    flex: none;
+  }
+  .btn.small {
+    min-height: 28px;
+    padding: 0 var(--s-2);
+    font-size: var(--t-2);
   }
   .hint {
-    font-size: 12px;
+    font-size: var(--t-2);
   }
+
   .stage {
     flex: 1;
     min-height: 0;
-    border-radius: 12px;
+    border-radius: var(--r-2);
     overflow: hidden;
-    background: radial-gradient(700px 500px at 50% 0%, rgba(155, 108, 255, 0.08), transparent 60%),
-      rgba(8, 7, 16, 0.6);
+    background: var(--surface-sunken);
     border: 1px solid var(--border);
   }
   svg {
@@ -426,100 +520,197 @@
     display: block;
     touch-action: none;
   }
+
   .corner {
-    fill: #191833;
-    stroke: rgba(150, 140, 230, 0.6);
-    stroke-width: 2;
+    fill: var(--surface-raised);
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
     cursor: grab;
+    transition:
+      fill var(--dur) var(--ease),
+      stroke var(--dur) var(--ease);
+  }
+  .corner:hover {
+    fill: var(--surface-hover);
+    stroke: var(--text-3);
   }
   .corner.sel {
-    stroke: var(--cyan);
-    fill: #22284a;
+    fill: var(--accent);
+    stroke: var(--accent);
   }
+
   .screen {
     cursor: grab;
   }
-  .screen.sel circle {
-    stroke: var(--cyan);
+  .screen-face {
+    stroke: var(--text-2);
+    transition: stroke var(--dur) var(--ease);
+  }
+  .knob {
+    fill: var(--surface-sunken);
+    stroke: var(--text-2);
+    stroke-width: 2;
+    transition:
+      fill var(--dur) var(--ease),
+      stroke var(--dur) var(--ease);
+  }
+  .screen:hover .screen-face,
+  .screen:hover .knob {
+    stroke: var(--text);
+  }
+  /* Selection fills the knob rather than brightening the stroke, so it stays
+     distinct from hover now that both resolve to white. */
+  .screen.sel .screen-face,
+  .screen.sel .knob {
+    stroke: var(--text);
+  }
+  .screen.sel .knob {
+    fill: var(--text);
   }
   .screen-label {
-    fill: var(--text-dim);
-    font-size: 15px;
-    font-weight: 600;
+    fill: var(--text-3);
+    font-size: 13px;
+    font-weight: 500;
     pointer-events: none;
   }
+
   .light {
     cursor: grab;
   }
-  .light.sel circle:nth-child(2) {
-    stroke: #fff;
-    stroke-width: 3;
+  /* The ring is the selection affordance; it stays out of the way until needed. */
+  .ring {
+    opacity: 0;
+    transition: opacity var(--dur) var(--ease);
+  }
+  .light:hover .ring {
+    opacity: 0.45;
+  }
+  .light.sel .ring {
+    opacity: 1;
+    stroke: var(--text);
   }
   .light-label {
-    fill: var(--text-dim);
-    font-size: 14px;
+    fill: var(--text-3);
+    font-size: 13px;
     pointer-events: none;
   }
+
   .inspector {
     display: flex;
     flex-direction: column;
-    gap: 16px;
     overflow: auto;
+    padding: var(--s-4);
+    gap: var(--s-5);
   }
-  .pad {
-    padding: 16px;
+  .block + .block {
+    border-top: 1px solid var(--border);
+    padding-top: var(--s-5);
   }
-  .field {
+  .block .section-title {
     display: block;
-    margin-bottom: 14px;
+    margin-bottom: var(--s-3);
   }
-  .field span {
-    display: block;
-    font-size: 13px;
-    color: var(--text-dim);
-    margin-bottom: 8px;
+  .fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
   }
-  .tip,
-  .field span b {
-    color: var(--text);
-  }
-  .tip {
-    font-size: 12px;
-    line-height: 1.5;
-    margin: 6px 0 0;
-  }
+
   .sel-name {
-    font-size: 15px;
+    font-size: var(--t-4);
     font-weight: 600;
-    margin-bottom: 8px;
+    margin-bottom: var(--s-2);
   }
   .chip {
     display: inline-block;
-    font-size: 12.5px;
-    padding: 5px 10px;
-    border-radius: 999px;
+    font-size: var(--t-1);
+    padding: 3px var(--s-2);
+    border-radius: var(--r-full);
     color: var(--c);
-    border: 1px solid var(--c);
-    background: color-mix(in srgb, var(--c) 12%, transparent);
+    background: color-mix(in oklab, var(--c) 18%, transparent);
   }
-  .btn.small {
-    padding: 7px 12px;
-    font-size: 13px;
+  .preview {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin: var(--s-4) 0;
   }
-  .danger:hover {
-    color: var(--red);
+  .preview-bg {
+    fill: var(--surface-sunken);
+    stroke: var(--border);
+    stroke-width: 1;
   }
-  .legend .leg {
+
+  .stats {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 12.5px;
-    color: var(--text-dim);
-    margin-bottom: 8px;
+    gap: var(--s-5);
+    margin: var(--s-4) 0 0;
+    font-size: var(--t-1);
   }
-  .legend .d {
-    width: 12px;
-    height: 12px;
+  .stats dt {
+    color: var(--text-3);
+  }
+  .stats dd {
+    margin: 2px 0 0;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .note {
+    font-size: var(--t-2);
+    line-height: 1.5;
+    margin: 0;
+  }
+  .actions {
+    display: flex;
+    gap: var(--s-2);
+    margin-top: var(--s-4);
+  }
+
+  .rules {
+    list-style: none;
+    margin: 0 0 var(--s-3);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    font-size: var(--t-2);
+    color: var(--text-2);
+    line-height: 1.4;
+  }
+  .rules li {
+    position: relative;
+    padding-left: var(--s-3);
+  }
+  .rules li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.55em;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--text-3);
+  }
+
+  .key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-1) var(--s-3);
+    margin-top: var(--s-3);
+    padding-top: var(--s-3);
+    border-top: 1px solid var(--border);
+  }
+  .key-item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-1);
+    font-size: var(--t-1);
+    color: var(--text-3);
+  }
+  .key .d {
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     flex: none;
   }
