@@ -1,0 +1,36 @@
+[package]
+name = "lueur"
+description = "Lueur — a low-latency ambilight for smart bulbs, made for cosy night gaming."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+default-run = "lueur"
+
+# The library the binary and (future) integration tests share.
+[lib]
+name = "lueur_lib"
+crate-type = ["lib"]
+
+[[bin]]
+name = "lueur"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+lueur-core = { path = "../crates/lueur-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+# Cross-platform screen capture (Windows/macOS/Linux). Version pinned by
+# `cargo generate-lockfile`; see README for the capture-backend notes.
+xcap = "0.7"
+
+[features]
+# Tauri's custom-protocol is enabled for production builds by the CLI.
+custom-protocol = ["tauri/custom-protocol"]
