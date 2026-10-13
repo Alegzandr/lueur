@@ -1,5 +1,6 @@
 //! Shared application state managed by Tauri.
 
+use crate::error::{AppError, AppResult};
 use crate::runner;
 use lueur_core::config::{self, AppConfig};
 use std::path::PathBuf;
@@ -12,6 +13,9 @@ pub struct AppState {
     pub config: Mutex<AppConfig>,
     /// The running effect, if any.
     pub effect: Mutex<Option<runner::Handle>>,
+    /// Language the interface resolved to ("en" or "fr"), reported by the
+    /// frontend so the tray menu can match it.
+    pub ui_language: Mutex<String>,
 }
 
 impl AppState {
@@ -25,13 +29,17 @@ impl AppState {
             data_dir,
             config: Mutex::new(config),
             effect: Mutex::new(None),
+            ui_language: Mutex::new("en".into()),
         }
     }
 
     /// Persist the current in-memory config to disk.
-    pub fn persist(&self) -> Result<(), String> {
-        let cfg = self.config.lock().map_err(|_| "config lock poisoned")?;
-        config::save(&self.data_dir, &cfg).map_err(|e| e.to_string())
+    pub fn persist(&self) -> AppResult<()> {
+        let cfg = self
+            .config
+            .lock()
+            .map_err(|_| AppError::internal("config lock poisoned"))?;
+        config::save(&self.data_dir, &cfg).map_err(|e| AppError::new("save_failed").detail(e))
     }
 
     /// Is the ambilight effect currently running?

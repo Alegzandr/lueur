@@ -37,10 +37,10 @@ pub fn discover(timeout: Duration) -> std::io::Result<Vec<DiscoveredDevice>> {
     while Instant::now() < deadline {
         match socket.recv_from(&mut buf) {
             Ok((n, _addr)) => {
-                if let Ok(text) = std::str::from_utf8(&buf[..n]) {
-                    if let Some(dev) = protocol::parse_discovery(text) {
-                        found.insert(dev.id.clone(), dev);
-                    }
+                if let Ok(text) = std::str::from_utf8(&buf[..n])
+                    && let Some(dev) = protocol::parse_discovery(text)
+                {
+                    found.insert(dev.id.clone(), dev);
                 }
             }
             Err(ref e)

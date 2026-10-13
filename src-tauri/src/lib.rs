@@ -6,13 +6,13 @@
 
 mod capture;
 mod commands;
+mod error;
 mod paths;
 mod runner;
 mod state;
+mod tray;
 
 use state::AppState;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, WindowEvent};
 
 /// Build and run the application.
@@ -29,7 +29,7 @@ pub fn run() {
     tauri::Builder::default()
         // Only one instance may run; a second launch just focuses the window.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            focus_main(app);
+            tray::focus_main(app);
         }))
         // Launch-on-login. `--minimized` lets a startup launch open hidden.
         .plugin(tauri_plugin_autostart::init(
@@ -51,9 +51,10 @@ pub fn run() {
             commands::effect_status,
             commands::set_run_on_startup,
             commands::show_main_window,
+            commands::set_ui_language,
         ])
         .setup(move |app| {
-            setup_tray(app.handle())?;
+            tray::setup(app.handle())?;
 
             // Decide whether to show the window at launch. We start hidden if the
             // user asked to start minimised, or if we were relaunched by the OS
@@ -77,11 +78,12 @@ pub fn run() {
                         Ok(c) => c.clone(),
                         Err(_) => return,
                     };
-                    if let Ok(h) = runner::start(&cfg) {
-                        if let Ok(mut guard) = state.effect.lock() {
-                            *guard = Some(h);
-                        }
+                    if let Ok(h) = runner::start(&cfg)
+                        && let Ok(mut guard) = state.effect.lock()
+                    {
+                        *guard = Some(h);
                     }
+                    tray::refresh(&handle);
                 });
             }
             Ok(())
@@ -105,54 +107,4 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Lueur");
-}
-
-/// Build the system-tray icon and its menu.
-fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open Lueur", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &separator, &quit])?;
-
-    let _tray = TrayIconBuilder::with_id("lueur-tray")
-        .tooltip("Lueur — ambilight")
-        .icon(app.default_window_icon().cloned().expect("bundled icon"))
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "open" => focus_main(app),
-            "quit" => {
-                // Tear down any running effect before exiting.
-                if let Some(state) = app.try_state::<AppState>() {
-                    if let Ok(mut guard) = state.effect.lock() {
-                        if let Some(mut h) = guard.take() {
-                            h.stop();
-                        }
-                    }
-                }
-                app.exit(0);
-            }
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            // Left-click the tray icon toggles the window into view.
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                ..
-            } = event
-            {
-                focus_main(tray.app_handle());
-            }
-        })
-        .build(app)?;
-    Ok(())
-}
-
-/// Show and focus the main window.
-fn focus_main(app: &tauri::AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.show();
-        let _ = win.unminimize();
-        let _ = win.set_focus();
-    }
 }

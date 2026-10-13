@@ -365,13 +365,19 @@ mod tests {
         // Default screen centered at (500,160), facing +Y. right_axis is +X, so
         // the viewer's left is -X. A light far in -X is therefore to the LEFT.
         let s = Screen::default();
-        assert_eq!(map_light(&s, &light_at(100.0, 160.0)).edge, ScreenEdge::Left);
+        assert_eq!(
+            map_light(&s, &light_at(100.0, 160.0)).edge,
+            ScreenEdge::Left
+        );
     }
 
     #[test]
     fn light_right_of_screen_maps_to_right_edge() {
         let s = Screen::default();
-        assert_eq!(map_light(&s, &light_at(900.0, 160.0)).edge, ScreenEdge::Right);
+        assert_eq!(
+            map_light(&s, &light_at(900.0, 160.0)).edge,
+            ScreenEdge::Right
+        );
     }
 
     #[test]
@@ -460,7 +466,10 @@ mod tests {
         let high_z = map_light(&s, &high).zone;
         // Floor light looks at the bottom of the picture, ceiling light the top.
         assert!(high_z.y < low_z.y, "{high_z:?} should sit above {low_z:?}");
-        assert!((high_z.y - 0.0).abs() < 1e-5, "ceiling band should touch the top");
+        assert!(
+            (high_z.y - 0.0).abs() < 1e-5,
+            "ceiling band should touch the top"
+        );
         assert!(
             (low_z.y + low_z.h - 1.0).abs() < 1e-5,
             "floor band should touch the bottom"
@@ -471,9 +480,15 @@ mod tests {
     fn far_lights_are_dimmed_and_slowed() {
         let near = map_at(500.0, 150.0);
         let far = map_at(500.0, 700.0);
-        assert!((near.gain - 1.0).abs() < 0.05, "near light should be full brightness");
+        assert!(
+            (near.gain - 1.0).abs() < 0.05,
+            "near light should be full brightness"
+        );
         assert!(far.gain < near.gain, "far light should be dimmer");
-        assert!(far.responsiveness < near.responsiveness, "far light should be slower");
+        assert!(
+            far.responsiveness < near.responsiveness,
+            "far light should be slower"
+        );
         // Never fully dim or freeze a light.
         assert!(far.gain >= MIN_GAIN && far.responsiveness >= MIN_RESPONSIVENESS);
     }

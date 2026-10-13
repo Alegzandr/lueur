@@ -11,5 +11,5 @@ pub mod protocol;
 pub use connection::{MusicConnection, YeelightControl};
 pub use discovery::discover;
 pub use protocol::{
-    parse_discovery, DiscoveredDevice, Effect, DEFAULT_CONTROL_PORT, MIN_SMOOTH_DURATION_MS,
+    DEFAULT_CONTROL_PORT, DiscoveredDevice, Effect, MIN_SMOOTH_DURATION_MS, parse_discovery,
 };

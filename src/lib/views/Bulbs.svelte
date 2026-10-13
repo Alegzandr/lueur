@@ -1,0 +1,290 @@
+<script lang="ts">
+  import { onMount } from "svelte";
+  import {
+    app,
+    addDevices,
+    assignDevice,
+    bindingFor,
+    deviceName,
+    identify,
+    lightById,
+    renameLight,
+    scan,
+    unassign,
+  } from "../state.svelte";
+  import { t, tn } from "../i18n";
+  import type { DiscoveredDevice } from "../types";
+  import Icon from "../ui/Icon.svelte";
+
+  // First visit: look straight away rather than greeting with an empty list.
+  onMount(() => {
+    if (!app.hasScanned) void scan();
+  });
+
+  const lights = $derived(app.config.room.lights);
+  const unboundLights = $derived(lights.filter((l) => !bindingFor(l.id)));
+  const fresh = $derived(
+    app.discovered.filter((d) => !app.config.bindings.some((b) => b.device_id === d.id)),
+  );
+
+  function ownerOf(d: DiscoveredDevice) {
+    const b = app.config.bindings.find((x) => x.device_id === d.id);
+    return b ? lightById(b.light_id) : undefined;
+  }
+
+  function supportsMusic(d: DiscoveredDevice): boolean {
+    return d.support.includes("set_music") && d.support.includes("set_rgb");
+  }
+
+  function onAssign(d: DiscoveredDevice, e: Event & { currentTarget: HTMLSelectElement }) {
+    const id = e.currentTarget.value;
+    e.currentTarget.value = "";
+    if (id === "__new") addDevices([d]);
+    else if (id) assignDevice(id, d);
+  }
+</script>
+
+<div class="page">
+  <header class="page-head">
+    <h1 class="page-title">{t("nav_bulbs")}</h1>
+    <div class="actions">
+      {#if fresh.length > 1 && unboundLights.length === 0}
+        <button class="btn" onclick={() => addDevices(fresh)}>{t("add_all")}</button>
+      {/if}
+      <button class="btn" class:primary={!app.hasScanned} onclick={() => scan()} disabled={app.scanning}>
+        {#if app.scanning}<span class="spinner" aria-hidden="true"></span>{/if}
+        {app.scanning ? t("searching") : app.hasScanned ? t("search_again") : t("search")}
+      </button>
+    </div>
+  </header>
+
+  <section class="group">
+    <div class="group-head">
+      <h2 class="group-title">{t("on_network")}</h2>
+      {#if app.hasScanned && !app.scanning}
+        <span class="note">{tn("n_found", app.discovered.length)}</span>
+      {/if}
+    </div>
+
+    <div class="card rows">
+      {#if app.discovered.length === 0}
+        <div class="empty">
+          {#if app.scanning}
+            <p>{t("listening")}</p>
+          {:else if app.hasScanned}
+            <p class="empty-title">{t("none_title")}</p>
+          {:else}
+            <p class="empty-title">{t("first_title")}</p>
+            <p>{t("first_text")}</p>
+          {/if}
+        </div>
+      {:else}
+        {#each app.discovered as d (d.id)}
+          {@const owner = ownerOf(d)}
+          <div class="device">
+            <span class="device-icon" class:used={owner}><Icon name="bulb" size={16} /></span>
+            <div class="device-text">
+              <div class="device-name">{owner ? owner.name : deviceName(d)}</div>
+              <div class="device-meta num">
+                Yeelight {d.model || ""} · {d.ip}{#if !supportsMusic(d)}<span class="warn">, {t("no_music")}</span>{/if}
+              </div>
+            </div>
+            <button class="btn plain sm" title={t("identify_tip")} onclick={() => identify(d.ip, d.port)}>
+              {t("identify")}
+            </button>
+            {#if owner}
+              <span class="in-room"><Icon name="check" size={14} /> {t("in_room")}</span>
+            {:else if unboundLights.length > 0}
+              <select class="assign" aria-label="{deviceName(d)}: {t('use_for')}" onchange={(e) => onAssign(d, e)}>
+                <option value="" selected disabled>{t("use_for")}</option>
+                {#each unboundLights as l (l.id)}
+                  <option value={l.id}>{l.name}</option>
+                {/each}
+                <option value="__new">{t("new_light")}</option>
+              </select>
+            {:else}
+              <button class="btn sm" onclick={() => addDevices([d])}>{t("add")}</button>
+            {/if}
+          </div>
+        {/each}
+      {/if}
+    </div>
+  </section>
+
+  {#if lights.length > 0}
+    <section class="group">
+      <div class="group-head">
+        <h2 class="group-title">{t("in_room")}</h2>
+        <button class="btn plain sm" onclick={() => (app.view = "room")}>{t("step2_btn")}</button>
+      </div>
+      <div class="card rows">
+        {#each lights as l (l.id)}
+          {@const b = bindingFor(l.id)}
+          <div class="device">
+            <input
+              class="rename"
+              type="text"
+              value={l.name}
+              spellcheck="false"
+              aria-label={t("light_name")}
+              oninput={(e) => renameLight(l.id, e.currentTarget.value)}
+            />
+            <div class="device-meta num grow">
+              {#if b}{b.ip}{:else}<span class="warn">{t("pick_above")}</span>{/if}
+            </div>
+            {#if b}
+              <button class="btn plain sm" title={t("identify_tip")} onclick={() => identify(b.ip, b.port)}>
+                {t("identify")}
+              </button>
+              <button class="btn plain sm" title={t("unassign_tip")} onclick={() => unassign(l.id)}>
+                {t("unassign")}
+              </button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    </section>
+  {/if}
+
+  <section class="group">
+    <details class="card tips" open={app.hasScanned && app.discovered.length === 0}>
+      <summary>
+        <Icon name="chevron" size={14} />
+        <span>{t("tips_title")}</span>
+      </summary>
+      <ol>
+        <li>{t("tip_1")}</li>
+        <li>{t("tip_2")}</li>
+        <li>{t("tip_3")}</li>
+        <li>{t("tip_4")}</li>
+      </ol>
+    </details>
+  </section>
+</div>
+
+<style>
+  .actions {
+    display: flex;
+    gap: var(--s-2);
+  }
+  .note {
+    font-size: var(--t-sm);
+    color: var(--text-3);
+  }
+  .spinner {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1.5px solid var(--line-strong);
+    border-top-color: var(--text);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .empty {
+    padding: var(--s-6) var(--s-5);
+    text-align: center;
+    color: var(--text-3);
+  }
+  .empty-title {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .device {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-2) var(--s-3) var(--s-2) var(--s-4);
+    min-height: 50px;
+  }
+  .device-icon {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    flex: none;
+    border-radius: var(--r-md);
+    background: var(--surface-2);
+    color: var(--text-3);
+  }
+  .device-icon.used {
+    color: var(--glow-text);
+  }
+  .device-text,
+  .grow {
+    flex: 1;
+    min-width: 0;
+  }
+  .device-name {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .device-meta {
+    font-size: var(--t-sm);
+    color: var(--text-3);
+  }
+  .warn {
+    color: var(--glow-text);
+  }
+  .in-room {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 var(--s-2);
+    color: var(--text-3);
+    font-size: var(--t-sm);
+  }
+  .in-room :global(svg) {
+    color: var(--ok);
+  }
+  .assign {
+    height: 26px;
+    font-size: var(--t-sm);
+    max-width: 180px;
+  }
+  .rename {
+    width: 200px;
+    margin-left: -9px;
+    font-weight: 500;
+    border-color: transparent;
+    background: transparent;
+  }
+  .rename:hover {
+    border-color: var(--line-strong);
+  }
+
+  .tips summary {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    padding: var(--s-3) var(--s-4);
+    cursor: pointer;
+    list-style: none;
+    font-weight: 500;
+  }
+  .tips summary::-webkit-details-marker {
+    display: none;
+  }
+  .tips summary :global(svg) {
+    color: var(--text-3);
+    transition: transform var(--dur) var(--ease);
+  }
+  .tips[open] summary :global(svg) {
+    transform: rotate(90deg);
+  }
+  .tips ol {
+    margin: 0;
+    padding: 0 var(--s-5) var(--s-4) calc(var(--s-4) + 30px);
+    color: var(--text-2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+</style>
