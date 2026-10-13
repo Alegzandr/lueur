@@ -154,7 +154,7 @@ fn toggle_effect(app: &AppHandle) {
                 }
             }
         }
-        let _ = app.emit(EFFECT_CHANGED, None::<String>);
+        let _ = app.emit(EFFECT_CHANGED, None::<crate::error::AppError>);
         refresh(&app);
     });
 }

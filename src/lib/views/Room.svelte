@@ -347,9 +347,11 @@
     <header class="bar">
       <h1 class="page-title">{t("nav_room")}</h1>
       <div class="tools">
-        <button class="btn" onclick={newLight}>{t("add_light")}</button>
-        <button class="btn" onclick={addCorner}>{t("add_corner")}</button>
         <button class="btn plain" onclick={resetShape}>{t("reset_shape")}</button>
+        <div class="btn-group">
+          <button class="btn" onclick={addCorner}>{t("add_corner")}</button>
+          <button class="btn" onclick={newLight}>{t("add_light")}</button>
+        </div>
       </div>
     </header>
 
@@ -514,7 +516,7 @@
       {@const l = selLight}
       {@const m = mapLight(scr, l)}
       {@const b = bindingFor(l.id)}
-      <button class="back" onclick={clearSelection}><Icon name="back" size={14} /> {t("all_objects")}</button>
+      <button class="back" onclick={clearSelection}><Icon name="back" size={13} /> {t("all_objects")}</button>
 
       <input
         class="name"
@@ -524,123 +526,105 @@
         spellcheck="false"
         oninput={(e) => renameLight(l.id, e.currentTarget.value)}
       />
-      <p class="what" style="--c:{EDGE_COLOR[m.edge]}">
-        <span class="swatch"></span>{t(describe(m))}
-      </p>
 
-      <figure class="preview">
+      <figure class="preview" style="--c:{EDGE_COLOR[m.edge]}">
         <svg viewBox="0 0 160 90" role="img" aria-label={t("mirrors")}>
-          <rect x="0.5" y="0.5" width="159" height="89" rx="4" class="preview-bg" />
+          <rect x="0.5" y="0.5" width="159" height="89" rx="5" class="preview-bg" />
           <rect
-            x={m.zone.x * 160}
-            y={m.zone.y * 90}
-            width={m.zone.w * 160}
-            height={m.zone.h * 90}
+            x={m.zone.x * 160 + 3}
+            y={m.zone.y * 90 + 3}
+            width={Math.max(m.zone.w * 160 - 6, 4)}
+            height={Math.max(m.zone.h * 90 - 6, 4)}
             rx="3"
-            fill={EDGE_COLOR[m.edge]}
-            fill-opacity={0.18 + 0.22 * (1 - m.spread)}
-            stroke={EDGE_COLOR[m.edge]}
-            stroke-width="1.5"
+            class="preview-zone"
+            fill-opacity={0.2 + 0.25 * (1 - m.spread)}
           />
         </svg>
-        <figcaption>{t("mirrors")}</figcaption>
+        <figcaption><span class="swatch"></span>{t(describe(m))}</figcaption>
       </figure>
 
-      <div class="field">
-        <div class="field-label">{t("height")}</div>
-        <Slider
-          label={t("height")}
-          value={l.height}
-          min={0}
-          max={1}
-          step={0.01}
-          def={0.5}
-          format={heightLabel}
-          ends={[t("h_floor"), t("h_ceiling")]}
-          onchange={(v) => edit((c) => {
-            const x = c.room.lights.find((y) => y.id === l.id);
-            if (x) x.height = v;
-          })}
-        />
-      </div>
-
-      <div class="field inline">
-        <div>
-          <div class="field-label">{t("follows")}</div>
-          <p class="field-hint">{t("follows_hint")}</p>
+      <div class="fields">
+        <div class="field">
+          <span class="field-label">{t("height")}</span>
+          <Slider
+            label={t("height")}
+            value={l.height}
+            min={0}
+            max={1}
+            step={0.01}
+            def={0.5}
+            format={heightLabel}
+            onchange={(v) =>
+              edit((c) => {
+                const x = c.room.lights.find((y) => y.id === l.id);
+                if (x) x.height = v;
+              })}
+          />
         </div>
-        <Switch checked={l.enabled} label={t("follows")} onchange={(v) => setLightEnabled(l.id, v)} />
+        <div class="field inline">
+          <span class="field-label">{t("follows")}</span>
+          <Switch checked={l.enabled} label={t("follows")} onchange={(v) => setLightEnabled(l.id, v)} />
+        </div>
+        <dl class="facts" title={t("facts_tip")}>
+          <div><dt>{t("fact_brightness")}</dt><dd class="num">{pct(m.gain)}</dd></div>
+          <div><dt>{t("fact_response")}</dt><dd class="num">{pct(m.responsiveness)}</dd></div>
+        </dl>
       </div>
-
-      <dl class="facts">
-        <div><dt>{t("fact_brightness")}</dt><dd class="num">{pct(m.gain)}</dd></div>
-        <div><dt>{t("fact_response")}</dt><dd class="num">{pct(m.responsiveness)}</dd></div>
-      </dl>
-      <p class="field-hint">{t("facts_hint")}</p>
 
       <div class="bulb-box">
+        <Icon name="bulb" size={15} />
         {#if b}
-          <div class="bulb-info">
-            <div class="field-label">Yeelight {b.model}</div>
-            <div class="field-hint num">{b.ip}</div>
-          </div>
-          <button class="btn sm" title={t("identify_hint")} onclick={() => identifyLight(l.id)}>{t("identify")}</button>
+          <span class="bulb-info num">{b.ip}</span>
+          <button class="btn sm" title={t("identify_tip")} onclick={() => identifyLight(l.id)}>{t("identify")}</button>
         {:else}
-          <div class="bulb-info">
-            <div class="field-label">{t("no_bulb")}</div>
-            <div class="field-hint">{t("no_bulb_hint")}</div>
-          </div>
+          <span class="bulb-info warn">{t("no_bulb")}</span>
           <button class="btn sm" onclick={() => (app.view = "bulbs")}>{t("assign")}</button>
         {/if}
       </div>
 
-      <button class="btn plain danger remove" onclick={() => removeLight(l.id)}>
-        {t("remove_light")}
-      </button>
+      <button class="btn plain danger remove" onclick={() => removeLight(l.id)}>{t("remove_light")}</button>
     {:else if other?.kind === "screen"}
-      <button class="back" onclick={clearSelection}><Icon name="back" size={14} /> {t("all_objects")}</button>
+      <button class="back" onclick={clearSelection}><Icon name="back" size={13} /> {t("all_objects")}</button>
       <h2 class="name static">{t("plan_screen")}</h2>
-      <p class="field-hint">{t("screen_hint")}</p>
-      <div class="field">
-        <div class="field-label">{t("facing")}</div>
-        <Slider
-          label={t("facing")}
-          value={scr.facing_deg}
-          min={-180}
-          max={180}
-          step={1}
-          def={DEF.room.screen.facing_deg}
-          format={(v) => `${v}°`}
-          onchange={(v) => edit((c) => (c.room.screen.facing_deg = v))}
-        />
-      </div>
-      <div class="field">
-        <div class="field-label">{t("width")}</div>
-        <Slider
-          label={t("width")}
-          value={scr.width}
-          min={SCREEN_MIN}
-          max={SCREEN_MAX}
-          step={5}
-          def={DEF.room.screen.width}
-          format={(v) => String(Math.round(v))}
-          onchange={(v) => edit((c) => (c.room.screen.width = v))}
-        />
+      <div class="fields">
+        <div class="field">
+          <span class="field-label">{t("facing")}</span>
+          <Slider
+            label={t("facing")}
+            value={scr.facing_deg}
+            min={-180}
+            max={180}
+            step={1}
+            def={DEF.room.screen.facing_deg}
+            format={(v) => `${v}°`}
+            onchange={(v) => edit((c) => (c.room.screen.facing_deg = v))}
+          />
+        </div>
+        <div class="field">
+          <span class="field-label">{t("width")}</span>
+          <Slider
+            label={t("width")}
+            value={scr.width}
+            min={SCREEN_MIN}
+            max={SCREEN_MAX}
+            step={5}
+            def={DEF.room.screen.width}
+            format={(v) => String(Math.round(v))}
+            onchange={(v) => edit((c) => (c.room.screen.width = v))}
+          />
+        </div>
       </div>
     {:else if other?.kind === "corner"}
       {@const index = other.index}
-      <button class="back" onclick={clearSelection}><Icon name="back" size={14} /> {t("all_objects")}</button>
+      <button class="back" onclick={clearSelection}><Icon name="back" size={13} /> {t("all_objects")}</button>
       <h2 class="name static">{t("corner_n", { n: index + 1 })}</h2>
-      <p class="field-hint">{t("corner_hint")}</p>
-      <button class="btn plain danger remove" onclick={() => removeCorner(index)}>
-        {t("remove_corner")}
-      </button>
+      <button class="btn plain danger remove" onclick={() => removeCorner(index)}>{t("remove_corner")}</button>
     {:else}
       <h2 class="side-title">{t("objects")}</h2>
       <ul class="objects">
         <li>
           <button class="obj" onclick={() => selectOther({ kind: "screen" })}>
-            <Icon name="screen" size={16} />
+            <Icon name="screen" size={15} />
             <span class="obj-name">{t("plan_screen")}</span>
             <span class="obj-meta num">{scr.facing_deg}°</span>
           </button>
@@ -651,8 +635,7 @@
             <button class="obj" class:off={!l.enabled} onclick={() => selectLight(l.id)}>
               <span class="obj-dot" style="background:{EDGE_COLOR[m.edge]}"></span>
               <span class="obj-name">{l.name}</span>
-              {#if !bindingFor(l.id)}<span class="obj-warn" title={t("no_bulb")}>{t("no_bulb_short")}</span>{/if}
-              <Icon name="chevron" size={14} />
+              {#if !bindingFor(l.id)}<span class="obj-warn">{t("no_bulb")}</span>{/if}
             </button>
           </li>
         {/each}
@@ -660,14 +643,7 @@
       {#if room.lights.length === 0}
         <p class="empty">{t("no_lights")}</p>
       {/if}
-      <button class="btn sm add" onclick={newLight}>{t("add_light")}</button>
 
-      <h2 class="side-title">{t("how_title")}</h2>
-      <ul class="rules">
-        <li>{t("rule_across")}</li>
-        <li>{t("rule_height")}</li>
-        <li>{t("rule_distance")}</li>
-      </ul>
       <div class="legend">
         {#each EDGES as edge}
           <span><i style="background:{EDGE_COLOR[edge]}"></i>{t(EDGE_KIND[edge])}</span>
@@ -707,11 +683,19 @@
     padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
     border-radius: var(--r-lg);
     background: var(--surface);
-    border: 1px solid var(--line);
-    border-left: 3px solid var(--glow);
+    box-shadow: var(--card-edge);
   }
   .coach p {
     flex: 1;
+  }
+  .coach::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--glow);
+    box-shadow: 0 0 8px var(--glow);
   }
   .tools {
     display: flex;
@@ -726,7 +710,7 @@
     min-height: 0;
     border-radius: var(--r-lg);
     background: var(--plan-bg);
-    box-shadow: inset 0 0 0 1px var(--line);
+    box-shadow: var(--card-edge);
     overflow: hidden;
   }
   .stage svg {
@@ -740,13 +724,17 @@
   }
   .help {
     position: absolute;
-    left: var(--s-3);
+    left: 50%;
     bottom: var(--s-3);
-    padding: 4px var(--s-2);
-    border-radius: var(--r-sm);
-    background: color-mix(in oklab, var(--surface) 85%, transparent);
+    transform: translateX(-50%);
+    padding: 3px 10px;
+    border-radius: var(--r-full);
+    background: color-mix(in oklab, var(--surface) 80%, transparent);
+    backdrop-filter: blur(8px);
+    box-shadow: var(--card-edge);
     font-size: var(--t-xs);
     color: var(--text-3);
+    white-space: nowrap;
     pointer-events: none;
   }
 
@@ -755,6 +743,7 @@
   }
   .floor {
     fill: var(--plan-floor);
+    filter: drop-shadow(0 calc(3px * var(--k)) calc(10px * var(--k)) oklch(0 0 0 / 0.1));
   }
   .walls {
     fill: none;
@@ -866,6 +855,7 @@
     opacity: 1;
   }
   .bulb {
+    filter: drop-shadow(0 calc(1px * var(--k)) calc(2px * var(--k)) oklch(0 0 0 / 0.3));
     stroke: var(--plan-floor);
     stroke-width: calc(2.5px * var(--k));
   }
@@ -894,7 +884,7 @@
   .inspector {
     border-left: 1px solid var(--line);
     background: var(--sidebar);
-    padding: var(--s-5);
+    padding: var(--s-4);
     overflow: auto;
     display: flex;
     flex-direction: column;
@@ -904,13 +894,12 @@
     align-self: flex-start;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    margin: 0 0 var(--s-4) -4px;
+    gap: 2px;
+    margin: 0 0 var(--s-3) -6px;
     padding: 2px 6px 2px 2px;
     border-radius: var(--r-sm);
-    color: var(--text-2);
+    color: var(--text-3);
     font-size: var(--t-sm);
-    font-weight: 500;
   }
   .back:hover {
     color: var(--text);
@@ -919,126 +908,146 @@
   .name {
     font-size: var(--t-lg);
     font-weight: 600;
-    height: 38px;
-    margin-left: -9px;
-    width: calc(100% + 9px);
-    border-color: transparent;
+    height: 32px;
+    margin-left: -8px;
+    width: calc(100% + 8px);
     background: transparent;
+    box-shadow: none;
   }
   .name:hover {
-    border-color: var(--line-strong);
+    box-shadow: var(--control-edge);
   }
   .name.static {
-    margin: 0 0 var(--s-2);
+    margin: 0 0 var(--s-4);
     height: auto;
     width: auto;
   }
-  .what {
-    display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    margin-top: 2px;
-    color: var(--text-2);
-  }
-  .swatch {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--c);
-  }
+
   .preview {
-    margin: var(--s-4) 0 var(--s-5);
+    margin: var(--s-3) 0 var(--s-5);
   }
   .preview svg {
     display: block;
     width: 100%;
     height: auto;
+    border-radius: 6px;
+    box-shadow:
+      0 0 0 3px var(--plan-wall),
+      0 4px 12px -4px oklch(0 0 0 / 0.35);
   }
   .preview-bg {
-    fill: var(--surface);
-    stroke: var(--line-strong);
+    fill: var(--sunken);
+    stroke: none;
+  }
+  .preview-zone {
+    fill: var(--c);
+    stroke: var(--c);
+    stroke-width: 1.25;
+    transition:
+      x 200ms var(--ease),
+      y 200ms var(--ease),
+      width 200ms var(--ease),
+      height 200ms var(--ease);
   }
   figcaption {
-    margin-top: var(--s-1);
-    font-size: var(--t-xs);
-    color: var(--text-3);
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: var(--s-3);
+    font-size: var(--t-sm);
+    color: var(--text-2);
   }
-  .field {
-    margin-bottom: var(--s-5);
+  .swatch {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--c);
+  }
+
+  .fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-4);
+    padding: var(--s-4) 0;
+    border-top: 1px solid var(--line);
+  }
+  .field-label {
+    display: block;
+    font-size: var(--t-sm);
+    font-weight: 500;
+    color: var(--text-2);
+    margin-bottom: 2px;
   }
   .field.inline {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--s-3);
   }
-  .field :global(.slider) {
-    min-width: 0;
-  }
-  .field-label {
-    font-weight: 500;
-    margin-bottom: 2px;
-  }
-  .field-hint {
-    font-size: var(--t-sm);
-    color: var(--text-3);
-    text-wrap: pretty;
+  .field.inline .field-label {
+    margin: 0;
   }
   .facts {
-    display: flex;
-    gap: var(--s-6);
-    margin: 0 0 var(--s-1);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    margin: 0;
+    padding: var(--s-3);
+    border-radius: var(--r-md);
+    background: var(--surface-2);
   }
   .facts dt {
-    font-size: var(--t-sm);
+    font-size: var(--t-xs);
     color: var(--text-3);
   }
   .facts dd {
     margin: 0;
     font-size: var(--t-lg);
-    font-weight: 500;
+    font-weight: 600;
+    letter-spacing: -0.01em;
   }
+
   .bulb-box {
     display: flex;
     align-items: center;
-    gap: var(--s-3);
-    margin-top: var(--s-5);
-    padding: var(--s-3);
+    gap: var(--s-2);
+    padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
     border-radius: var(--r-md);
     background: var(--surface);
-    border: 1px solid var(--line);
+    box-shadow: var(--card-edge);
+    color: var(--text-3);
   }
   .bulb-info {
     flex: 1;
     min-width: 0;
+    color: var(--text-2);
+    font-size: var(--t-sm);
+  }
+  .warn {
+    color: var(--glow-text);
   }
   .remove {
     align-self: flex-start;
-    margin-top: var(--s-5);
+    margin-top: var(--s-3);
     margin-left: -8px;
   }
 
   .side-title {
     font-size: var(--t-sm);
     font-weight: 600;
-    color: var(--text-2);
-    margin-bottom: var(--s-2);
-  }
-  .side-title:not(:first-child) {
-    margin-top: var(--s-6);
+    color: var(--text-3);
+    margin: 0 0 var(--s-2) 2px;
   }
   .objects {
     list-style: none;
-    margin: 0 -8px;
+    margin: 0 -6px;
     padding: 0;
   }
   .obj {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 9px;
     width: 100%;
-    height: 32px;
+    height: 30px;
     padding: 0 8px;
     border-radius: var(--r-sm);
     text-align: left;
@@ -1059,9 +1068,9 @@
     color: var(--text-3);
   }
   .obj-dot {
-    width: 10px;
-    height: 10px;
-    margin: 0 3px;
+    width: 8px;
+    height: 8px;
+    margin: 0 3.5px;
     border-radius: 50%;
     flex: none;
   }
@@ -1075,38 +1084,25 @@
   .empty {
     font-size: var(--t-sm);
     color: var(--text-3);
-    margin: var(--s-2) 0;
-  }
-  .add {
-    align-self: flex-start;
-    margin-top: var(--s-3);
-  }
-  .rules {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-    font-size: var(--t-sm);
-    color: var(--text-2);
+    margin: var(--s-2) 2px;
   }
   .legend {
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-1) var(--s-3);
-    margin-top: var(--s-4);
-    font-size: var(--t-xs);
+    flex-direction: column;
+    gap: 6px;
+    margin-top: auto;
+    padding-top: var(--s-5);
+    font-size: var(--t-sm);
     color: var(--text-3);
   }
   .legend span {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 8px;
   }
   .legend i {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
   }
 </style>

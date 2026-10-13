@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { app, bootstrap, notify, refreshStatus, toggleEffect, type View } from "./lib/state.svelte";
+  import { app, bootstrap, fail, refreshStatus, toggleEffect, type View } from "./lib/state.svelte";
   import { lang, t, tn } from "./lib/i18n";
   import { onEffectChanged, setUiLanguage, setWindowTheme } from "./lib/ipc";
   import Icon, { type IconName } from "./lib/ui/Icon.svelte";
@@ -23,7 +23,7 @@
     // Started or stopped from the tray: update now rather than at the next poll.
     let unlisten = () => {};
     onEffectChanged((error) => {
-      if (error) notify("error", error);
+      if (error) fail(error);
       void refreshStatus();
     }).then((u) => (unlisten = u));
     return () => {
@@ -131,15 +131,19 @@
   </aside>
 
   <main class="content">
-    {#if app.view === "lighting"}
-      <Lighting />
-    {:else if app.view === "room"}
-      <Room />
-    {:else if app.view === "bulbs"}
-      <Bulbs />
-    {:else}
-      <Settings />
-    {/if}
+    {#key app.view}
+      <div class="view view-enter">
+        {#if app.view === "lighting"}
+          <Lighting />
+        {:else if app.view === "room"}
+          <Room />
+        {:else if app.view === "bulbs"}
+          <Bulbs />
+        {:else}
+          <Settings />
+        {/if}
+      </div>
+    {/key}
   </main>
 
   <Toasts />
@@ -190,9 +194,13 @@
     color: var(--text);
   }
   .nav-item.active {
-    background: var(--surface-hover);
+    background: var(--surface);
+    box-shadow: var(--card-edge);
     color: var(--text);
     font-weight: 500;
+  }
+  .nav-item.active :global(svg) {
+    color: var(--glow-text);
   }
   .nav-label {
     flex: 1;
@@ -211,12 +219,31 @@
   }
 
   .power {
+    position: relative;
     margin-top: auto;
-    padding: var(--s-3) var(--s-2) var(--s-1);
-    border-top: 1px solid var(--line);
+    padding: var(--s-3);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: var(--card-edge);
     display: flex;
     flex-direction: column;
     gap: var(--s-3);
+    overflow: hidden;
+    isolation: isolate;
+  }
+  /* When the light is on, a little of it spills into the panel. */
+  .power::before {
+    content: "";
+    position: absolute;
+    inset: -40% -20% auto;
+    height: 120%;
+    z-index: -1;
+    background: radial-gradient(closest-side, var(--glow-soft), transparent);
+    opacity: 0;
+    transition: opacity 600ms var(--ease);
+  }
+  .power.live::before {
+    opacity: 1;
   }
   .state {
     display: flex;
@@ -250,5 +277,8 @@
     flex: 1;
     min-width: 0;
     overflow: auto;
+  }
+  .view {
+    height: 100%;
   }
 </style>

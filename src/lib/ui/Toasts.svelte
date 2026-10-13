@@ -8,7 +8,7 @@
   {#each app.toasts as t (t.id)}
     <div class="toast" class:error={t.kind === "error"} role={t.kind === "error" ? "alert" : "status"}>
       {#if t.kind === "error"}<span class="ic"><Icon name="alert" size={15} /></span>{/if}
-      <p>{t.msg}</p>
+      <p title={t.detail}>{t.msg}</p>
       {#if t.action}
         {@const action = t.action}
         <button
@@ -45,8 +45,9 @@
     max-width: 400px;
     padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
     border-radius: var(--r-lg);
-    background: var(--surface);
-    box-shadow: var(--shadow-2);
+    background: color-mix(in oklab, var(--surface) 88%, transparent);
+    backdrop-filter: blur(16px) saturate(1.4);
+    box-shadow: var(--float);
     pointer-events: auto;
     animation: rise 160ms var(--ease);
   }

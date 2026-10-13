@@ -8,6 +8,7 @@
 //! where) requires a stop/start, which the UI does for you.
 
 use crate::capture::{FrameSource, XcapSource, check_monitor_index};
+use crate::error::{AppError, AppResult};
 use lueur_core::color::BulbOutput;
 use lueur_core::config::AppConfig;
 use lueur_core::engine::{Ambilight, EngineSettings};
@@ -75,21 +76,21 @@ struct ConnectedLight {
 ///
 /// Returns an error if there are no bound+enabled lights, capture can't start,
 /// or none of the bulbs accept a music-mode connection.
-pub fn start(config: &AppConfig) -> Result<Handle, String> {
+pub fn start(config: &AppConfig) -> AppResult<Handle> {
     // Resolve the enabled lights that have a device binding, in room order, and
     // compute each one's screen mapping (zone plus distance shaping).
-    let mut targets: Vec<(LightMapping, &lueur_core::config::DeviceBinding)> = Vec::new();
+    let mut targets: Vec<(LightMapping, &lueur_core::config::DeviceBinding, &str)> = Vec::new();
     for light in &config.room.lights {
         if !light.enabled {
             continue;
         }
         if let Some(binding) = config.binding_for(&light.id) {
-            targets.push((map_light(&config.room.screen, light), binding));
+            targets.push((map_light(&config.room.screen, light), binding, &light.name));
         }
     }
 
     if targets.is_empty() {
-        return Err("no lights are bound to a bulb — assign bulbs in the Bulbs view".into());
+        return Err(AppError::new("no_active_lights"));
     }
 
     // Validate the monitor choice before touching the network, so a bad one
@@ -102,23 +103,26 @@ pub fn start(config: &AppConfig) -> Result<Handle, String> {
     // bulb may be off) as long as at least one connects.
     let handshake = Duration::from_secs(3);
     let mut connected: Vec<ConnectedLight> = Vec::new();
-    let mut errors: Vec<String> = Vec::new();
-    for (mapping, binding) in targets {
+    let mut failed: Vec<String> = Vec::new();
+    let mut details: Vec<String> = Vec::new();
+    for (mapping, binding, name) in targets {
         match MusicConnection::establish(&binding.ip, binding.port, handshake) {
             Ok(conn) => connected.push(ConnectedLight {
                 mapping,
                 conn,
                 last: None,
             }),
-            Err(e) => errors.push(format!("{} ({}): {e}", binding.name, binding.ip)),
+            Err(e) => {
+                failed.push(name.to_string());
+                details.push(format!("{} ({}): {e}", name, binding.ip));
+            }
         }
     }
 
     if connected.is_empty() {
-        return Err(format!(
-            "could not connect to any bulb in music mode: {}",
-            errors.join("; ")
-        ));
+        return Err(AppError::new("music_mode_failed")
+            .subject(failed.join(", "))
+            .detail(details.join("; ")));
     }
 
     let connected_lights = connected.len();
@@ -150,7 +154,7 @@ pub fn start(config: &AppConfig) -> Result<Handle, String> {
                 };
                 run_loop(source, connected, live, stop, frame_budget)
             })
-            .map_err(|e| format!("failed to spawn ambilight thread: {e}"))?
+            .map_err(AppError::internal)?
     };
 
     Ok(Handle {

@@ -6,6 +6,7 @@
 
 mod capture;
 mod commands;
+mod error;
 mod paths;
 mod runner;
 mod state;

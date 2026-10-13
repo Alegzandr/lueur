@@ -1,6 +1,6 @@
 <script lang="ts">
-  // A classic on/off switch. The track turns to the glow colour when on, since
-  // every switch in Lueur ultimately decides whether something gives light.
+  // An on/off switch. The track turns amber when on, since every switch in
+  // Lueur decides whether something gives light.
   interface Props {
     checked: boolean;
     label: string;
@@ -27,32 +27,43 @@
 <style>
   .switch {
     position: relative;
-    width: 34px;
-    height: 20px;
+    width: 32px;
+    height: 19px;
     flex: none;
     border-radius: var(--r-full);
     background: var(--line-strong);
-    transition: background var(--dur) var(--ease);
+    box-shadow: inset 0 0.5px 1.5px oklch(0 0 0 / 0.18);
+    transition: background 180ms var(--ease);
   }
   .switch.on {
     background: var(--glow);
   }
   .switch:disabled {
     opacity: 0.5;
-    cursor: default;
+  }
+  .switch:focus-visible {
+    border-radius: var(--r-full);
   }
   .knob {
     position: absolute;
     top: 2px;
     left: 2px;
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
     border-radius: 50%;
     background: #fff;
-    box-shadow: 0 1px 2px oklch(0 0 0 / 0.25);
-    transition: transform var(--dur) var(--ease);
+    box-shadow:
+      0 0 0 0.5px oklch(0 0 0 / 0.08),
+      0 1px 2.5px oklch(0 0 0 / 0.28);
+    transition: transform 220ms var(--spring);
+  }
+  .switch:active:not(:disabled) .knob {
+    width: 18px;
   }
   .on .knob {
-    transform: translateX(14px);
+    transform: translateX(13px);
+  }
+  .on:active:not(:disabled) .knob {
+    transform: translateX(10px);
   }
 </style>

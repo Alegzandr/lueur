@@ -3,7 +3,7 @@
 // change to the backend.
 
 import * as ipc from "./ipc";
-import { t } from "./i18n";
+import { errorDetail, errorText, t } from "./i18n";
 import {
   defaultConfig,
   type AppConfig,
@@ -20,6 +20,8 @@ export interface Toast {
   id: number;
   kind: "info" | "error";
   msg: string;
+  /** Untranslated technical cause, shown on hover. */
+  detail?: string;
   action?: { label: string; run: () => void };
 }
 
@@ -104,7 +106,7 @@ export async function persistNow(): Promise<void> {
   try {
     await ipc.saveConfig($state.snapshot(app.config));
   } catch (e) {
-    notify("error", t("err_save", { e: errMsg(e) }));
+    fail(e, "err_save");
   }
 }
 
@@ -126,7 +128,7 @@ export async function bootstrap(): Promise<void> {
     // Running already (autostart): it was started from the saved config.
     if (app.status.running) app.startedWith = topology();
   } catch (e) {
-    notify("error", t("err_load", { e: errMsg(e) }));
+    fail(e, "err_load");
   } finally {
     app.ready = true;
   }
@@ -162,7 +164,7 @@ export async function toggleEffect(): Promise<void> {
       if (app.status.connected_lights === 0) notify("error", t("started_silent"));
     }
   } catch (e) {
-    notify("error", errMsg(e));
+    fail(e);
   } finally {
     app.busy = false;
   }
@@ -179,7 +181,7 @@ export async function restartEffect(): Promise<void> {
     app.startedWith = topology();
   } catch (e) {
     await refreshStatus();
-    notify("error", errMsg(e));
+    fail(e);
   } finally {
     app.busy = false;
   }
@@ -193,7 +195,7 @@ export async function setLightPower(lightId: string, on: boolean): Promise<void>
     await ipc.setLightPower(lightId, on);
     app.power[lightId] = on;
   } catch (e) {
-    notify("error", t("err_power", { e: errMsg(e) }));
+    fail(e);
   } finally {
     delete app.powerBusy[lightId];
   }
@@ -214,11 +216,11 @@ export async function setAllPower(on: boolean): Promise<void> {
     if (res.failures.length > 0) {
       notify(
         "error",
-        t("partial_power", { ok: res.succeeded, total: res.total, details: res.failures.join("; ") }),
+        t("partial_power", { ok: res.succeeded, total: res.total, names: res.failures.join(", ") }),
       );
     }
   } catch (e) {
-    notify("error", errMsg(e));
+    fail(e);
   } finally {
     app.busy = false;
   }
@@ -232,7 +234,7 @@ export async function identify(ip: string, port: number): Promise<void> {
   try {
     await ipc.testDevice(ip, port, ...IDENTIFY_RGB);
   } catch (e) {
-    notify("error", t("err_power", { e: errMsg(e) }));
+    fail(e);
   }
 }
 
@@ -277,7 +279,7 @@ export async function scan(timeoutMs = 3000, quiet = false): Promise<void> {
       }
     }
   } catch (e) {
-    if (!quiet) notify("error", t("err_scan", { e: errMsg(e) }));
+    if (!quiet) fail(e);
   } finally {
     app.scanning = false;
   }
@@ -427,8 +429,14 @@ export function dismiss(id: number): void {
   app.toasts = app.toasts.filter((t) => t.id !== id);
 }
 
-export function errMsg(e: unknown): string {
-  if (typeof e === "string") return e;
-  if (e instanceof Error) return e.message;
-  return String(e);
+/**
+ * Report a failure. Backend errors arrive as codes and are worded in the
+ * interface language; `fallback` words anything else (a frontend-only step).
+ */
+export function fail(e: unknown, fallback?: "err_save" | "err_load" | "err_displays"): void {
+  const coded = typeof e === "object" && e !== null && "code" in e;
+  const msg = coded || !fallback ? errorText(e) : t(fallback);
+  const id = ++toastSeq;
+  app.toasts = [...app.toasts.slice(-2), { id, kind: "error", msg, detail: errorDetail(e) }];
+  setTimeout(() => dismiss(id), 7000);
 }

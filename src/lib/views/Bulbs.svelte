@@ -73,7 +73,6 @@
             <p>{t("listening")}</p>
           {:else if app.hasScanned}
             <p class="empty-title">{t("none_title")}</p>
-            <p>{t("none_text")}</p>
           {:else}
             <p class="empty-title">{t("first_title")}</p>
             <p>{t("first_text")}</p>
@@ -90,7 +89,7 @@
                 Yeelight {d.model || ""} · {d.ip}{#if !supportsMusic(d)}<span class="warn">, {t("no_music")}</span>{/if}
               </div>
             </div>
-            <button class="btn plain sm" title={t("identify_hint")} onclick={() => identify(d.ip, d.port)}>
+            <button class="btn plain sm" title={t("identify_tip")} onclick={() => identify(d.ip, d.port)}>
               {t("identify")}
             </button>
             {#if owner}
@@ -134,10 +133,10 @@
               {#if b}{b.ip}{:else}<span class="warn">{t("pick_above")}</span>{/if}
             </div>
             {#if b}
-              <button class="btn plain sm" title={t("identify_hint")} onclick={() => identify(b.ip, b.port)}>
+              <button class="btn plain sm" title={t("identify_tip")} onclick={() => identify(b.ip, b.port)}>
                 {t("identify")}
               </button>
-              <button class="btn plain sm" title={t("unassign_hint")} onclick={() => unassign(l.id)}>
+              <button class="btn plain sm" title={t("unassign_tip")} onclick={() => unassign(l.id)}>
                 {t("unassign")}
               </button>
             {/if}

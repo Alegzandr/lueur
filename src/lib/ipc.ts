@@ -180,8 +180,8 @@ export async function setUiLanguage(lang: "en" | "fr"): Promise<void> {
 
 /** Called when the effect is started or stopped from the tray. The payload
  *  is an error message when a start failed. */
-export async function onEffectChanged(cb: (error: string | null) => void): Promise<() => void> {
+export async function onEffectChanged(cb: (error: unknown) => void): Promise<() => void> {
   if (!inTauri()) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
-  return listen<string | null>("effect-changed", (e) => cb(e.payload));
+  return listen<unknown>("effect-changed", (e) => cb(e.payload));
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { app, edit, errMsg, notify } from "../state.svelte";
+  import { app, edit, fail } from "../state.svelte";
   import { t, pct } from "../i18n";
   import * as ipc from "../ipc";
   import {
@@ -24,7 +24,7 @@
     try {
       monitors = await ipc.listMonitors();
     } catch (e) {
-      notify("error", t("err_displays", { e: errMsg(e) }));
+      fail(e, "err_displays");
     }
     version = await ipc.appVersion().catch(() => "");
   });
@@ -36,7 +36,7 @@
       await ipc.setRunOnStartup(v);
       edit((x) => (x.behavior.run_on_startup = v));
     } catch (e) {
-      notify("error", t("err_login", { e: errMsg(e) }));
+      fail(e);
     }
   }
 
@@ -45,11 +45,11 @@
     else edit((x) => (x.behavior[key] = v));
   }
 
-  const behaviour = $derived<{ key: keyof BehaviorSettings; label: string; hint: string }[]>([
-    { key: "run_on_startup", label: t("open_login"), hint: t("open_login_hint") },
-    { key: "start_minimized", label: t("start_tray"), hint: t("start_tray_hint") },
-    { key: "autostart_effect", label: t("autostart"), hint: t("autostart_hint") },
-    { key: "minimize_to_tray", label: t("keep_running"), hint: t("keep_running_hint") },
+  const behaviour = $derived<{ key: keyof BehaviorSettings; label: string }[]>([
+    { key: "run_on_startup", label: t("open_login") },
+    { key: "start_minimized", label: t("start_tray") },
+    { key: "autostart_effect", label: t("autostart") },
+    { key: "minimize_to_tray", label: t("keep_running") },
   ]);
 
   const appearanceOptions = $derived<{ value: Appearance; label: string }[]>([
@@ -74,7 +74,7 @@
   <section class="group">
     <div class="group-head"><h2 class="group-title">{t("picture")}</h2></div>
     <div class="card rows">
-      <Row label={t("display")} hint={t("display_hint")}>
+      <Row label={t("display")}>
         <select
           value={c.capture.monitor_index}
           onchange={(e) => edit((x) => (x.capture.monitor_index = +e.currentTarget.value))}
@@ -87,7 +87,7 @@
           {/if}
         </select>
       </Row>
-      <Row label={t("fps")} hint={t("fps_hint")}>
+      <Row label={t("fps")} tip={t("fps_tip")}>
         <Slider
           label={t("fps")}
           value={c.capture.target_fps}
@@ -99,7 +99,7 @@
           onchange={(v) => edit((x) => (x.capture.target_fps = v))}
         />
       </Row>
-      <Row label={t("sampling")} hint={t("sampling_hint")}>
+      <Row label={t("sampling")} tip={t("sampling_tip")}>
         <Slider
           label={t("sampling")}
           value={c.engine.sample_step}
@@ -117,7 +117,7 @@
   <section class="group">
     <div class="group-head"><h2 class="group-title">{t("colour")}</h2></div>
     <div class="card rows">
-      <Row label={t("smoothing")} hint={t("smoothing_hint")}>
+      <Row label={t("smoothing")} tip={t("smoothing_tip")}>
         <Slider
           label={t("smoothing")}
           value={c.engine.smoothing}
@@ -126,7 +126,6 @@
           step={0.01}
           def={DEF.engine.smoothing}
           format={pct}
-          ends={[t("end_calm"), t("end_snappy")]}
           onchange={(v) => edit((x) => (x.engine.smoothing = v))}
         />
       </Row>
@@ -142,7 +141,7 @@
           onchange={(v) => edit((x) => (x.engine.brightness = v))}
         />
       </Row>
-      <Row label={t("intensity")} hint={t("intensity_hint")}>
+      <Row label={t("intensity")} tip={t("intensity_tip")}>
         <Slider
           label={t("intensity")}
           value={c.engine.saturation}
@@ -154,7 +153,7 @@
           onchange={(v) => edit((x) => (x.engine.saturation = v))}
         />
       </Row>
-      <Row label={t("white_grey")} hint={t("white_grey_hint")}>
+      <Row label={t("white_grey")} tip={t("white_grey_tip")}>
         <Slider
           label={t("white_grey")}
           value={c.engine.white_threshold}
@@ -167,7 +166,7 @@
         />
       </Row>
       {#if c.engine.white_threshold > 0}
-        <Row label={t("warmth")} hint={t("warmth_hint")}>
+        <Row label={t("warmth")}>
           <Slider
             label={t("warmth")}
             value={c.engine.white_kelvin}
@@ -176,12 +175,11 @@
             step={100}
             def={DEF.engine.white_kelvin}
             format={(v) => `${v} K`}
-            ends={[t("end_warm"), t("end_cool")]}
             onchange={(v) => edit((x) => (x.engine.white_kelvin = v))}
           />
         </Row>
       {/if}
-      <Row label={t("dark_scenes")} hint={t("dark_scenes_hint")}>
+      <Row label={t("dark_scenes")} tip={t("dark_scenes_tip")}>
         <Slider
           label={t("dark_scenes")}
           value={c.engine.black_threshold}
@@ -199,7 +197,7 @@
   <section class="group">
     <div class="group-head"><h2 class="group-title">{t("transitions")}</h2></div>
     <div class="card rows">
-      <Row label={t("fade")} hint={t("fade_hint")}>
+      <Row label={t("fade")} tip={t("fade_tip")}>
         <Switch
           checked={c.transition.effect === "smooth"}
           label={t("fade")}
@@ -243,7 +241,7 @@
         />
       </Row>
       {#each behaviour as b (b.key)}
-        <Row label={b.label} hint={b.hint}>
+        <Row label={b.label}>
           <Switch checked={c.behavior[b.key]} label={b.label} onchange={(v) => setBehavior(b.key, v)} />
         </Row>
       {/each}
@@ -251,19 +249,20 @@
   </section>
 
   <footer class="about">
-    <p>{t("about", { v: version })}</p>
+    <p>Lueur {version}</p>
   </footer>
 </div>
 
 <style>
   .about {
     margin-top: var(--s-6);
-    padding: 0 var(--s-1);
+    text-align: center;
     font-size: var(--t-sm);
     color: var(--text-3);
-    max-width: 64ch;
   }
   select {
-    max-width: 340px;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>

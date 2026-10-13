@@ -7,6 +7,7 @@
 //! * Discovery/connect timeouts are clamped so a malicious reply can't wedge us.
 
 use crate::capture::{self, MonitorInfo};
+use crate::error::{AppError, AppResult};
 use crate::runner::{self, LiveSettings};
 use crate::state::AppState;
 use lueur_core::color::Rgb;
@@ -28,7 +29,7 @@ pub struct EffectStatus {
 pub struct PowerResult {
     pub total: usize,
     pub succeeded: usize,
-    /// Human-readable "name (ip): reason" entries for the bulbs that failed.
+    /// Names of the lights whose bulb did not answer.
     pub failures: Vec<String>,
 }
 
@@ -36,35 +37,43 @@ pub struct PowerResult {
 const POWER_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Blocking helper: open a control connection and flip the bulb's power.
-fn power_one(ip: &str, port: u16, on: bool) -> Result<(), String> {
-    let mut ctrl = YeelightControl::connect(ip, port, POWER_TIMEOUT)
-        .map_err(|e| format!("connect failed: {e}"))?;
-    ctrl.set_power(on).map_err(|e| e.to_string())
+fn power_one(ip: &str, port: u16, on: bool) -> AppResult<()> {
+    let mut ctrl =
+        YeelightControl::connect(ip, port, POWER_TIMEOUT).map_err(|e| unreachable(ip, e))?;
+    ctrl.set_power(on).map_err(|e| unreachable(ip, e))
+}
+
+fn unreachable(ip: &str, e: impl std::fmt::Display) -> AppError {
+    AppError::new("bulb_unreachable").subject(ip).detail(e)
+}
+
+fn poisoned() -> AppError {
+    AppError::internal("lock poisoned")
 }
 
 /// Return the current configuration.
 #[tauri::command]
-pub fn get_config(state: State<AppState>) -> Result<AppConfig, String> {
+pub fn get_config(state: State<AppState>) -> AppResult<AppConfig> {
     state
         .config
         .lock()
         .map(|c| c.clone())
-        .map_err(|_| "config lock poisoned".to_string())
+        .map_err(|_| poisoned())
 }
 
 /// Replace and persist the configuration. If the effect is running, live-tunable
 /// settings are pushed to it immediately.
 #[tauri::command]
-pub fn save_config(state: State<AppState>, config: AppConfig) -> Result<(), String> {
+pub fn save_config(state: State<AppState>, config: AppConfig) -> AppResult<()> {
     {
-        let mut guard = state.config.lock().map_err(|_| "config lock poisoned")?;
+        let mut guard = state.config.lock().map_err(|_| poisoned())?;
         *guard = config;
     }
     state.persist()?;
 
     // Push live settings to a running effect (topology changes need a restart,
     // which the UI performs explicitly).
-    let cfg = state.config.lock().map_err(|_| "config lock poisoned")?;
+    let cfg = state.config.lock().map_err(|_| poisoned())?;
     if let Ok(guard) = state.effect.lock()
         && let Some(handle) = guard.as_ref()
     {
@@ -79,48 +88,50 @@ pub fn save_config(state: State<AppState>, config: AppConfig) -> Result<(), Stri
 
 /// List connected monitors for the capture picker.
 #[tauri::command]
-pub fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
+pub fn list_monitors() -> AppResult<Vec<MonitorInfo>> {
     capture::list_monitors()
 }
 
 /// Discover Yeelight bulbs on the LAN. `timeout_ms` is clamped to 500..=8000.
 #[tauri::command]
-pub async fn discover_devices(timeout_ms: Option<u64>) -> Result<Vec<DiscoveredDevice>, String> {
+pub async fn discover_devices(timeout_ms: Option<u64>) -> AppResult<Vec<DiscoveredDevice>> {
     let ms = timeout_ms.unwrap_or(2500).clamp(500, 8000);
     // Discovery blocks on UDP; run it off the async runtime's worker.
     tauri::async_runtime::spawn_blocking(move || {
-        yeelight::discover(Duration::from_millis(ms)).map_err(|e| e.to_string())
+        yeelight::discover(Duration::from_millis(ms))
+            .map_err(|e| AppError::new("discovery_failed").detail(e))
     })
     .await
-    .map_err(|e| format!("discovery task failed: {e}"))?
+    .map_err(AppError::internal)?
 }
 
 /// Flash a bulb a colour so the user can identify it while placing lights.
 /// Uses a plain (rate-limited) control connection — this is a one-shot.
 #[tauri::command]
-pub async fn test_device(ip: String, port: Option<u16>, r: u8, g: u8, b: u8) -> Result<(), String> {
+pub async fn test_device(ip: String, port: Option<u16>, r: u8, g: u8, b: u8) -> AppResult<()> {
     validate_ip(&ip)?;
     let port = port.unwrap_or(yeelight::DEFAULT_CONTROL_PORT);
     tauri::async_runtime::spawn_blocking(move || {
         let mut ctrl = YeelightControl::connect(&ip, port, Duration::from_secs(3))
-            .map_err(|e| format!("connect failed: {e}"))?;
-        ctrl.set_power(true).map_err(|e| e.to_string())?;
-        ctrl.set_rgb(Rgb::new(r, g, b)).map_err(|e| e.to_string())?;
-        Ok::<(), String>(())
+            .map_err(|e| unreachable(&ip, e))?;
+        ctrl.set_power(true).map_err(|e| unreachable(&ip, e))?;
+        ctrl.set_rgb(Rgb::new(r, g, b))
+            .map_err(|e| unreachable(&ip, e))?;
+        Ok::<(), AppError>(())
     })
     .await
-    .map_err(|e| format!("test task failed: {e}"))?
+    .map_err(AppError::internal)?
 }
 
 /// Turn a single bulb on or off by address. Used by the per-light power button
 /// and by anything that knows an address but not a room light.
 #[tauri::command]
-pub async fn set_device_power(ip: String, port: Option<u16>, on: bool) -> Result<(), String> {
+pub async fn set_device_power(ip: String, port: Option<u16>, on: bool) -> AppResult<()> {
     validate_ip(&ip)?;
     let port = port.unwrap_or(yeelight::DEFAULT_CONTROL_PORT);
     tauri::async_runtime::spawn_blocking(move || power_one(&ip, port, on))
         .await
-        .map_err(|e| format!("power task failed: {e}"))?
+        .map_err(AppError::internal)?
 }
 
 /// Turn the bulb bound to a room light on or off.
@@ -132,17 +143,17 @@ pub async fn set_light_power(
     state: State<'_, AppState>,
     light_id: String,
     on: bool,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let binding = {
-        let cfg = state.config.lock().map_err(|_| "config lock poisoned")?;
+        let cfg = state.config.lock().map_err(|_| poisoned())?;
         cfg.binding_for(&light_id)
             .cloned()
-            .ok_or_else(|| format!("no bulb bound to light {light_id}"))?
+            .ok_or_else(|| AppError::new("light_unbound"))?
     };
     validate_ip(&binding.ip)?;
     tauri::async_runtime::spawn_blocking(move || power_one(&binding.ip, binding.port, on))
         .await
-        .map_err(|e| format!("power task failed: {e}"))?
+        .map_err(AppError::internal)?
 }
 
 /// Turn every bound bulb on or off at once.
@@ -155,17 +166,31 @@ pub async fn set_all_power(
     app: AppHandle,
     state: State<'_, AppState>,
     on: bool,
-) -> Result<PowerResult, String> {
+) -> AppResult<PowerResult> {
     if !on {
         stop_effect(app, state.clone()).await?;
     }
 
-    let bindings = {
-        let cfg = state.config.lock().map_err(|_| "config lock poisoned")?;
-        cfg.bindings.clone()
+    // Each bulb with the name of the light it drives, which is what the
+    // user calls it.
+    let bindings: Vec<(lueur_core::config::DeviceBinding, String)> = {
+        let cfg = state.config.lock().map_err(|_| poisoned())?;
+        cfg.bindings
+            .iter()
+            .map(|b| {
+                let name = cfg
+                    .room
+                    .lights
+                    .iter()
+                    .find(|l| l.id == b.light_id)
+                    .map(|l| l.name.clone())
+                    .unwrap_or_else(|| b.ip.clone());
+                (b.clone(), name)
+            })
+            .collect()
     };
     if bindings.is_empty() {
-        return Err("no bulbs are bound — add bulbs in the Bulbs view".into());
+        return Err(AppError::new("no_bindings"));
     }
 
     // One thread per bulb: a bulb that is unplugged costs the full timeout, and
@@ -174,20 +199,18 @@ pub async fn set_all_power(
         let outcomes: Vec<Result<(), String>> = std::thread::scope(|scope| {
             let handles: Vec<_> = bindings
                 .iter()
-                .map(|b| {
+                .map(|(b, name)| {
                     scope.spawn(move || {
-                        validate_ip(&b.ip)?;
-                        power_one(&b.ip, b.port, on)
-                            .map_err(|e| format!("{} ({}): {e}", b.name, b.ip))
+                        validate_ip(&b.ip)
+                            .and_then(|_| power_one(&b.ip, b.port, on))
+                            .map_err(|_| name.clone())
                     })
                 })
                 .collect();
             handles
                 .into_iter()
-                .map(|h| {
-                    h.join()
-                        .unwrap_or_else(|_| Err("power thread panicked".into()))
-                })
+                .zip(&bindings)
+                .map(|(h, (_, name))| h.join().unwrap_or_else(|_| Err(name.clone())))
                 .collect()
         });
 
@@ -200,17 +223,14 @@ pub async fn set_all_power(
         }
     })
     .await
-    .map_err(|e| format!("power task failed: {e}"))?;
+    .map_err(AppError::internal)?;
 
     Ok(result)
 }
 
 /// Start the ambilight effect from the saved config.
 #[tauri::command]
-pub async fn start_effect(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<EffectStatus, String> {
+pub async fn start_effect(app: AppHandle, state: State<'_, AppState>) -> AppResult<EffectStatus> {
     // Stop any existing effect first (idempotent restart).
     stop_effect(app.clone(), state.clone()).await?;
 
@@ -218,16 +238,16 @@ pub async fn start_effect(
         .config
         .lock()
         .map(|c| c.clone())
-        .map_err(|_| "config lock poisoned".to_string())?;
+        .map_err(|_| poisoned())?;
 
     // `runner::start` blocks (music-mode handshake); keep it off the UI thread.
     let handle = tauri::async_runtime::spawn_blocking(move || runner::start(&config))
         .await
-        .map_err(|e| format!("start task failed: {e}"))??;
+        .map_err(AppError::internal)??;
 
     let connected = handle.connected_lights;
     {
-        let mut guard = state.effect.lock().map_err(|_| "effect lock poisoned")?;
+        let mut guard = state.effect.lock().map_err(|_| poisoned())?;
         *guard = Some(handle);
     }
     crate::tray::refresh(&app);
@@ -239,16 +259,16 @@ pub async fn start_effect(
 
 /// Stop the effect if running.
 #[tauri::command]
-pub async fn stop_effect(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn stop_effect(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
     let handle = {
-        let mut guard = state.effect.lock().map_err(|_| "effect lock poisoned")?;
+        let mut guard = state.effect.lock().map_err(|_| poisoned())?;
         guard.take()
     };
     if let Some(mut handle) = handle {
         // stop() joins the loop thread; do it off the UI thread.
         tauri::async_runtime::spawn_blocking(move || handle.stop())
             .await
-            .map_err(|e| format!("stop task failed: {e}"))?;
+            .map_err(AppError::internal)?;
     }
     crate::tray::refresh(&app);
     Ok(())
@@ -256,22 +276,19 @@ pub async fn stop_effect(app: AppHandle, state: State<'_, AppState>) -> Result<(
 
 /// Record the language the interface settled on, for the tray menu.
 #[tauri::command]
-pub fn set_ui_language(app: AppHandle, state: State<AppState>, lang: String) -> Result<(), String> {
+pub fn set_ui_language(app: AppHandle, state: State<AppState>, lang: String) -> AppResult<()> {
     let lang = match lang.as_str() {
         "fr" => "fr",
         _ => "en",
     };
-    *state
-        .ui_language
-        .lock()
-        .map_err(|_| "language lock poisoned")? = lang.to_string();
+    *state.ui_language.lock().map_err(|_| poisoned())? = lang.to_string();
     crate::tray::refresh(&app);
     Ok(())
 }
 
 /// Report whether the effect is running.
 #[tauri::command]
-pub fn effect_status(state: State<AppState>) -> Result<EffectStatus, String> {
+pub fn effect_status(state: State<AppState>) -> AppResult<EffectStatus> {
     let running = state.is_running();
     let connected = state
         .effect
@@ -288,20 +305,20 @@ pub fn effect_status(state: State<AppState>) -> Result<EffectStatus, String> {
 /// Enable or disable launch-on-login via the autostart plugin, and persist the
 /// preference in config.
 #[tauri::command]
-pub fn set_run_on_startup(
-    app: AppHandle,
-    state: State<AppState>,
-    enabled: bool,
-) -> Result<(), String> {
+pub fn set_run_on_startup(app: AppHandle, state: State<AppState>, enabled: bool) -> AppResult<()> {
     use tauri_plugin_autostart::ManagerExt;
     let manager = app.autolaunch();
     if enabled {
-        manager.enable().map_err(|e| e.to_string())?;
+        manager
+            .enable()
+            .map_err(|e| AppError::new("login_item_failed").detail(e))?;
     } else {
-        manager.disable().map_err(|e| e.to_string())?;
+        manager
+            .disable()
+            .map_err(|e| AppError::new("login_item_failed").detail(e))?;
     }
     {
-        let mut cfg = state.config.lock().map_err(|_| "config lock poisoned")?;
+        let mut cfg = state.config.lock().map_err(|_| poisoned())?;
         cfg.behavior.run_on_startup = enabled;
     }
     state.persist()
@@ -309,18 +326,18 @@ pub fn set_run_on_startup(
 
 /// Show and focus the main window (used by the tray "Open" action / frontend).
 #[tauri::command]
-pub fn show_main_window(app: AppHandle) -> Result<(), String> {
+pub fn show_main_window(app: AppHandle) -> AppResult<()> {
     if let Some(win) = app.get_webview_window("main") {
-        win.show().map_err(|e| e.to_string())?;
-        win.set_focus().map_err(|e| e.to_string())?;
+        win.show().map_err(AppError::internal)?;
+        win.set_focus().map_err(AppError::internal)?;
     }
     Ok(())
 }
 
 /// Reject anything that isn't a bare IPv4/IPv6 address, so a command can never
 /// be tricked into connecting somewhere unexpected via a hostname or URL.
-fn validate_ip(ip: &str) -> Result<(), String> {
+fn validate_ip(ip: &str) -> AppResult<()> {
     ip.parse::<std::net::IpAddr>()
         .map(|_| ())
-        .map_err(|_| format!("invalid IP address: {ip}"))
+        .map_err(|_| AppError::new("invalid_ip").subject(ip))
 }

@@ -96,6 +96,7 @@ lueur/
 │   ├─ runner.rs          The live capture→compute→push loop
 │   ├─ commands.rs        Validated IPC surface
 │   ├─ tray.rs            Tray menu: start/stop, open, quit
+│   ├─ error.rs           Errors sent as codes the UI words in its language
 │   └─ lib.rs             Tray, autostart, single-instance, window handling
 └─ src/                   Svelte 5 (runes) + TypeScript frontend
     ├─ lib/state.svelte.ts  App state and every action the UI can take

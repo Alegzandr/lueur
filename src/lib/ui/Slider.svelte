@@ -74,7 +74,7 @@
 <style>
   .slider {
     width: 100%;
-    min-width: 220px;
+    min-width: 0;
   }
   .track-row {
     display: flex;
@@ -82,7 +82,8 @@
     gap: var(--s-3);
   }
   .value {
-    min-width: 7ch;
+    white-space: nowrap;
+    min-width: 6.5ch;
     text-align: right;
     color: var(--text-2);
     font-size: var(--t-sm);
@@ -108,7 +109,7 @@
     display: flex;
     justify-content: space-between;
     margin-top: 2px;
-    margin-right: calc(7ch + 20px + var(--s-3) + var(--s-1));
+    margin-right: calc(6.5ch + 20px + var(--s-3) + var(--s-1));
     font-size: var(--t-xs);
     color: var(--text-3);
   }
