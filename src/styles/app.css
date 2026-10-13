@@ -1,68 +1,59 @@
 /* Lueur design system.
 
-   A classic desktop look: warm paper neutrals in light mode, warm charcoal in
-   dark mode, ink for primary actions and a single amber accent reserved for
-   light itself (an effect running, a bulb on, the selection on the plan). The
-   page titles use a book serif; everything else uses the platform UI face. */
+   Deliberately plain, in the manner of a native desktop app: neutral greys,
+   the platform's own typeface, hairline borders rather than drop shadows.
+   The only colour in the chrome is amber, and it always means light: the
+   effect running, a bulb on, the current selection on the plan. */
 
 :root {
-  /* Light theme (default). Neutrals carry a faint warm hue, never pure grey. */
-  --bg: oklch(0.975 0.004 85);
-  --sidebar: oklch(0.952 0.006 85);
-  --surface: oklch(0.995 0.002 85);
-  --surface-2: oklch(0.965 0.005 85);
-  --surface-hover: oklch(0.94 0.007 85);
-  --sunken: oklch(0.955 0.006 85);
+  --bg: oklch(0.968 0 0);
+  --sidebar: oklch(0.945 0 0);
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.955 0 0);
+  --surface-hover: oklch(0.925 0 0);
+  --sunken: oklch(0.955 0 0);
 
-  --line: oklch(0.89 0.008 85);
-  --line-strong: oklch(0.8 0.01 85);
+  --line: oklch(0.895 0 0);
+  --line-strong: oklch(0.8 0 0);
 
-  --text: oklch(0.24 0.012 65);
-  --text-2: oklch(0.45 0.012 65);
-  --text-3: oklch(0.58 0.01 65);
+  --text: oklch(0.22 0 0);
+  --text-2: oklch(0.44 0 0);
+  --text-3: oklch(0.56 0 0);
 
-  /* Ink: primary buttons, selected segments, switches. */
-  --ink: oklch(0.27 0.014 60);
-  --ink-hover: oklch(0.2 0.014 60);
-  --on-ink: oklch(0.985 0.004 85);
+  /* Ink: primary buttons and the selected segment. */
+  --ink: oklch(0.26 0 0);
+  --ink-hover: oklch(0.18 0 0);
+  --on-ink: oklch(0.99 0 0);
 
-  /* The glow. Used for "on" and for the current selection, nothing else. */
-  --glow: oklch(0.74 0.15 68);
-  --glow-text: oklch(0.52 0.13 60);
-  --glow-soft: oklch(0.74 0.15 68 / 0.14);
+  --glow: oklch(0.75 0.15 70);
+  --glow-text: oklch(0.52 0.12 62);
+  --glow-soft: oklch(0.75 0.15 70 / 0.16);
 
   --ok: oklch(0.55 0.13 150);
-  --danger: oklch(0.55 0.18 28);
-  --danger-soft: oklch(0.55 0.18 28 / 0.1);
+  --danger: oklch(0.55 0.19 27);
+  --danger-soft: oklch(0.55 0.19 27 / 0.1);
 
   /* Screen zones on the plan. Equal lightness so none dominates. */
   --zone-left: oklch(0.66 0.14 30);
-  --zone-center: oklch(0.7 0.13 85);
-  --zone-right: oklch(0.62 0.11 230);
+  --zone-center: oklch(0.72 0.13 85);
+  --zone-right: oklch(0.62 0.11 235);
 
-  /* The room drawing */
-  --plan-bg: oklch(0.965 0.005 85);
-  --plan-grid: oklch(0.91 0.007 85);
-  --plan-floor: oklch(0.995 0.002 85);
-  --plan-wall: oklch(0.34 0.012 60);
+  --plan-bg: oklch(0.955 0 0);
+  --plan-grid: oklch(0.88 0 0);
+  --plan-floor: oklch(1 0 0);
+  --plan-wall: oklch(0.3 0 0);
 
-  --shadow-1: 0 1px 2px oklch(0.3 0.02 60 / 0.06), 0 0 0 1px oklch(0.3 0.02 60 / 0.06);
-  --shadow-2: 0 1px 2px oklch(0.3 0.02 60 / 0.06), 0 6px 20px -6px oklch(0.3 0.02 60 / 0.18),
-    0 0 0 1px oklch(0.3 0.02 60 / 0.07);
+  --shadow-1: 0 1px 1px oklch(0 0 0 / 0.06);
+  --shadow-2: 0 8px 24px -6px oklch(0 0 0 / 0.22), 0 0 0 1px oklch(0 0 0 / 0.08);
 
-  /* Type */
   --font: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, Ubuntu,
-    "Helvetica Neue", sans-serif;
-  /* A book serif present on every desktop, so nothing has to be shipped. */
-  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua",
-    "URW Palladio L", P052, Georgia, serif;
+    Cantarell, "Helvetica Neue", sans-serif;
 
   --t-xs: 0.6875rem; /* 11 */
   --t-sm: 0.75rem; /* 12 */
   --t-md: 0.8125rem; /* 13: body and controls */
   --t-lg: 0.9375rem; /* 15 */
-  --t-xl: 1.375rem; /* 22: card titles */
-  --t-2xl: 1.875rem; /* 30: page titles */
+  --t-xl: 1.25rem; /* 20: view titles */
 
   --s-1: 4px;
   --s-2: 8px;
@@ -73,85 +64,83 @@
   --s-7: 40px;
   --s-8: 56px;
 
-  --r-sm: 6px;
-  --r-md: 8px;
-  --r-lg: 12px;
+  --r-sm: 5px;
+  --r-md: 6px;
+  --r-lg: 8px;
   --r-full: 999px;
 
-  --dur: 140ms;
+  --dur: 120ms;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 
   color-scheme: light;
 }
 
-/* Dark theme, applied when the OS asks for it (unless the user forced light),
-   or when the user forced dark. */
+/* The dark palette: when the OS asks for it (unless light is forced), or
+   when dark is forced. CSS has no way to share one block between the two. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: oklch(0.185 0.006 70);
-    --sidebar: oklch(0.165 0.006 70);
-    --surface: oklch(0.215 0.007 70);
-    --surface-2: oklch(0.235 0.007 70);
-    --surface-hover: oklch(0.265 0.008 70);
-    --sunken: oklch(0.165 0.006 70);
-    --line: oklch(0.29 0.008 70);
-    --line-strong: oklch(0.38 0.01 70);
-    --text: oklch(0.94 0.006 85);
-    --text-2: oklch(0.76 0.008 80);
-    --text-3: oklch(0.62 0.008 75);
-    --ink: oklch(0.93 0.008 85);
-    --ink-hover: oklch(0.99 0.004 85);
-    --on-ink: oklch(0.2 0.008 70);
+    --bg: oklch(0.2 0 0);
+    --sidebar: oklch(0.175 0 0);
+    --surface: oklch(0.235 0 0);
+    --surface-2: oklch(0.255 0 0);
+    --surface-hover: oklch(0.29 0 0);
+    --sunken: oklch(0.175 0 0);
+    --line: oklch(0.31 0 0);
+    --line-strong: oklch(0.4 0 0);
+    --text: oklch(0.94 0 0);
+    --text-2: oklch(0.76 0 0);
+    --text-3: oklch(0.62 0 0);
+    --ink: oklch(0.92 0 0);
+    --ink-hover: oklch(0.99 0 0);
+    --on-ink: oklch(0.2 0 0);
     --glow: oklch(0.8 0.14 72);
     --glow-text: oklch(0.82 0.13 75);
-    --glow-soft: oklch(0.8 0.14 72 / 0.14);
+    --glow-soft: oklch(0.8 0.14 72 / 0.16);
     --ok: oklch(0.76 0.13 150);
-    --danger: oklch(0.72 0.16 28);
-    --danger-soft: oklch(0.72 0.16 28 / 0.14);
+    --danger: oklch(0.72 0.16 27);
+    --danger-soft: oklch(0.72 0.16 27 / 0.15);
     --zone-left: oklch(0.72 0.13 30);
     --zone-center: oklch(0.78 0.12 85);
-    --zone-right: oklch(0.72 0.1 230);
-    --plan-bg: oklch(0.17 0.006 70);
-    --plan-grid: oklch(0.225 0.007 70);
-    --plan-floor: oklch(0.21 0.007 70);
-    --plan-wall: oklch(0.82 0.01 80);
-    --shadow-1: 0 1px 2px oklch(0 0 0 / 0.3), 0 0 0 1px oklch(1 0 0 / 0.05);
-    --shadow-2: 0 1px 2px oklch(0 0 0 / 0.3), 0 10px 30px -8px oklch(0 0 0 / 0.55),
-      0 0 0 1px oklch(1 0 0 / 0.07);
+    --zone-right: oklch(0.72 0.1 235);
+    --plan-bg: oklch(0.175 0 0);
+    --plan-grid: oklch(0.27 0 0);
+    --plan-floor: oklch(0.225 0 0);
+    --plan-wall: oklch(0.85 0 0);
+    --shadow-1: 0 1px 1px oklch(0 0 0 / 0.3);
+    --shadow-2: 0 10px 30px -8px oklch(0 0 0 / 0.6), 0 0 0 1px oklch(1 0 0 / 0.08);
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: oklch(0.185 0.006 70);
-  --sidebar: oklch(0.165 0.006 70);
-  --surface: oklch(0.215 0.007 70);
-  --surface-2: oklch(0.235 0.007 70);
-  --surface-hover: oklch(0.265 0.008 70);
-  --sunken: oklch(0.165 0.006 70);
-  --line: oklch(0.29 0.008 70);
-  --line-strong: oklch(0.38 0.01 70);
-  --text: oklch(0.94 0.006 85);
-  --text-2: oklch(0.76 0.008 80);
-  --text-3: oklch(0.62 0.008 75);
-  --ink: oklch(0.93 0.008 85);
-  --ink-hover: oklch(0.99 0.004 85);
-  --on-ink: oklch(0.2 0.008 70);
+  --bg: oklch(0.2 0 0);
+  --sidebar: oklch(0.175 0 0);
+  --surface: oklch(0.235 0 0);
+  --surface-2: oklch(0.255 0 0);
+  --surface-hover: oklch(0.29 0 0);
+  --sunken: oklch(0.175 0 0);
+  --line: oklch(0.31 0 0);
+  --line-strong: oklch(0.4 0 0);
+  --text: oklch(0.94 0 0);
+  --text-2: oklch(0.76 0 0);
+  --text-3: oklch(0.62 0 0);
+  --ink: oklch(0.92 0 0);
+  --ink-hover: oklch(0.99 0 0);
+  --on-ink: oklch(0.2 0 0);
   --glow: oklch(0.8 0.14 72);
   --glow-text: oklch(0.82 0.13 75);
-  --glow-soft: oklch(0.8 0.14 72 / 0.14);
+  --glow-soft: oklch(0.8 0.14 72 / 0.16);
   --ok: oklch(0.76 0.13 150);
-  --danger: oklch(0.72 0.16 28);
-  --danger-soft: oklch(0.72 0.16 28 / 0.14);
+  --danger: oklch(0.72 0.16 27);
+  --danger-soft: oklch(0.72 0.16 27 / 0.15);
   --zone-left: oklch(0.72 0.13 30);
   --zone-center: oklch(0.78 0.12 85);
-  --zone-right: oklch(0.72 0.1 230);
-  --plan-bg: oklch(0.17 0.006 70);
-  --plan-grid: oklch(0.225 0.007 70);
-  --plan-floor: oklch(0.21 0.007 70);
-  --plan-wall: oklch(0.82 0.01 80);
-  --shadow-1: 0 1px 2px oklch(0 0 0 / 0.3), 0 0 0 1px oklch(1 0 0 / 0.05);
-  --shadow-2: 0 1px 2px oklch(0 0 0 / 0.3), 0 10px 30px -8px oklch(0 0 0 / 0.55),
-    0 0 0 1px oklch(1 0 0 / 0.07);
+  --zone-right: oklch(0.72 0.1 235);
+  --plan-bg: oklch(0.175 0 0);
+  --plan-grid: oklch(0.27 0 0);
+  --plan-floor: oklch(0.225 0 0);
+  --plan-wall: oklch(0.85 0 0);
+  --shadow-1: 0 1px 1px oklch(0 0 0 / 0.3);
+  --shadow-2: 0 10px 30px -8px oklch(0 0 0 / 0.6), 0 0 0 1px oklch(1 0 0 / 0.08);
   color-scheme: dark;
 }
 
@@ -222,33 +211,24 @@ button {
 
 /* --- Page scaffolding shared by every view --- */
 .page {
-  max-width: 920px;
+  max-width: 860px;
   margin: 0 auto;
-  padding: var(--s-7) var(--s-7) var(--s-8);
+  padding: var(--s-6) var(--s-7) var(--s-8);
 }
 
 .page-head {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: var(--s-5);
-  margin-bottom: var(--s-6);
+  gap: var(--s-4);
+  min-height: 32px;
+  margin-bottom: var(--s-5);
 }
 
 .page-title {
-  font-family: var(--font-display);
-  font-size: var(--t-2xl);
-  font-weight: 500;
-  line-height: 1.15;
-  letter-spacing: -0.01em;
-}
-
-.page-lede {
-  margin-top: var(--s-2);
-  color: var(--text-2);
-  font-size: var(--t-lg);
-  max-width: 58ch;
-  text-wrap: pretty;
+  font-size: var(--t-xl);
+  font-weight: 600;
+  line-height: 1.2;
 }
 
 /* A titled group of rows, in the manner of a classic preferences window. */
@@ -258,27 +238,23 @@ button {
 
 .group-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--s-3);
+  min-height: 26px;
   padding: 0 var(--s-1) var(--s-2);
 }
 
 .group-title {
-  font-size: var(--t-md);
-  font-weight: 600;
-  color: var(--text);
-}
-
-.group-note {
   font-size: var(--t-sm);
-  color: var(--text-3);
+  font-weight: 600;
+  color: var(--text-2);
 }
 
 .card {
   background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: var(--r-lg);
-  box-shadow: var(--shadow-1);
 }
 
 .rows > * + * {
@@ -303,10 +279,11 @@ button {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 30px;
+  height: 28px;
   padding: 0 var(--s-3);
   border-radius: var(--r-md);
   background: var(--surface);
+  border: 1px solid var(--line-strong);
   box-shadow: var(--shadow-1);
   color: var(--text);
   font-size: var(--t-md);
@@ -330,19 +307,22 @@ button {
 
 .btn.primary {
   background: var(--ink);
+  border-color: var(--ink);
   color: var(--on-ink);
-  box-shadow: none;
 }
 .btn.primary:hover:not(:disabled) {
   background: var(--ink-hover);
+  border-color: var(--ink-hover);
 }
 .btn.primary:disabled {
   background: var(--surface-hover);
+  border-color: var(--line);
   color: var(--text-3);
 }
 
 .btn.plain {
   background: transparent;
+  border-color: transparent;
   box-shadow: none;
   color: var(--text-2);
 }
@@ -358,13 +338,6 @@ button {
   background: var(--danger-soft);
 }
 
-.btn.lg {
-  height: 38px;
-  padding: 0 var(--s-5);
-  font-size: var(--t-lg);
-  border-radius: var(--r-md);
-}
-
 .btn.sm {
   height: 26px;
   padding: 0 var(--s-2);
@@ -373,7 +346,7 @@ button {
 
 /* Square, icon-only. */
 .btn.icon {
-  width: 30px;
+  width: 28px;
   padding: 0;
   flex: none;
 }
@@ -384,7 +357,7 @@ button {
 /* --- Form controls --- */
 input[type="text"],
 select {
-  height: 30px;
+  height: 28px;
   padding: 0 var(--s-2);
   border-radius: var(--r-md);
   border: 1px solid var(--line-strong);

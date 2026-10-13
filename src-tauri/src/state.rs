@@ -12,6 +12,9 @@ pub struct AppState {
     pub config: Mutex<AppConfig>,
     /// The running effect, if any.
     pub effect: Mutex<Option<runner::Handle>>,
+    /// Language the interface resolved to ("en" or "fr"), reported by the
+    /// frontend so the tray menu can match it.
+    pub ui_language: Mutex<String>,
 }
 
 impl AppState {
@@ -25,6 +28,7 @@ impl AppState {
             data_dir,
             config: Mutex::new(config),
             effect: Mutex::new(None),
+            ui_language: Mutex::new("en".into()),
         }
     }
 

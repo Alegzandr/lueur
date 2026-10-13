@@ -65,14 +65,14 @@ pub fn save_config(state: State<AppState>, config: AppConfig) -> Result<(), Stri
     // Push live settings to a running effect (topology changes need a restart,
     // which the UI performs explicitly).
     let cfg = state.config.lock().map_err(|_| "config lock poisoned")?;
-    if let Ok(guard) = state.effect.lock() {
-        if let Some(handle) = guard.as_ref() {
-            handle.update_live(LiveSettings {
-                engine: cfg.engine,
-                effect: cfg.transition.effect,
-                duration_ms: cfg.transition.duration_ms,
-            });
-        }
+    if let Ok(guard) = state.effect.lock()
+        && let Some(handle) = guard.as_ref()
+    {
+        handle.update_live(LiveSettings {
+            engine: cfg.engine,
+            effect: cfg.transition.effect,
+            duration_ms: cfg.transition.duration_ms,
+        });
     }
     Ok(())
 }
@@ -151,9 +151,13 @@ pub async fn set_light_power(
 /// streaming colours (and its shutdown fade would light the bulbs back up),
 /// so an "all off" that left it running wouldn't stick.
 #[tauri::command]
-pub async fn set_all_power(state: State<'_, AppState>, on: bool) -> Result<PowerResult, String> {
+pub async fn set_all_power(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    on: bool,
+) -> Result<PowerResult, String> {
     if !on {
-        stop_effect(state.clone()).await?;
+        stop_effect(app, state.clone()).await?;
     }
 
     let bindings = {
@@ -161,7 +165,7 @@ pub async fn set_all_power(state: State<'_, AppState>, on: bool) -> Result<Power
         cfg.bindings.clone()
     };
     if bindings.is_empty() {
-        return Err("no bulbs are bound — add bulbs in the Devices tab".into());
+        return Err("no bulbs are bound — add bulbs in the Bulbs view".into());
     }
 
     // One thread per bulb: a bulb that is unplugged costs the full timeout, and
@@ -203,9 +207,12 @@ pub async fn set_all_power(state: State<'_, AppState>, on: bool) -> Result<Power
 
 /// Start the ambilight effect from the saved config.
 #[tauri::command]
-pub async fn start_effect(state: State<'_, AppState>) -> Result<EffectStatus, String> {
+pub async fn start_effect(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<EffectStatus, String> {
     // Stop any existing effect first (idempotent restart).
-    stop_effect(state.clone()).await?;
+    stop_effect(app.clone(), state.clone()).await?;
 
     let config = state
         .config
@@ -223,6 +230,7 @@ pub async fn start_effect(state: State<'_, AppState>) -> Result<EffectStatus, St
         let mut guard = state.effect.lock().map_err(|_| "effect lock poisoned")?;
         *guard = Some(handle);
     }
+    crate::tray::refresh(&app);
     Ok(EffectStatus {
         running: true,
         connected_lights: connected,
@@ -231,7 +239,7 @@ pub async fn start_effect(state: State<'_, AppState>) -> Result<EffectStatus, St
 
 /// Stop the effect if running.
 #[tauri::command]
-pub async fn stop_effect(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn stop_effect(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let handle = {
         let mut guard = state.effect.lock().map_err(|_| "effect lock poisoned")?;
         guard.take()
@@ -242,6 +250,22 @@ pub async fn stop_effect(state: State<'_, AppState>) -> Result<(), String> {
             .await
             .map_err(|e| format!("stop task failed: {e}"))?;
     }
+    crate::tray::refresh(&app);
+    Ok(())
+}
+
+/// Record the language the interface settled on, for the tray menu.
+#[tauri::command]
+pub fn set_ui_language(app: AppHandle, state: State<AppState>, lang: String) -> Result<(), String> {
+    let lang = match lang.as_str() {
+        "fr" => "fr",
+        _ => "en",
+    };
+    *state
+        .ui_language
+        .lock()
+        .map_err(|_| "language lock poisoned")? = lang.to_string();
+    crate::tray::refresh(&app);
     Ok(())
 }
 

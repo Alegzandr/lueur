@@ -9,10 +9,10 @@ use std::path::PathBuf;
 /// 2. A `lueur-data` folder next to the executable (portable mode).
 /// 3. The per-user config dir (`%APPDATA%`, `~/.config`, `~/Library/...`).
 pub fn resolve_data_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("LUEUR_DATA_DIR") {
-        if !dir.trim().is_empty() {
-            return PathBuf::from(dir);
-        }
+    if let Ok(dir) = std::env::var("LUEUR_DATA_DIR")
+        && !dir.trim().is_empty()
+    {
+        return PathBuf::from(dir);
     }
 
     let exe_dir = std::env::current_exe()
@@ -42,10 +42,10 @@ fn user_config_dir() -> PathBuf {
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-            if !xdg.is_empty() {
-                return PathBuf::from(xdg);
-            }
+        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
+            && !xdg.is_empty()
+        {
+            return PathBuf::from(xdg);
         }
         if let Ok(home) = std::env::var("HOME") {
             return PathBuf::from(home).join(".config");

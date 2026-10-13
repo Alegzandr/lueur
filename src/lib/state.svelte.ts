@@ -3,24 +3,28 @@
 // change to the backend.
 
 import * as ipc from "./ipc";
+import { t } from "./i18n";
 import {
   defaultConfig,
   type AppConfig,
+  type DeviceBinding,
   type DiscoveredDevice,
   type EffectStatus,
   type Light,
+  type Vec2,
 } from "./types";
 
-export type View = "overview" | "room" | "bulbs" | "settings";
+export type View = "lighting" | "room" | "bulbs" | "settings";
 
 export interface Toast {
   id: number;
   kind: "info" | "error";
   msg: string;
+  action?: { label: string; run: () => void };
 }
 
 class AppState {
-  view = $state<View>("overview");
+  view = $state<View>("lighting");
   config = $state<AppConfig>(defaultConfig());
   status = $state<EffectStatus>({ running: false, connected_lights: 0 });
   /** True while the effect is being started or stopped. */
@@ -51,7 +55,7 @@ export const app = new AppState();
 
 // --- Derived helpers (plain functions: they read runes, so callers stay reactive) ---
 
-export function bindingFor(lightId: string) {
+export function bindingFor(lightId: string): DeviceBinding | undefined {
   return app.config.bindings.find((b) => b.light_id === lightId);
 }
 
@@ -100,7 +104,7 @@ export async function persistNow(): Promise<void> {
   try {
     await ipc.saveConfig($state.snapshot(app.config));
   } catch (e) {
-    notify("error", `Could not save settings: ${errMsg(e)}`);
+    notify("error", t("err_save", { e: errMsg(e) }));
   }
 }
 
@@ -111,23 +115,31 @@ export async function bootstrap(): Promise<void> {
   loaded = true;
   try {
     const cfg = await ipc.getConfig();
-    // Older configs predate the interface block.
-    cfg.interface ??= { appearance: "system" };
+    // Older configs predate some interface fields.
+    cfg.interface = { ...defaultConfig().interface, ...cfg.interface };
+    // Someone upgrading with a furnished room has arranged it already.
+    if (cfg.room.lights.length > 0 && cfg.bindings.length > 0 && !cfg.interface.room_arranged) {
+      cfg.interface.room_arranged = true;
+    }
     app.config = cfg;
     app.status = await ipc.effectStatus();
     // Running already (autostart): it was started from the saved config.
     if (app.status.running) app.startedWith = topology();
   } catch (e) {
-    notify("error", `Could not load settings: ${errMsg(e)}`);
+    notify("error", t("err_load", { e: errMsg(e) }));
   } finally {
     app.ready = true;
   }
+  // Bulbs get new addresses from the router now and then. A quiet search at
+  // launch finds them again before anyone notices.
+  if (app.config.bindings.length > 0) void scan(3000, true);
 }
 
 export async function refreshStatus(): Promise<void> {
   try {
     app.status = await ipc.effectStatus();
     if (!app.status.running) app.startedWith = null;
+    else if (app.startedWith === null) app.startedWith = topology();
   } catch {
     /* transient; the next poll will catch up */
   }
@@ -147,9 +159,7 @@ export async function toggleEffect(): Promise<void> {
     } else {
       app.status = await ipc.startEffect();
       app.startedWith = topology();
-      if (app.status.connected_lights === 0) {
-        notify("error", "Ambilight started, but no bulb answered. Check they are powered and on the network.");
-      }
+      if (app.status.connected_lights === 0) notify("error", t("started_silent"));
     }
   } catch (e) {
     notify("error", errMsg(e));
@@ -183,7 +193,7 @@ export async function setLightPower(lightId: string, on: boolean): Promise<void>
     await ipc.setLightPower(lightId, on);
     app.power[lightId] = on;
   } catch (e) {
-    notify("error", `Could not turn the bulb ${on ? "on" : "off"}: ${errMsg(e)}`);
+    notify("error", t("err_power", { e: errMsg(e) }));
   } finally {
     delete app.powerBusy[lightId];
   }
@@ -204,7 +214,7 @@ export async function setAllPower(on: boolean): Promise<void> {
     if (res.failures.length > 0) {
       notify(
         "error",
-        `${res.succeeded} of ${res.total} bulbs answered. ${res.failures.join("; ")}`,
+        t("partial_power", { ok: res.succeeded, total: res.total, details: res.failures.join("; ") }),
       );
     }
   } catch (e) {
@@ -222,95 +232,138 @@ export async function identify(ip: string, port: number): Promise<void> {
   try {
     await ipc.testDevice(ip, port, ...IDENTIFY_RGB);
   } catch (e) {
-    notify("error", `Could not reach the bulb: ${errMsg(e)}`);
+    notify("error", t("err_power", { e: errMsg(e) }));
   }
 }
 
 export async function identifyLight(lightId: string): Promise<void> {
   const b = bindingFor(lightId);
   if (!b) {
-    notify("info", "This light has no bulb assigned yet.");
+    notify("info", t("no_bulb_yet"));
     return;
   }
   return identify(b.ip, b.port);
 }
 
-export async function scan(timeoutMs = 3000): Promise<void> {
+/**
+ * Search the network. Bound bulbs found at a new address are updated in
+ * place: the device id is stable, the IP is not. `quiet` skips error toasts
+ * for the background search at launch.
+ */
+export async function scan(timeoutMs = 3000, quiet = false): Promise<void> {
   if (app.scanning) return;
   app.scanning = true;
   try {
-    app.discovered = await ipc.discoverDevices(timeoutMs);
+    const found = await ipc.discoverDevices(timeoutMs);
+    app.discovered = found;
     app.hasScanned = true;
+    const moved = found.filter((d) =>
+      app.config.bindings.some((b) => b.device_id === d.id && (b.ip !== d.ip || b.port !== d.port)),
+    );
+    if (moved.length > 0) {
+      edit((c) => {
+        for (const d of moved) {
+          const b = c.bindings.find((x) => x.device_id === d.id);
+          if (b) {
+            b.ip = d.ip;
+            b.port = d.port;
+          }
+        }
+      });
+      for (const d of moved) {
+        const b = app.config.bindings.find((x) => x.device_id === d.id);
+        const l = b ? lightById(b.light_id) : undefined;
+        notify("info", t("readdressed", { name: l?.name ?? deviceName(d) }));
+      }
+    }
   } catch (e) {
-    notify("error", `Scan failed: ${errMsg(e)}`);
+    if (!quiet) notify("error", t("err_scan", { e: errMsg(e) }));
   } finally {
     app.scanning = false;
   }
 }
 
+/** The bulb's own name if it has one; otherwise a numbered light name. */
 export function deviceName(d: DiscoveredDevice): string {
-  return d.name?.trim() || `Yeelight ${d.model || "bulb"}`;
+  const own = d.name?.trim();
+  if (own) return own;
+  const i = app.discovered.findIndex((x) => x.id === d.id);
+  return t("light_n", { n: (i < 0 ? app.discovered.length : i) + 1 });
 }
 
-/** Place a new light in front of the screen, staggered so lights never stack. */
-function newLight(name: string): Light {
+/**
+ * Where new lights go: in a row just behind the screen, the usual ambilight
+ * setup, spread evenly across its width. A spot already taken is skipped, so
+ * lights never land on top of each other; the user drags them to their real
+ * places afterwards.
+ */
+function freshPositions(count: number): Vec2[] {
   const s = app.config.room.screen;
-  const n = app.config.room.lights.length;
   const rad = (s.facing_deg * Math.PI) / 180;
   const f = { x: Math.sin(rad), y: Math.cos(rad) };
   const r = { x: f.y, y: -f.x };
-  const along = ((n % 5) - 2) * (s.width * 0.45);
-  const depth = 70 + Math.floor(n / 5) * 70;
-  return {
-    id: crypto.randomUUID(),
-    name,
-    pos: {
-      x: Math.round(s.center.x + r.x * along + f.x * depth),
-      y: Math.round(s.center.y + r.y * along + f.y * depth),
-    },
-    height: 0.5,
-    zone_override: null,
-    enabled: true,
-  };
+  const at = (u: number, depth: number): Vec2 => ({
+    x: Math.round(Math.max(20, Math.min(980, s.center.x + r.x * u * s.width + f.x * depth))),
+    y: Math.round(Math.max(20, Math.min(730, s.center.y + r.y * u * s.width + f.y * depth))),
+  });
+  const taken = app.config.room.lights.map((l) => l.pos);
+  const free = (p: Vec2) => taken.every((q) => Math.hypot(p.x - q.x, p.y - q.y) > 45);
+
+  const out: Vec2[] = [];
+  for (let i = 0; i < count; i++) {
+    // Even spread across 120% of the screen width, one row behind it.
+    let p = at(count === 1 ? 0 : -0.6 + (1.2 * i) / (count - 1), -45);
+    // Taken: walk outwards along further rows until a free spot turns up.
+    for (let k = 0; !free(p) && k < 40; k++) {
+      const u = ((k % 7) - 3) * 0.3;
+      p = at(u, -45 - Math.floor(k / 7) * 55 + (k >= 7 ? 140 : 0));
+    }
+    taken.push(p);
+    out.push(p);
+  }
+  return out;
+}
+
+function newLight(name: string, pos: Vec2): Light {
+  return { id: crypto.randomUUID(), name, pos, height: 0.5, zone_override: null, enabled: true };
 }
 
 export function addLight(name?: string): Light {
-  const light = newLight(name ?? `Light ${app.config.room.lights.length + 1}`);
+  const light = newLight(name ?? t("light_n", { n: app.config.room.lights.length + 1 }), freshPositions(1)[0]);
   edit((c) => {
     c.room.lights.push(light);
   });
   return light;
 }
 
-/** Add a discovered bulb to the room as a new light. */
-export function addDevice(d: DiscoveredDevice): void {
-  const light = newLight(deviceName(d));
+function bindingOf(lightId: string, d: DiscoveredDevice): DeviceBinding {
+  return { light_id: lightId, device_id: d.id, ip: d.ip, port: d.port, model: d.model, name: deviceName(d) };
+}
+
+/** Add discovered bulbs to the room as new lights. */
+export function addDevices(devices: DiscoveredDevice[]): void {
+  if (devices.length === 0) return;
+  const added: [Light, DiscoveredDevice][] = [];
+  const spots = freshPositions(devices.length);
   edit((c) => {
-    c.room.lights.push(light);
-    c.bindings.push({
-      light_id: light.id,
-      device_id: d.id,
-      ip: d.ip,
-      port: d.port,
-      model: d.model,
-      name: deviceName(d),
-    });
+    for (const [i, d] of devices.entries()) {
+      const light = newLight(deviceName(d), spots[i]);
+      c.room.lights.push(light);
+      c.bindings.push(bindingOf(light.id, d));
+      added.push([light, d]);
+    }
   });
-  notify("info", `${deviceName(d)} added to the room.`);
+  notify(
+    "info",
+    added.length === 1 ? t("added", { name: added[0][0].name }) : t("added_many", { n: added.length }),
+  );
 }
 
 /** Point an existing light at a discovered bulb (replacing any previous one). */
 export function assignDevice(lightId: string, d: DiscoveredDevice): void {
   edit((c) => {
     c.bindings = c.bindings.filter((b) => b.light_id !== lightId && b.device_id !== d.id);
-    c.bindings.push({
-      light_id: lightId,
-      device_id: d.id,
-      ip: d.ip,
-      port: d.port,
-      model: d.model,
-      name: deviceName(d),
-    });
+    c.bindings.push(bindingOf(lightId, d));
   });
 }
 
@@ -334,33 +387,44 @@ export function setLightEnabled(id: string, enabled: boolean): void {
   });
 }
 
+/** Remove a light (and its bulb assignment), with an undo in the toast. */
 export function removeLight(id: string): void {
-  const l = lightById(id);
+  const index = app.config.room.lights.findIndex((l) => l.id === id);
+  if (index < 0) return;
+  const light = $state.snapshot(app.config.room.lights[index]);
+  const binding = bindingFor(id) ? $state.snapshot(bindingFor(id)!) : undefined;
   edit((c) => {
-    c.room.lights = c.room.lights.filter((x) => x.id !== id);
+    c.room.lights.splice(index, 1);
     c.bindings = c.bindings.filter((x) => x.light_id !== id);
   });
   if (app.selectedLight === id) app.selectedLight = null;
-  if (l) notify("info", `${l.name} removed.`);
+  notify("info", t("removed", { name: light.name }), {
+    label: t("undo"),
+    run: () =>
+      edit((c) => {
+        c.room.lights.splice(Math.min(index, c.room.lights.length), 0, light);
+        if (binding) c.bindings.push(binding);
+      }),
+  });
+}
+
+/** The plan has been arranged: the first-run guide moves on. */
+export function markRoomArranged(): void {
+  if (!app.config.interface.room_arranged) edit((c) => (c.interface.room_arranged = true));
 }
 
 // --- Notifications ---
 
 let toastSeq = 0;
 
-export function notify(kind: Toast["kind"], msg: string): void {
+export function notify(kind: Toast["kind"], msg: string, action?: Toast["action"]): void {
   const id = ++toastSeq;
-  app.toasts = [...app.toasts.slice(-2), { id, kind, msg }];
-  setTimeout(() => dismiss(id), kind === "error" ? 7000 : 3600);
+  app.toasts = [...app.toasts.slice(-2), { id, kind, msg, action }];
+  setTimeout(() => dismiss(id), kind === "error" || action ? 7000 : 3600);
 }
 
 export function dismiss(id: number): void {
   app.toasts = app.toasts.filter((t) => t.id !== id);
-}
-
-/** "1 light", "3 lights". Every user-facing count goes through this. */
-export function plural(n: number, noun: string): string {
-  return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
 export function errMsg(e: unknown): string {

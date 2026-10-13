@@ -114,17 +114,19 @@ export const EDGE_COLOR: Record<Edge, string> = {
   center: "var(--zone-center)",
 };
 
-export const EDGE_LABEL: Record<Edge, string> = {
-  left: "left edge",
-  right: "right edge",
-  center: "matching slice",
-};
+export type MappingKind = "map_whole" | "map_broad" | "map_left" | "map_right" | "map_slice";
 
-/** Plain-language summary of what a mapping does, for the inspector. */
-export function describe(m: Mapping): string {
-  if (m.spread > 0.85) return "mirrors the whole picture";
-  if (m.spread > 0.45) return "mirrors a broad region";
-  if (m.edge === "left") return "mirrors the left edge";
-  if (m.edge === "right") return "mirrors the right edge";
-  return "mirrors a tight slice";
+/** What a mapping does, as a string key for the interface. */
+export function describe(m: Mapping): MappingKind {
+  if (m.spread > 0.85) return "map_whole";
+  if (m.spread > 0.45) return "map_broad";
+  if (m.edge === "left") return "map_left";
+  if (m.edge === "right") return "map_right";
+  return "map_slice";
 }
+
+export const EDGE_KIND: Record<Edge, MappingKind> = {
+  left: "map_left",
+  center: "map_slice",
+  right: "map_right",
+};

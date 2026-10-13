@@ -226,6 +226,17 @@ fn bright_needs_update(last: Option<u8>, next: u8) -> bool {
     }
 }
 
+/// Determine the local IPv4 address that routes toward `peer_ip`.
+///
+/// Trick: "connect" a UDP socket to the peer (no packets are actually sent for
+/// UDP) and read back the local address the OS selected. This picks the right
+/// interface on multi-homed machines without any external dependency.
+fn local_ip_toward(peer_ip: &str, peer_port: u16) -> io::Result<String> {
+    let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))?;
+    socket.connect(format!("{peer_ip}:{peer_port}"))?;
+    Ok(socket.local_addr()?.ip().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,15 +272,4 @@ mod tests {
         assert!(bright_needs_update(Some(2), MIN_BRIGHT));
         assert!(bright_needs_update(Some(99), MAX_BRIGHT));
     }
-}
-
-/// Determine the local IPv4 address that routes toward `peer_ip`.
-///
-/// Trick: "connect" a UDP socket to the peer (no packets are actually sent for
-/// UDP) and read back the local address the OS selected. This picks the right
-/// interface on multi-homed machines without any external dependency.
-fn local_ip_toward(peer_ip: &str, peer_port: u16) -> io::Result<String> {
-    let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))?;
-    socket.connect(format!("{peer_ip}:{peer_port}"))?;
-    Ok(socket.local_addr()?.ip().to_string())
 }

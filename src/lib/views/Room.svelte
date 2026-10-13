@@ -7,11 +7,13 @@
     identifyLight,
     lightById,
     notify,
+    markRoomArranged,
     removeLight,
     renameLight,
     setLightEnabled,
   } from "../state.svelte";
-  import { describe, endpoints, facing, mapLight, EDGE_COLOR, EDGE_LABEL, type Edge } from "../geometry";
+  import { describe, endpoints, facing, mapLight, EDGE_COLOR, EDGE_KIND, type Edge } from "../geometry";
+  import { t, pct } from "../i18n";
   import { defaultConfig, type Vec2 } from "../types";
   import Icon from "../ui/Icon.svelte";
   import Slider from "../ui/Slider.svelte";
@@ -126,6 +128,8 @@
         /* already released */
       }
     }
+    // Moving a light or the seat is arranging the room.
+    if (drag && (drag.kind === "light" || drag.kind === "seat" || drag.kind === "screen")) markRoomArranged();
     drag = null;
     dragging = false;
     held = null;
@@ -190,7 +194,7 @@
 
   function removeCorner(index: number) {
     if (app.config.room.walls.length <= 3) {
-      notify("info", "A room needs at least three corners.");
+      notify("info", t("min_corners"));
       return;
     }
     edit((c) => {
@@ -205,7 +209,7 @@
       c.room.screen = structuredClone(DEF.room.screen);
     });
     clearSelection();
-    notify("info", "Walls and screen reset. Your lights stayed where they were.");
+    notify("info", t("reset_done"));
   }
 
   function removeSelected() {
@@ -312,23 +316,26 @@
     return { x: ends.left.x + (ends.right.x - ends.left.x) * t, y: ends.left.y + (ends.right.y - ends.left.y) * t };
   }
 
-  /** A light's name sits below it, or above when below would run into the
-   *  screen. */
+  /** A light's name sits below it, or above when the light is just behind
+   *  the screen, so names never sit across the screen. */
   function labelPos(p: Vec2): Vec2 {
-    const below = { x: p.x, y: p.y + 24 * k };
-    return distToScreen(below) < 18 * k ? { x: p.x, y: p.y - 16 * k } : below;
+    const q = nearestOnScreen(p);
+    const behind = Math.abs(p.x - q.x) < 70 * k && p.y < q.y && q.y - p.y < 120 * k;
+    return behind ? { x: p.x, y: p.y - 16 * k } : { x: p.x, y: p.y + 24 * k };
   }
 
-  function distToScreen(p: Vec2): number {
+  function nearestOnScreen(p: Vec2): Vec2 {
     const a = ends.left;
     const ab = sub(ends.right, a);
     const len2 = ab.x * ab.x + ab.y * ab.y || 1;
     const t = Math.max(0, Math.min(1, ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / len2));
-    return Math.hypot(p.x - (a.x + ab.x * t), p.y - (a.y + ab.y * t));
+    return { x: a.x + ab.x * t, y: a.y + ab.y * t };
   }
 
+
+
   const heightLabel = (v: number) =>
-    v < 0.18 ? "Floor" : v < 0.42 ? "Low" : v < 0.58 ? "Screen level" : v < 0.82 ? "High" : "Ceiling";
+    t(v < 0.18 ? "h_floor" : v < 0.42 ? "h_low" : v < 0.58 ? "h_level" : v < 0.82 ? "h_high" : "h_ceiling");
 
   const EDGES: Edge[] = ["left", "center", "right"];
 </script>
@@ -338,14 +345,20 @@
 <div class="room">
   <section class="stage-col">
     <header class="bar">
-      <h1 class="title">Room</h1>
+      <h1 class="page-title">{t("nav_room")}</h1>
       <div class="tools">
-        <button class="btn sm" onclick={newLight}><Icon name="bulb" size={14} /> Add light</button>
-        <button class="btn sm" onclick={addCorner}><Icon name="corner" size={14} /> Add corner</button>
-        <button class="btn plain sm" onclick={resetShape}>Reset shape</button>
+        <button class="btn" onclick={newLight}>{t("add_light")}</button>
+        <button class="btn" onclick={addCorner}>{t("add_corner")}</button>
+        <button class="btn plain" onclick={resetShape}>{t("reset_shape")}</button>
       </div>
     </header>
 
+    {#if !app.config.interface.room_arranged && room.lights.length > 0}
+      <div class="coach" role="status">
+        <p>{t("coach")}</p>
+        <button class="btn primary" onclick={markRoomArranged}>{t("coach_done")}</button>
+      </div>
+    {/if}
     <div class="banner-slot"><RestartBanner /></div>
 
     <div class="stage" class:dragging bind:clientWidth={stageW} bind:clientHeight={stageH}>
@@ -413,11 +426,11 @@
         <line x1={scr.center.x} y1={scr.center.y} x2={seat.x} y2={seat.y} class="sightline" />
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <g class="seat" onpointerdown={(e) => begin(e, { kind: "seat" })}>
-          <title>Where you sit. Drag to turn the screen.</title>
+          <title>{t("seat_title")}</title>
           <circle cx={seat.x} cy={seat.y} r={14 * k} class="seat-hit" />
           <circle cx={seat.x} cy={seat.y} r={7 * k} class="seat-dot" />
         </g>
-        <text x={seat.x} y={seat.y + 22 * k} class="caption" text-anchor="middle">You</text>
+        <text x={seat.x} y={seat.y + 22 * k} class="caption" text-anchor="middle">{t("plan_you")}</text>
 
         <!-- Screen -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -442,15 +455,15 @@
               class="handle"
               onpointerdown={(e) => begin(e, { kind: "width" })}
             >
-              <title>Drag to resize the screen</title>
+              <title>{t("resize_title")}</title>
             </circle>
           {/each}
         {/if}
         <text
-          x={scr.center.x - face.x * 18 * k}
-          y={scr.center.y - face.y * 18 * k + 4 * k}
+          x={scr.center.x + face.x * 20 * k}
+          y={scr.center.y + face.y * 20 * k + 4 * k}
           class="caption"
-          text-anchor="middle">Screen</text
+          text-anchor="middle">{t("plan_screen")}</text
         >
 
         <!-- Corners -->
@@ -492,10 +505,7 @@
         {/each}
       </svg>
 
-      <p class="help">
-        Drag to arrange. Double-click a wall to add a corner. <kbd>Del</kbd> removes,
-        arrows nudge.
-      </p>
+      <p class="help">{t("plan_help")}</p>
     </div>
   </section>
 
@@ -504,22 +514,22 @@
       {@const l = selLight}
       {@const m = mapLight(scr, l)}
       {@const b = bindingFor(l.id)}
-      <button class="back" onclick={clearSelection}><Icon name="back" size={14} /> All objects</button>
+      <button class="back" onclick={clearSelection}><Icon name="back" size={14} /> {t("all_objects")}</button>
 
       <input
         class="name"
         type="text"
         value={l.name}
-        aria-label="Light name"
+        aria-label={t("light_name")}
         spellcheck="false"
         oninput={(e) => renameLight(l.id, e.currentTarget.value)}
       />
       <p class="what" style="--c:{EDGE_COLOR[m.edge]}">
-        <span class="swatch"></span>{describe(m)}
+        <span class="swatch"></span>{t(describe(m))}
       </p>
 
       <figure class="preview">
-        <svg viewBox="0 0 160 90" role="img" aria-label="The part of the screen this light mirrors">
+        <svg viewBox="0 0 160 90" role="img" aria-label={t("mirrors")}>
           <rect x="0.5" y="0.5" width="159" height="89" rx="4" class="preview-bg" />
           <rect
             x={m.zone.x * 160}
@@ -533,20 +543,20 @@
             stroke-width="1.5"
           />
         </svg>
-        <figcaption>What it watches on screen</figcaption>
+        <figcaption>{t("mirrors")}</figcaption>
       </figure>
 
       <div class="field">
-        <div class="field-label">Height in the room</div>
+        <div class="field-label">{t("height")}</div>
         <Slider
-          label="Height in the room"
+          label={t("height")}
           value={l.height}
           min={0}
           max={1}
           step={0.01}
           def={0.5}
           format={heightLabel}
-          ends={["Floor", "Ceiling"]}
+          ends={[t("h_floor"), t("h_ceiling")]}
           onchange={(v) => edit((c) => {
             const x = c.room.lights.find((y) => y.id === l.id);
             if (x) x.height = v;
@@ -556,45 +566,45 @@
 
       <div class="field inline">
         <div>
-          <div class="field-label">Follows the picture</div>
-          <p class="field-hint">Off leaves this bulb alone.</p>
+          <div class="field-label">{t("follows")}</div>
+          <p class="field-hint">{t("follows_hint")}</p>
         </div>
-        <Switch checked={l.enabled} label="Follows the picture" onchange={(v) => setLightEnabled(l.id, v)} />
+        <Switch checked={l.enabled} label={t("follows")} onchange={(v) => setLightEnabled(l.id, v)} />
       </div>
 
       <dl class="facts">
-        <div><dt>Brightness</dt><dd class="num">{Math.round(m.gain * 100)}%</dd></div>
-        <div><dt>Response</dt><dd class="num">{Math.round(m.responsiveness * 100)}%</dd></div>
+        <div><dt>{t("fact_brightness")}</dt><dd class="num">{pct(m.gain)}</dd></div>
+        <div><dt>{t("fact_response")}</dt><dd class="num">{pct(m.responsiveness)}</dd></div>
       </dl>
-      <p class="field-hint">Lights further from the screen glow softer and move slower, like real bounced light.</p>
+      <p class="field-hint">{t("facts_hint")}</p>
 
       <div class="bulb-box">
         {#if b}
           <div class="bulb-info">
-            <div class="field-label">{b.name || "Yeelight"}</div>
+            <div class="field-label">Yeelight {b.model}</div>
             <div class="field-hint num">{b.ip}</div>
           </div>
-          <button class="btn sm" onclick={() => identifyLight(l.id)}><Icon name="flash" size={14} /> Identify</button>
+          <button class="btn sm" title={t("identify_hint")} onclick={() => identifyLight(l.id)}>{t("identify")}</button>
         {:else}
           <div class="bulb-info">
-            <div class="field-label">No bulb assigned</div>
-            <div class="field-hint">Pick which bulb this is.</div>
+            <div class="field-label">{t("no_bulb")}</div>
+            <div class="field-hint">{t("no_bulb_hint")}</div>
           </div>
-          <button class="btn sm" onclick={() => (app.view = "bulbs")}>Assign</button>
+          <button class="btn sm" onclick={() => (app.view = "bulbs")}>{t("assign")}</button>
         {/if}
       </div>
 
       <button class="btn plain danger remove" onclick={() => removeLight(l.id)}>
-        <Icon name="trash" size={14} /> Remove light
+        {t("remove_light")}
       </button>
     {:else if other?.kind === "screen"}
-      <button class="back" onclick={clearSelection}><Icon name="back" size={14} /> All objects</button>
-      <h2 class="name static">Screen</h2>
-      <p class="field-hint">Drag the screen to move it, its ends to resize it, and the seat to turn it.</p>
+      <button class="back" onclick={clearSelection}><Icon name="back" size={14} /> {t("all_objects")}</button>
+      <h2 class="name static">{t("plan_screen")}</h2>
+      <p class="field-hint">{t("screen_hint")}</p>
       <div class="field">
-        <div class="field-label">Facing</div>
+        <div class="field-label">{t("facing")}</div>
         <Slider
-          label="Facing"
+          label={t("facing")}
           value={scr.facing_deg}
           min={-180}
           max={180}
@@ -605,9 +615,9 @@
         />
       </div>
       <div class="field">
-        <div class="field-label">Width</div>
+        <div class="field-label">{t("width")}</div>
         <Slider
-          label="Width"
+          label={t("width")}
           value={scr.width}
           min={SCREEN_MIN}
           max={SCREEN_MAX}
@@ -619,19 +629,19 @@
       </div>
     {:else if other?.kind === "corner"}
       {@const index = other.index}
-      <button class="back" onclick={clearSelection}><Icon name="back" size={14} /> All objects</button>
-      <h2 class="name static">Corner {index + 1}</h2>
-      <p class="field-hint">Drag it to reshape the room. Double-click any wall to add another.</p>
+      <button class="back" onclick={clearSelection}><Icon name="back" size={14} /> {t("all_objects")}</button>
+      <h2 class="name static">{t("corner_n", { n: index + 1 })}</h2>
+      <p class="field-hint">{t("corner_hint")}</p>
       <button class="btn plain danger remove" onclick={() => removeCorner(index)}>
-        <Icon name="trash" size={14} /> Remove corner
+        {t("remove_corner")}
       </button>
     {:else}
-      <h2 class="side-title">Objects</h2>
+      <h2 class="side-title">{t("objects")}</h2>
       <ul class="objects">
         <li>
           <button class="obj" onclick={() => selectOther({ kind: "screen" })}>
             <Icon name="screen" size={16} />
-            <span class="obj-name">Screen</span>
+            <span class="obj-name">{t("plan_screen")}</span>
             <span class="obj-meta num">{scr.facing_deg}°</span>
           </button>
         </li>
@@ -641,26 +651,26 @@
             <button class="obj" class:off={!l.enabled} onclick={() => selectLight(l.id)}>
               <span class="obj-dot" style="background:{EDGE_COLOR[m.edge]}"></span>
               <span class="obj-name">{l.name}</span>
-              {#if !bindingFor(l.id)}<span class="obj-warn" title="No bulb assigned">No bulb</span>{/if}
+              {#if !bindingFor(l.id)}<span class="obj-warn" title={t("no_bulb")}>{t("no_bulb_short")}</span>{/if}
               <Icon name="chevron" size={14} />
             </button>
           </li>
         {/each}
       </ul>
       {#if room.lights.length === 0}
-        <p class="empty">No lights yet. Add them from Bulbs, or place one by hand.</p>
+        <p class="empty">{t("no_lights")}</p>
       {/if}
-      <button class="btn sm add" onclick={newLight}><Icon name="plus" size={14} /> Add light</button>
+      <button class="btn sm add" onclick={newLight}>{t("add_light")}</button>
 
-      <h2 class="side-title">How it maps</h2>
+      <h2 class="side-title">{t("how_title")}</h2>
       <ul class="rules">
-        <li><b>Across</b> the screen picks the slice of the picture.</li>
-        <li><b>Height</b> picks the band, floor to ceiling.</li>
-        <li><b>Distance</b> widens the view, then softens and slows it.</li>
+        <li>{t("rule_across")}</li>
+        <li>{t("rule_height")}</li>
+        <li>{t("rule_distance")}</li>
       </ul>
       <div class="legend">
         {#each EDGES as edge}
-          <span><i style="background:{EDGE_COLOR[edge]}"></i>{EDGE_LABEL[edge]}</span>
+          <span><i style="background:{EDGE_COLOR[edge]}"></i>{t(EDGE_KIND[edge])}</span>
         {/each}
       </div>
     {/if}
@@ -690,10 +700,18 @@
     justify-content: space-between;
     gap: var(--s-4);
   }
-  .title {
-    font-family: var(--font-display);
-    font-size: var(--t-xl);
-    font-weight: 500;
+  .coach {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--glow);
+  }
+  .coach p {
+    flex: 1;
   }
   .tools {
     display: flex;
@@ -899,9 +917,8 @@
     background: var(--surface-hover);
   }
   .name {
-    font-family: var(--font-display);
-    font-size: var(--t-xl);
-    font-weight: 500;
+    font-size: var(--t-lg);
+    font-weight: 600;
     height: 38px;
     margin-left: -9px;
     width: calc(100% + 9px);
@@ -974,10 +991,8 @@
     margin: 0 0 var(--s-1);
   }
   .facts dt {
-    font-size: var(--t-xs);
+    font-size: var(--t-sm);
     color: var(--text-3);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
   }
   .facts dd {
     margin: 0;
@@ -992,7 +1007,7 @@
     padding: var(--s-3);
     border-radius: var(--r-md);
     background: var(--surface);
-    box-shadow: var(--shadow-1);
+    border: 1px solid var(--line);
   }
   .bulb-info {
     flex: 1;
@@ -1005,11 +1020,9 @@
   }
 
   .side-title {
-    font-size: var(--t-xs);
+    font-size: var(--t-sm);
     font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-3);
+    color: var(--text-2);
     margin-bottom: var(--s-2);
   }
   .side-title:not(:first-child) {
@@ -1077,10 +1090,6 @@
     gap: var(--s-2);
     font-size: var(--t-sm);
     color: var(--text-2);
-  }
-  .rules b {
-    color: var(--text);
-    font-weight: 600;
   }
   .legend {
     display: flex;

@@ -108,11 +108,27 @@ pub enum Appearance {
     Dark,
 }
 
-/// Purely cosmetic preferences for the desktop shell.
+/// Interface language. `System` follows the OS locale.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Language {
+    #[default]
+    System,
+    En,
+    Fr,
+}
+
+/// Preferences for the desktop shell that do not affect the light.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct InterfaceSettings {
     #[serde(default)]
     pub appearance: Appearance,
+    #[serde(default)]
+    pub language: Language,
+    /// The user has arranged the room plan at least once. Until then the
+    /// first-run guide keeps pointing at it.
+    #[serde(default)]
+    pub room_arranged: bool,
 }
 
 /// The full persisted configuration.
@@ -276,6 +292,15 @@ mod tests {
         let cfg = AppConfig::from_json(json).unwrap();
         assert_eq!(cfg.interface.appearance, Appearance::Dark);
         assert!(cfg.to_json().unwrap().contains("\"dark\""));
+        assert_eq!(cfg.interface.language, Language::System);
+        assert!(!cfg.interface.room_arranged);
+    }
+
+    #[test]
+    fn language_serialises_lowercase() {
+        let json = r#"{ "interface": { "language": "fr" } }"#;
+        let cfg = AppConfig::from_json(json).unwrap();
+        assert_eq!(cfg.interface.language, Language::Fr);
     }
 
     #[test]

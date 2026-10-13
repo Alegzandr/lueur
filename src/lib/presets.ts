@@ -17,15 +17,12 @@ export const FEELS: Record<Feel, FeelValues> = {
   calm: { smoothing: 0.22, effect: "smooth", duration_ms: 220 },
 };
 
-export const FEEL_OPTIONS: { value: Feel; label: string; title: string }[] = [
-  { value: "instant", label: "Instant", title: "Follows every cut. Best for fast games." },
-  { value: "balanced", label: "Balanced", title: "Quick without flicker. The default." },
-  { value: "calm", label: "Calm", title: "Slow, soft changes. Best for films." },
-];
+export const FEEL_ORDER: Feel[] = ["instant", "balanced", "calm"];
 
 /** The feel the current settings match, or null if they were hand-tuned. */
 export function currentFeel(c: AppConfig): Feel | null {
-  for (const [name, v] of Object.entries(FEELS) as [Feel, FeelValues][]) {
+  for (const name of FEEL_ORDER) {
+    const v = FEELS[name];
     if (
       Math.abs(c.engine.smoothing - v.smoothing) < 0.005 &&
       c.transition.effect === v.effect &&

@@ -1,14 +1,25 @@
 <script lang="ts">
   import { app, dismiss } from "../state.svelte";
   import Icon from "./Icon.svelte";
+  import { t as tr } from "../i18n";
 </script>
 
 <div class="toasts" aria-live="polite">
   {#each app.toasts as t (t.id)}
     <div class="toast" class:error={t.kind === "error"} role={t.kind === "error" ? "alert" : "status"}>
-      <span class="ic"><Icon name={t.kind === "error" ? "alert" : "check"} size={15} /></span>
+      {#if t.kind === "error"}<span class="ic"><Icon name="alert" size={15} /></span>{/if}
       <p>{t.msg}</p>
-      <button class="x" aria-label="Dismiss" onclick={() => dismiss(t.id)}>
+      {#if t.action}
+        {@const action = t.action}
+        <button
+          class="btn sm"
+          onclick={() => {
+            action.run();
+            dismiss(t.id);
+          }}>{action.label}</button
+        >
+      {/if}
+      <button class="x" aria-label={tr("dismiss")} onclick={() => dismiss(t.id)}>
         <Icon name="close" size={13} />
       </button>
     </div>
@@ -29,21 +40,17 @@
   }
   .toast {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: var(--s-2);
-    max-width: 380px;
-    padding: var(--s-3) var(--s-3) var(--s-3) var(--s-4);
+    max-width: 400px;
+    padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
     border-radius: var(--r-lg);
     background: var(--surface);
     box-shadow: var(--shadow-2);
     pointer-events: auto;
-    animation: rise 220ms var(--ease);
+    animation: rise 160ms var(--ease);
   }
   .ic {
-    margin-top: 2px;
-    color: var(--ok);
-  }
-  .error .ic {
     color: var(--danger);
   }
   p {

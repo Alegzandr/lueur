@@ -76,8 +76,13 @@ export interface BehaviorSettings {
 
 export type Appearance = "system" | "light" | "dark";
 
+export type Language = "system" | "en" | "fr";
+
 export interface InterfaceSettings {
   appearance: Appearance;
+  language: Language;
+  /** The user has arranged the room plan at least once. */
+  room_arranged: boolean;
 }
 
 export interface AppConfig {
@@ -153,6 +158,6 @@ export function defaultConfig(): AppConfig {
       start_minimized: false,
       autostart_effect: false,
     },
-    interface: { appearance: "system" },
+    interface: { appearance: "system", language: "system", room_arranged: false },
   };
 }

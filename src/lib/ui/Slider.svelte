@@ -2,6 +2,7 @@
   // A slider that knows its factory default: double-click, or the reset
   // button that appears once you drift, snaps back to it.
   import Icon from "./Icon.svelte";
+  import { t } from "../i18n";
 
   interface Props {
     label: string;
@@ -57,8 +58,8 @@
         class="reset"
         class:shown={!isDefault}
         tabindex={isDefault ? -1 : 0}
-        title="Reset to {format(def)}"
-        aria-label="Reset {label} to {format(def)}"
+        title={t("reset_to", { v: format(def) })}
+        aria-label="{label}: {t('reset_to', { v: format(def) })}"
         onclick={reset}
       >
         <Icon name="reset" size={13} />

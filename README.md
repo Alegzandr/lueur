@@ -40,15 +40,20 @@ around you follows what's on screen.
 
 ## The app
 
-A classic desktop layout: a sidebar with four sections and a persistent
-start/stop control, light and dark themes that follow the system.
+A plain, native-looking desktop layout in English or French (it follows the
+system language, or pick one in Settings), with light and dark themes. A
+sidebar holds four sections and a start/stop control that is always in
+reach; the tray menu can start and stop the ambilight too, so you never have
+to leave a game.
 
-| Overview | Room | Bulbs | Settings |
+| Lighting | Room | Bulbs | Settings |
 |---|---|---|---|
-| Start/stop, a "feel" preset (Instant, Balanced, Calm), brightness, and every light at a glance | A floor plan you draw on: drag lights, corners and the screen, drag your seat to turn the screen | Network search, then add each bulb to the room or assign it to an existing light | Capture, colour, transitions, appearance and startup, in grouped preferences |
+| Every light with its power and "follows the screen" switch, a response preset (Instant, Balanced, Calm), brightness and colour intensity | A floor plan you draw on: drag lights, corners and the screen, drag *You* to turn the screen | Network search, *Add all*, assign a bulb to an existing light, rename | Capture, colour, transitions, language, appearance and startup |
 
-The first launch walks you through three steps (find bulbs, sketch the room,
-turn it on). Changes to the room while the ambilight runs are flagged with a
+The first launch walks you through three steps (add bulbs, place them, start).
+New bulbs land in a row behind the screen, the usual setup. Bulbs that get a
+new address from the router are found again at launch. Removing a light can
+be undone, and changes to the room while the ambilight runs come with a
 one-click *Apply now*.
 
 Keyboard: <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>1</kbd>–<kbd>4</kbd> switches
@@ -90,10 +95,12 @@ lueur/
 │   ├─ capture.rs         xcap screen capture behind a FrameSource trait
 │   ├─ runner.rs          The live capture→compute→push loop
 │   ├─ commands.rs        Validated IPC surface
+│   ├─ tray.rs            Tray menu: start/stop, open, quit
 │   └─ lib.rs             Tray, autostart, single-instance, window handling
 └─ src/                   Svelte 5 (runes) + TypeScript frontend
     ├─ lib/state.svelte.ts  App state and every action the UI can take
-    ├─ lib/views/           Overview, Room, Bulbs, Settings
+    ├─ lib/i18n.ts          English and French strings
+    ├─ lib/views/           Lighting, Room, Bulbs, Settings
     ├─ lib/ui/              Shared controls (Slider, Switch, Segmented, Row…)
     └─ styles/app.css       Design tokens, light and dark themes
 ```
@@ -130,8 +137,8 @@ npm run tauri dev      # hot-reloading app window
 ```
 
 The UI also runs in a plain browser for design work: `npm run dev`, then open
-`http://localhost:1420/?demo` for a furnished sample room (without `?demo` you
-get the first-run experience).
+`http://localhost:1420/?demo` for a furnished sample room, or `?fresh` for a
+first launch with bulbs waiting on the network.
 
 ### Build a release / portable binary
 
@@ -146,13 +153,13 @@ dir if that location isn't writable).
 
 ## First-time setup in the app
 
-1. **Bulbs** → Lueur searches the network on first visit. (Enable **LAN
+1. **Bulbs**: Lueur searches the network on first visit. (Enable **LAN
    Control** for each bulb in the official Yeelight app first.) Add the bulbs
    you want; *Identify* flashes one so you know which is which.
-2. **Room** → drag the **screen** to where your monitor is and drag the **You**
+2. **Room**: drag the **screen** to where your monitor is and drag the **You**
    marker to your seat to turn it; drag each **light** to its real position. The
    dotted lines and glows show what each light will mirror.
-3. **Overview** → pick a feel and hit **Start ambilight**. Finer tuning lives
+3. **Lighting**: pick a response and hit **Start ambilight**. Finer tuning lives
    in **Settings**.
 
 ## Roadmap

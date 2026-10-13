@@ -18,10 +18,12 @@ export function inTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-/** Browser preview with `?demo` in the URL: a furnished room to design against. */
-function demo(): boolean {
-  return typeof location !== "undefined" && new URLSearchParams(location.search).has("demo");
+/** Browser preview: `?demo` gives a furnished room to design against, `?fresh`
+ *  a first launch with bulbs waiting on the network. */
+function preview(flag: "demo" | "fresh"): boolean {
+  return typeof location !== "undefined" && new URLSearchParams(location.search).has(flag);
 }
+const demo = () => preview("demo");
 
 function demoConfig(): AppConfig {
   const c = defaultConfig();
@@ -76,14 +78,15 @@ export async function listMonitors(): Promise<MonitorInfo[]> {
 
 export async function discoverDevices(timeoutMs = 2500): Promise<DiscoveredDevice[]> {
   if (!inTauri()) {
-    if (!demo()) return [];
+    if (!demo() && !preview("fresh")) return [];
     await new Promise((r) => setTimeout(r, 600));
     return [0, 1, 2, 3].map((i) => ({
       id: `0x${i}`,
       ip: `192.168.1.${20 + i}`,
       port: 55443,
       model: "color",
-      name: i === 3 ? "" : `Yeelight Color ${i + 1}`,
+      // Most bulbs are never named in the Yeelight app.
+      name: demo() && i < 3 ? `Yeelight Color ${i + 1}` : "",
       support: ["set_music", "set_rgb"],
       fw_ver: "26",
     }));
@@ -127,7 +130,7 @@ export async function setAllPower(on: boolean): Promise<PowerResult> {
 let previewRunning = false;
 const previewStatus = (): EffectStatus => ({
   running: previewRunning,
-  connected_lights: previewRunning && demo() ? 3 : 0,
+  connected_lights: previewRunning && (demo() || preview("fresh")) ? 3 : 0,
 });
 
 export async function startEffect(): Promise<EffectStatus> {
@@ -167,4 +170,18 @@ export async function appVersion(): Promise<string> {
   if (!inTauri()) return "dev";
   const { getVersion } = await import("@tauri-apps/api/app");
   return getVersion();
+}
+
+/** Tell the shell which language the interface uses, for the tray menu. */
+export async function setUiLanguage(lang: "en" | "fr"): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("set_ui_language", { lang });
+}
+
+/** Called when the effect is started or stopped from the tray. The payload
+ *  is an error message when a start failed. */
+export async function onEffectChanged(cb: (error: string | null) => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<string | null>("effect-changed", (e) => cb(e.payload));
 }
