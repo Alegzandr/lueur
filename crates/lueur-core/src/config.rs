@@ -98,6 +98,23 @@ impl Default for BehaviorSettings {
     }
 }
 
+/// Colour scheme of the window. `System` follows the OS setting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+/// Purely cosmetic preferences for the desktop shell.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct InterfaceSettings {
+    #[serde(default)]
+    pub appearance: Appearance,
+}
+
 /// The full persisted configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -115,6 +132,8 @@ pub struct AppConfig {
     pub transition: TransitionSettings,
     #[serde(default)]
     pub behavior: BehaviorSettings,
+    #[serde(default)]
+    pub interface: InterfaceSettings,
 }
 
 fn default_version() -> u32 {
@@ -131,6 +150,7 @@ impl Default for AppConfig {
             engine: EngineSettings::default(),
             transition: TransitionSettings::default(),
             behavior: BehaviorSettings::default(),
+            interface: InterfaceSettings::default(),
         }
     }
 }
@@ -247,6 +267,15 @@ mod tests {
         assert_eq!(cfg.capture, CaptureSettings::default());
         assert_eq!(cfg.behavior, BehaviorSettings::default());
         assert_eq!(cfg.transition, TransitionSettings::default());
+        assert_eq!(cfg.interface.appearance, Appearance::System);
+    }
+
+    #[test]
+    fn appearance_serialises_lowercase() {
+        let json = r#"{ "version": 1, "interface": { "appearance": "dark" } }"#;
+        let cfg = AppConfig::from_json(json).unwrap();
+        assert_eq!(cfg.interface.appearance, Appearance::Dark);
+        assert!(cfg.to_json().unwrap().contains("\"dark\""));
     }
 
     #[test]

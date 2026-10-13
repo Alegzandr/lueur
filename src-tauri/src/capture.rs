@@ -41,7 +41,9 @@ pub fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
     for (index, m) in monitors.iter().enumerate() {
         out.push(MonitorInfo {
             index,
-            name: m.name().unwrap_or_else(|_| format!("Display {}", index + 1)),
+            name: m
+                .name()
+                .unwrap_or_else(|_| format!("Display {}", index + 1)),
             width: m.width().unwrap_or(0),
             height: m.height().unwrap_or(0),
             is_primary: m.is_primary().unwrap_or(index == 0),

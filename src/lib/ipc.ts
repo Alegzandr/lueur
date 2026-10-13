@@ -18,6 +18,38 @@ export function inTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+/** Browser preview with `?demo` in the URL: a furnished room to design against. */
+function demo(): boolean {
+  return typeof location !== "undefined" && new URLSearchParams(location.search).has("demo");
+}
+
+function demoConfig(): AppConfig {
+  const c = defaultConfig();
+  const lights: [string, number, number, number][] = [
+    ["Behind left", 380, 120, 0.6],
+    ["Behind right", 620, 120, 0.6],
+    ["Floor lamp", 860, 420, 0.3],
+    ["Shelf", 140, 560, 0.8],
+  ];
+  c.room.lights = lights.map(([name, x, y, height], i) => ({
+    id: `demo-${i}`,
+    name,
+    pos: { x, y },
+    height,
+    zone_override: null,
+    enabled: i !== 3,
+  }));
+  c.bindings = c.room.lights.slice(0, 3).map((l, i) => ({
+    light_id: l.id,
+    device_id: `0x${i}`,
+    ip: `192.168.1.${20 + i}`,
+    port: 55443,
+    model: "color",
+    name: `Yeelight Color ${i + 1}`,
+  }));
+  return c;
+}
+
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (!inTauri()) {
     throw new Error(`not running in Tauri; cannot call ${cmd}`);
@@ -26,7 +58,7 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 }
 
 export async function getConfig(): Promise<AppConfig> {
-  if (!inTauri()) return defaultConfig();
+  if (!inTauri()) return demo() ? demoConfig() : defaultConfig();
   return invoke<AppConfig>("get_config");
 }
 
@@ -43,7 +75,19 @@ export async function listMonitors(): Promise<MonitorInfo[]> {
 }
 
 export async function discoverDevices(timeoutMs = 2500): Promise<DiscoveredDevice[]> {
-  if (!inTauri()) return [];
+  if (!inTauri()) {
+    if (!demo()) return [];
+    await new Promise((r) => setTimeout(r, 600));
+    return [0, 1, 2, 3].map((i) => ({
+      id: `0x${i}`,
+      ip: `192.168.1.${20 + i}`,
+      port: 55443,
+      model: "color",
+      name: i === 3 ? "" : `Yeelight Color ${i + 1}`,
+      support: ["set_music", "set_rgb"],
+      fw_ver: "26",
+    }));
+  }
   return invoke<DiscoveredDevice[]>("discover_devices", { timeoutMs });
 }
 
@@ -72,26 +116,55 @@ export async function setLightPower(lightId: string, on: boolean): Promise<void>
 
 /** Power every bound bulb on/off. Turning off also stops the effect. */
 export async function setAllPower(on: boolean): Promise<PowerResult> {
-  if (!inTauri()) return { total: 0, succeeded: 0, failures: [] };
+  if (!inTauri()) {
+    if (!on) previewRunning = false;
+    return { total: 0, succeeded: 0, failures: [] };
+  }
   return invoke<PowerResult>("set_all_power", { on });
 }
 
+// The browser preview pretends to run, so the UI can be exercised end to end.
+let previewRunning = false;
+const previewStatus = (): EffectStatus => ({
+  running: previewRunning,
+  connected_lights: previewRunning && demo() ? 3 : 0,
+});
+
 export async function startEffect(): Promise<EffectStatus> {
-  if (!inTauri()) return { running: true, connected_lights: 0 };
+  if (!inTauri()) {
+    previewRunning = true;
+    return previewStatus();
+  }
   return invoke<EffectStatus>("start_effect");
 }
 
 export async function stopEffect(): Promise<void> {
-  if (!inTauri()) return;
+  if (!inTauri()) {
+    previewRunning = false;
+    return;
+  }
   return invoke<void>("stop_effect");
 }
 
 export async function effectStatus(): Promise<EffectStatus> {
-  if (!inTauri()) return { running: false, connected_lights: 0 };
+  if (!inTauri()) return previewStatus();
   return invoke<EffectStatus>("effect_status");
 }
 
 export async function setRunOnStartup(enabled: boolean): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>("set_run_on_startup", { enabled });
+}
+
+/** Match the native title bar to the chosen appearance (null follows the OS). */
+export async function setWindowTheme(theme: "light" | "dark" | null): Promise<void> {
+  if (!inTauri()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  await getCurrentWindow().setTheme(theme);
+}
+
+export async function appVersion(): Promise<string> {
+  if (!inTauri()) return "dev";
+  const { getVersion } = await import("@tauri-apps/api/app");
+  return getVersion();
 }

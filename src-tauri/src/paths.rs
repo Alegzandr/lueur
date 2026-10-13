@@ -35,7 +35,9 @@ fn user_config_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join("Library").join("Application Support");
+            return PathBuf::from(home)
+                .join("Library")
+                .join("Application Support");
         }
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]

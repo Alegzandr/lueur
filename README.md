@@ -38,11 +38,24 @@ around you follows what's on screen.
 > they can be tested — the device layer is a small trait, so new bulbs slot in
 > without touching the engine.
 
-## Screens
+## The app
 
-| Room editor | Lights | Settings |
-|---|---|---|
-| Draw walls, place the screen & lights | Discover and bind bulbs | Tune latency, look & startup |
+A classic desktop layout: a sidebar with four sections and a persistent
+start/stop control, light and dark themes that follow the system.
+
+| Overview | Room | Bulbs | Settings |
+|---|---|---|---|
+| Start/stop, a "feel" preset (Instant, Balanced, Calm), brightness, and every light at a glance | A floor plan you draw on: drag lights, corners and the screen, drag your seat to turn the screen | Network search, then add each bulb to the room or assign it to an existing light | Capture, colour, transitions, appearance and startup, in grouped preferences |
+
+The first launch walks you through three steps (find bulbs, sketch the room,
+turn it on). Changes to the room while the ambilight runs are flagged with a
+one-click *Apply now*.
+
+Keyboard: <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>1</kbd>–<kbd>4</kbd> switches
+section, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> starts or stops. On the
+plan, arrows nudge the selection (<kbd>Shift</kbd> for bigger steps),
+<kbd>Delete</kbd> removes it, <kbd>Esc</kbd> deselects, and holding
+<kbd>Shift</kbd> while turning the screen snaps to 15°.
 
 ## How the room mapping works
 
@@ -78,7 +91,11 @@ lueur/
 │   ├─ runner.rs          The live capture→compute→push loop
 │   ├─ commands.rs        Validated IPC surface
 │   └─ lib.rs             Tray, autostart, single-instance, window handling
-└─ src/                   Svelte 5 + TypeScript frontend (cosy dark UI)
+└─ src/                   Svelte 5 (runes) + TypeScript frontend
+    ├─ lib/state.svelte.ts  App state and every action the UI can take
+    ├─ lib/views/           Overview, Room, Bulbs, Settings
+    ├─ lib/ui/              Shared controls (Slider, Switch, Segmented, Row…)
+    └─ styles/app.css       Design tokens, light and dark themes
 ```
 
 The security- and colour-critical logic lives in `lueur-core`, which has **no
@@ -92,7 +109,7 @@ cargo test -p lueur-core
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) (stable) and [Node.js](https://nodejs.org/) 18+.
+- [Rust](https://rustup.rs/) 1.90+ and [Node.js](https://nodejs.org/) 20.19+ or 22.12+.
 - Tauri CLI: `npm install` pulls it in as a dev dependency (`npm run tauri`).
 
 **Linux** also needs the usual Tauri + capture system libraries, e.g. on
@@ -112,6 +129,10 @@ npm install
 npm run tauri dev      # hot-reloading app window
 ```
 
+The UI also runs in a plain browser for design work: `npm run dev`, then open
+`http://localhost:1420/?demo` for a furnished sample room (without `?demo` you
+get the first-run experience).
+
 ### Build a release / portable binary
 
 ```bash
@@ -125,13 +146,14 @@ dir if that location isn't writable).
 
 ## First-time setup in the app
 
-1. **Lights** tab → *Scan network*. (Enable **LAN Control** for each bulb in the
-   official Yeelight app first.) Add the bulbs you want.
-2. **Room** tab → drag the **screen** to where your monitor is and rotate it to
-   face your seat; drag each **light** to its real position. The dashed lines
-   show what each light will mirror.
-3. Pick your monitor and tune latency/brightness in **Settings**.
-4. Hit **Start ambilight**. 🌙
+1. **Bulbs** → Lueur searches the network on first visit. (Enable **LAN
+   Control** for each bulb in the official Yeelight app first.) Add the bulbs
+   you want; *Identify* flashes one so you know which is which.
+2. **Room** → drag the **screen** to where your monitor is and drag the **You**
+   marker to your seat to turn it; drag each **light** to its real position. The
+   dotted lines and glows show what each light will mirror.
+3. **Overview** → pick a feel and hit **Start ambilight**. Finer tuning lives
+   in **Settings**.
 
 ## Roadmap
 

@@ -7,11 +7,11 @@
 //! effect instantly without a restart; changing the *topology* (which lights,
 //! where) requires a stop/start, which the UI does for you.
 
-use crate::capture::{check_monitor_index, FrameSource, XcapSource};
+use crate::capture::{FrameSource, XcapSource, check_monitor_index};
+use lueur_core::color::BulbOutput;
 use lueur_core::config::AppConfig;
 use lueur_core::engine::{Ambilight, EngineSettings};
-use lueur_core::geometry::{map_light, LightMapping};
-use lueur_core::color::BulbOutput;
+use lueur_core::geometry::{LightMapping, map_light};
 use lueur_core::yeelight::{Effect, MusicConnection};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -89,7 +89,7 @@ pub fn start(config: &AppConfig) -> Result<Handle, String> {
     }
 
     if targets.is_empty() {
-        return Err("no lights are bound to a bulb — assign bulbs in the Devices tab".into());
+        return Err("no lights are bound to a bulb — assign bulbs in the Bulbs view".into());
     }
 
     // Validate the monitor choice before touching the network, so a bad one
@@ -220,7 +220,9 @@ fn run_loop(
                     if !alive[i] {
                         continue;
                     }
-                    let Some(&output) = outputs.get(i) else { continue };
+                    let Some(&output) = outputs.get(i) else {
+                        continue;
+                    };
                     // Chromaticity and brightness must both be pushed: `set_rgb`
                     // alone only carries hue, so a dark scene would otherwise
                     // stay at whatever brightness the bulb happened to have.

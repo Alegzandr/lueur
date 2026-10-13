@@ -98,13 +98,7 @@ pub async fn discover_devices(timeout_ms: Option<u64>) -> Result<Vec<DiscoveredD
 /// Flash a bulb a colour so the user can identify it while placing lights.
 /// Uses a plain (rate-limited) control connection — this is a one-shot.
 #[tauri::command]
-pub async fn test_device(
-    ip: String,
-    port: Option<u16>,
-    r: u8,
-    g: u8,
-    b: u8,
-) -> Result<(), String> {
+pub async fn test_device(ip: String, port: Option<u16>, r: u8, g: u8, b: u8) -> Result<(), String> {
     validate_ip(&ip)?;
     let port = port.unwrap_or(yeelight::DEFAULT_CONTROL_PORT);
     tauri::async_runtime::spawn_blocking(move || {
@@ -186,7 +180,10 @@ pub async fn set_all_power(state: State<'_, AppState>, on: bool) -> Result<Power
                 .collect();
             handles
                 .into_iter()
-                .map(|h| h.join().unwrap_or_else(|_| Err("power thread panicked".into())))
+                .map(|h| {
+                    h.join()
+                        .unwrap_or_else(|_| Err("power thread panicked".into()))
+                })
                 .collect()
         });
 
@@ -258,7 +255,10 @@ pub fn effect_status(state: State<AppState>) -> Result<EffectStatus, String> {
         .ok()
         .and_then(|g| g.as_ref().map(|h| h.connected_lights))
         .unwrap_or(0);
-    Ok(EffectStatus { running, connected_lights: connected })
+    Ok(EffectStatus {
+        running,
+        connected_lights: connected,
+    })
 }
 
 /// Enable or disable launch-on-login via the autostart plugin, and persist the

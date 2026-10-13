@@ -1,70 +1,161 @@
-/* Lueur design tokens.
-   The chrome is greyscale on purpose. It carries no hue of its own, so the only
-   colours on screen are the three screen zones and two semantic states. When
-   something is coloured here, it means something. */
+/* Lueur design system.
+
+   A classic desktop look: warm paper neutrals in light mode, warm charcoal in
+   dark mode, ink for primary actions and a single amber accent reserved for
+   light itself (an effect running, a bulb on, the selection on the plan). The
+   page titles use a book serif; everything else uses the platform UI face. */
 
 :root {
-  /* Surfaces — neutral greys, no readable temperature, never pure black */
-  --bg: oklch(0.17 0.003 250);
-  --surface: oklch(0.21 0.004 250);
-  --surface-raised: oklch(0.245 0.004 250);
-  --surface-hover: oklch(0.285 0.005 250);
-  --surface-sunken: oklch(0.145 0.003 250);
+  /* Light theme (default). Neutrals carry a faint warm hue, never pure grey. */
+  --bg: oklch(0.975 0.004 85);
+  --sidebar: oklch(0.952 0.006 85);
+  --surface: oklch(0.995 0.002 85);
+  --surface-2: oklch(0.965 0.005 85);
+  --surface-hover: oklch(0.94 0.007 85);
+  --sunken: oklch(0.955 0.006 85);
 
-  --border: oklch(0.3 0.005 250);
-  --border-strong: oklch(0.42 0.006 250);
+  --line: oklch(0.89 0.008 85);
+  --line-strong: oklch(0.8 0.01 85);
 
-  /* Text */
-  --text: oklch(0.94 0.003 250);
-  --text-2: oklch(0.75 0.004 250);
-  --text-3: oklch(0.63 0.005 250);
+  --text: oklch(0.24 0.012 65);
+  --text-2: oklch(0.45 0.012 65);
+  --text-3: oklch(0.58 0.01 65);
 
-  /* No accent hue: primary actions and selection are plain white on dark. */
-  --accent: var(--text);
-  --accent-hover: oklch(0.99 0.001 250);
-  --on-accent: var(--bg);
+  /* Ink: primary buttons, selected segments, switches. */
+  --ink: oklch(0.27 0.014 60);
+  --ink-hover: oklch(0.2 0.014 60);
+  --on-ink: oklch(0.985 0.004 85);
 
-  /* Semantic state */
-  --ok: oklch(0.78 0.14 155);
-  --danger: oklch(0.7 0.17 25);
-  --danger-quiet: oklch(0.7 0.17 25 / 0.16);
+  /* The glow. Used for "on" and for the current selection, nothing else. */
+  --glow: oklch(0.74 0.15 68);
+  --glow-text: oklch(0.52 0.13 60);
+  --glow-soft: oklch(0.74 0.15 68 / 0.14);
 
-  /* Screen zones — data, not decoration. Equal lightness so none dominates. */
-  --zone-left: oklch(0.72 0.13 30);
-  --zone-center: oklch(0.74 0.12 90);
-  --zone-right: oklch(0.72 0.09 220);
+  --ok: oklch(0.55 0.13 150);
+  --danger: oklch(0.55 0.18 28);
+  --danger-soft: oklch(0.55 0.18 28 / 0.1);
 
-  /* Type scale, ratio ≈1.14 */
-  --t-1: 0.6875rem; /* 11px — meta, section labels */
-  --t-2: 0.75rem; /* 12px — hints, captions */
-  --t-3: 0.875rem; /* 14px — body, controls, buttons */
-  --t-4: 1rem; /* 16px — inspector headings */
-  --t-5: 1.125rem; /* 18px — app title */
+  /* Screen zones on the plan. Equal lightness so none dominates. */
+  --zone-left: oklch(0.66 0.14 30);
+  --zone-center: oklch(0.7 0.13 85);
+  --zone-right: oklch(0.62 0.11 230);
 
-  /* Spacing, 4px base */
+  /* The room drawing */
+  --plan-bg: oklch(0.965 0.005 85);
+  --plan-grid: oklch(0.91 0.007 85);
+  --plan-floor: oklch(0.995 0.002 85);
+  --plan-wall: oklch(0.34 0.012 60);
+
+  --shadow-1: 0 1px 2px oklch(0.3 0.02 60 / 0.06), 0 0 0 1px oklch(0.3 0.02 60 / 0.06);
+  --shadow-2: 0 1px 2px oklch(0.3 0.02 60 / 0.06), 0 6px 20px -6px oklch(0.3 0.02 60 / 0.18),
+    0 0 0 1px oklch(0.3 0.02 60 / 0.07);
+
+  /* Type */
+  --font: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, Ubuntu,
+    "Helvetica Neue", sans-serif;
+  /* A book serif present on every desktop, so nothing has to be shipped. */
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua",
+    "URW Palladio L", P052, Georgia, serif;
+
+  --t-xs: 0.6875rem; /* 11 */
+  --t-sm: 0.75rem; /* 12 */
+  --t-md: 0.8125rem; /* 13: body and controls */
+  --t-lg: 0.9375rem; /* 15 */
+  --t-xl: 1.375rem; /* 22: card titles */
+  --t-2xl: 1.875rem; /* 30: page titles */
+
   --s-1: 4px;
   --s-2: 8px;
   --s-3: 12px;
   --s-4: 16px;
-  --s-5: 24px;
-  --s-6: 32px;
-  --s-7: 48px;
+  --s-5: 20px;
+  --s-6: 28px;
+  --s-7: 40px;
+  --s-8: 56px;
 
-  --r-1: 6px;
-  --r-2: 10px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
   --r-full: 999px;
 
-  --dur: 160ms;
+  --dur: 140ms;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 
-  /* No webfont: this is a portable app and the native UI face is the right one
-     here. Listing a font we never ship would only split the rendering between
-     machines that happen to have it installed and machines that don't. */
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
 
+/* Dark theme, applied when the OS asks for it (unless the user forced light),
+   or when the user forced dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: oklch(0.185 0.006 70);
+    --sidebar: oklch(0.165 0.006 70);
+    --surface: oklch(0.215 0.007 70);
+    --surface-2: oklch(0.235 0.007 70);
+    --surface-hover: oklch(0.265 0.008 70);
+    --sunken: oklch(0.165 0.006 70);
+    --line: oklch(0.29 0.008 70);
+    --line-strong: oklch(0.38 0.01 70);
+    --text: oklch(0.94 0.006 85);
+    --text-2: oklch(0.76 0.008 80);
+    --text-3: oklch(0.62 0.008 75);
+    --ink: oklch(0.93 0.008 85);
+    --ink-hover: oklch(0.99 0.004 85);
+    --on-ink: oklch(0.2 0.008 70);
+    --glow: oklch(0.8 0.14 72);
+    --glow-text: oklch(0.82 0.13 75);
+    --glow-soft: oklch(0.8 0.14 72 / 0.14);
+    --ok: oklch(0.76 0.13 150);
+    --danger: oklch(0.72 0.16 28);
+    --danger-soft: oklch(0.72 0.16 28 / 0.14);
+    --zone-left: oklch(0.72 0.13 30);
+    --zone-center: oklch(0.78 0.12 85);
+    --zone-right: oklch(0.72 0.1 230);
+    --plan-bg: oklch(0.17 0.006 70);
+    --plan-grid: oklch(0.225 0.007 70);
+    --plan-floor: oklch(0.21 0.007 70);
+    --plan-wall: oklch(0.82 0.01 80);
+    --shadow-1: 0 1px 2px oklch(0 0 0 / 0.3), 0 0 0 1px oklch(1 0 0 / 0.05);
+    --shadow-2: 0 1px 2px oklch(0 0 0 / 0.3), 0 10px 30px -8px oklch(0 0 0 / 0.55),
+      0 0 0 1px oklch(1 0 0 / 0.07);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: oklch(0.185 0.006 70);
+  --sidebar: oklch(0.165 0.006 70);
+  --surface: oklch(0.215 0.007 70);
+  --surface-2: oklch(0.235 0.007 70);
+  --surface-hover: oklch(0.265 0.008 70);
+  --sunken: oklch(0.165 0.006 70);
+  --line: oklch(0.29 0.008 70);
+  --line-strong: oklch(0.38 0.01 70);
+  --text: oklch(0.94 0.006 85);
+  --text-2: oklch(0.76 0.008 80);
+  --text-3: oklch(0.62 0.008 75);
+  --ink: oklch(0.93 0.008 85);
+  --ink-hover: oklch(0.99 0.004 85);
+  --on-ink: oklch(0.2 0.008 70);
+  --glow: oklch(0.8 0.14 72);
+  --glow-text: oklch(0.82 0.13 75);
+  --glow-soft: oklch(0.8 0.14 72 / 0.14);
+  --ok: oklch(0.76 0.13 150);
+  --danger: oklch(0.72 0.16 28);
+  --danger-soft: oklch(0.72 0.16 28 / 0.14);
+  --zone-left: oklch(0.72 0.13 30);
+  --zone-center: oklch(0.78 0.12 85);
+  --zone-right: oklch(0.72 0.1 230);
+  --plan-bg: oklch(0.17 0.006 70);
+  --plan-grid: oklch(0.225 0.007 70);
+  --plan-floor: oklch(0.21 0.007 70);
+  --plan-wall: oklch(0.82 0.01 80);
+  --shadow-1: 0 1px 2px oklch(0 0 0 / 0.3), 0 0 0 1px oklch(1 0 0 / 0.05);
+  --shadow-2: 0 1px 2px oklch(0 0 0 / 0.3), 0 10px 30px -8px oklch(0 0 0 / 0.55),
+    0 0 0 1px oklch(1 0 0 / 0.07);
   color-scheme: dark;
 }
 
+/* --- Base --- */
 * {
   box-sizing: border-box;
 }
@@ -77,13 +168,15 @@ body {
 
 body {
   font-family: var(--font);
-  font-size: var(--t-3);
-  line-height: 1.45;
+  font-size: var(--t-md);
+  line-height: 1.5;
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   user-select: none;
   overflow: hidden;
+  cursor: default;
 }
 
 #app {
@@ -92,38 +185,104 @@ body {
 
 h1,
 h2,
-h3 {
+h3,
+p {
   margin: 0;
+}
+
+h1,
+h2,
+h3 {
   font-weight: 600;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
 }
 
 button {
-  font-family: inherit;
   cursor: pointer;
   border: none;
-  color: inherit;
   background: none;
+  padding: 0;
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--glow);
   outline-offset: 2px;
-  border-radius: var(--r-1);
+  border-radius: var(--r-sm);
 }
 
-/* --- Surfaces --- */
-.panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-2);
+::selection {
+  background: var(--glow-soft);
 }
 
-.section-title {
-  font-size: var(--t-1);
+/* --- Page scaffolding shared by every view --- */
+.page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: var(--s-7) var(--s-7) var(--s-8);
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-5);
+  margin-bottom: var(--s-6);
+}
+
+.page-title {
+  font-family: var(--font-display);
+  font-size: var(--t-2xl);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.page-lede {
+  margin-top: var(--s-2);
+  color: var(--text-2);
+  font-size: var(--t-lg);
+  max-width: 58ch;
+  text-wrap: pretty;
+}
+
+/* A titled group of rows, in the manner of a classic preferences window. */
+.group + .group {
+  margin-top: var(--s-6);
+}
+
+.group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: 0 var(--s-1) var(--s-2);
+}
+
+.group-title {
+  font-size: var(--t-md);
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.group-note {
+  font-size: var(--t-sm);
   color: var(--text-3);
+}
+
+.card {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
+}
+
+.rows > * + * {
+  border-top: 1px solid var(--line);
 }
 
 .muted {
@@ -134,215 +293,193 @@ button {
   color: var(--text-3);
 }
 
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- Buttons --- */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--s-2);
-  min-height: 32px;
+  gap: 6px;
+  height: 30px;
   padding: 0 var(--s-3);
-  border-radius: var(--r-1);
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
   color: var(--text);
-  font-size: var(--t-3);
+  font-size: var(--t-md);
   font-weight: 500;
   white-space: nowrap;
   transition:
     background var(--dur) var(--ease),
-    border-color var(--dur) var(--ease),
-    color var(--dur) var(--ease);
+    color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 .btn:hover:not(:disabled) {
   background: var(--surface-hover);
-  border-color: var(--border-strong);
 }
 .btn:active:not(:disabled) {
-  background: var(--surface);
+  background: var(--surface-2);
 }
 .btn:disabled {
   color: var(--text-3);
-  cursor: not-allowed;
+  cursor: default;
 }
 
 .btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-  font-weight: 600;
+  background: var(--ink);
+  color: var(--on-ink);
+  box-shadow: none;
 }
 .btn.primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-}
-.btn.primary:active:not(:disabled) {
-  background: var(--accent);
+  background: var(--ink-hover);
 }
 .btn.primary:disabled {
-  background: var(--surface-raised);
-  border-color: var(--border);
+  background: var(--surface-hover);
   color: var(--text-3);
 }
 
-.btn.ghost {
+.btn.plain {
   background: transparent;
-  border-color: transparent;
+  box-shadow: none;
   color: var(--text-2);
 }
-.btn.ghost:hover:not(:disabled) {
+.btn.plain:hover:not(:disabled) {
   background: var(--surface-hover);
-  border-color: transparent;
   color: var(--text);
 }
 
-/* Square icon-only button. Keeps a 32px hit target at a 16px glyph. */
+.btn.danger {
+  color: var(--danger);
+}
+.btn.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+.btn.lg {
+  height: 38px;
+  padding: 0 var(--s-5);
+  font-size: var(--t-lg);
+  border-radius: var(--r-md);
+}
+
+.btn.sm {
+  height: 26px;
+  padding: 0 var(--s-2);
+  font-size: var(--t-sm);
+}
+
+/* Square, icon-only. */
 .btn.icon {
-  width: 32px;
-  min-height: 32px;
+  width: 30px;
   padding: 0;
   flex: none;
 }
-
-.btn.danger:hover:not(:disabled) {
-  background: var(--danger-quiet);
-  color: var(--danger);
+.btn.icon.sm {
+  width: 26px;
 }
 
 /* --- Form controls --- */
 input[type="text"],
-input[type="number"],
 select {
-  font-family: inherit;
-  font-size: var(--t-3);
-  color: var(--text);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  border-radius: var(--r-1);
-  min-height: 32px;
+  height: 30px;
   padding: 0 var(--s-2);
-  transition: border-color var(--dur) var(--ease);
-}
-input[type="text"]:hover,
-select:hover {
-  border-color: var(--border-strong);
+  border-radius: var(--r-md);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  font-size: var(--t-md);
+  outline: none;
+  transition:
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 input[type="text"]:focus,
-input[type="number"]:focus,
-select:focus {
-  border-color: var(--accent);
+select:focus-visible {
+  border-color: var(--glow);
+  box-shadow: 0 0 0 3px var(--glow-soft);
+}
+select {
+  padding-right: var(--s-6);
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 5 6.5 8 3.5' fill='none' stroke='%23888' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  cursor: pointer;
 }
 
-/* Range sliders */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 4px;
+  height: 18px;
   margin: 0;
-  border-radius: var(--r-full);
-  background: var(--surface-hover);
-  outline-offset: 6px;
+  background: transparent;
+  cursor: pointer;
 }
-/* Resting thumb sits below full white so hover and drag still register. */
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--r-full);
+  background: linear-gradient(
+    to right,
+    var(--ink) 0 calc(var(--fill, 0) * 100%),
+    var(--line) calc(var(--fill, 0) * 100%) 100%
+  );
+}
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
   border-radius: 50%;
-  background: var(--text-2);
-  border: none;
-  cursor: grab;
-  transition: background var(--dur) var(--ease);
-}
-input[type="range"]:hover::-webkit-slider-thumb {
-  background: var(--text);
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px var(--line-strong),
+    0 1px 3px oklch(0 0 0 / 0.2);
+  transition: transform var(--dur) var(--ease);
 }
 input[type="range"]:active::-webkit-slider-thumb {
-  cursor: grabbing;
-  background: var(--text);
+  transform: scale(1.12);
+}
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: var(--r-full);
+  background: var(--line);
+}
+input[type="range"]::-moz-range-progress {
+  height: 4px;
+  border-radius: var(--r-full);
+  background: var(--ink);
 }
 input[type="range"]::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--text-2);
+  width: 16px;
+  height: 16px;
   border: none;
-  cursor: grab;
-}
-input[type="range"]:hover::-moz-range-thumb {
-  background: var(--text);
-}
-
-/* Toggle switch */
-.switch {
-  position: relative;
-  display: inline-block;
-  width: 36px;
-  height: 20px;
-  flex: none;
-}
-.switch input {
-  position: absolute;
-  opacity: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  cursor: pointer;
-}
-.switch .track {
-  position: absolute;
-  inset: 0;
-  border-radius: var(--r-full);
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  transition:
-    background var(--dur) var(--ease),
-    border-color var(--dur) var(--ease);
-  pointer-events: none;
-}
-.switch .track::before {
-  content: "";
-  position: absolute;
-  height: 14px;
-  width: 14px;
-  left: 2px;
-  top: 2px;
   border-radius: 50%;
-  background: var(--text-2);
-  transition:
-    transform var(--dur) var(--ease),
-    background var(--dur) var(--ease);
-}
-.switch input:hover + .track {
-  border-color: var(--border-strong);
-}
-.switch input:checked + .track {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.switch input:checked + .track::before {
-  transform: translateX(16px);
-  background: var(--on-accent);
-}
-.switch input:focus-visible + .track {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  background: var(--surface);
+  box-shadow:
+    0 0 0 1px var(--line-strong),
+    0 1px 3px oklch(0 0 0 / 0.2);
 }
 
-/* --- Layout helpers --- */
-.row {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
+kbd {
+  font-family: inherit;
+  font-size: var(--t-xs);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  box-shadow: inset 0 -1px 0 var(--line-strong);
+  color: var(--text-2);
 }
-.spread {
-  justify-content: space-between;
-}
-.grow {
-  flex: 1;
-  min-width: 0;
+
+code {
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
 }
 
 @media (prefers-reduced-motion: reduce) {

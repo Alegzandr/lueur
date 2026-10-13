@@ -74,6 +74,12 @@ export interface BehaviorSettings {
   autostart_effect: boolean;
 }
 
+export type Appearance = "system" | "light" | "dark";
+
+export interface InterfaceSettings {
+  appearance: Appearance;
+}
+
 export interface AppConfig {
   version: number;
   room: Room;
@@ -82,6 +88,7 @@ export interface AppConfig {
   engine: EngineSettings;
   transition: TransitionSettings;
   behavior: BehaviorSettings;
+  interface: InterfaceSettings;
 }
 
 export interface DiscoveredDevice {
@@ -146,5 +153,6 @@ export function defaultConfig(): AppConfig {
       start_minimized: false,
       autostart_effect: false,
     },
+    interface: { appearance: "system" },
   };
 }
