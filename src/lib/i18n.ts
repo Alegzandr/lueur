@@ -93,6 +93,8 @@ const en = {
   no_lights: "No lights yet.",
   restart_text: "The room changed since the ambilight started.",
   apply: "Apply",
+  update_ready: "Version {version} is installed",
+  update_restart: "Restart",
 
   search: "Search",
   searching: "Searching",
@@ -266,6 +268,8 @@ const fr: Record<Key, string> = {
   no_lights: "Aucune lumière.",
   restart_text: "La pièce a changé depuis le lancement.",
   apply: "Appliquer",
+  update_ready: "La version {version} est installée",
+  update_restart: "Redémarrer",
 
   search: "Rechercher",
   searching: "Recherche",

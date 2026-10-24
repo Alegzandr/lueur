@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Lueur</title>
+    <!-- Same first-frame background as the main window. -->
+    <style>
+      html {
+        background: #f6f6f6;
+      }
+      @media (prefers-color-scheme: dark) {
+        html {
+          background: #1f1f1f;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="splash">
+      <h1>Lueur</h1>
+      <p class="stage" id="stage" aria-live="polite"></p>
+      <div class="meter" id="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" hidden>
+        <span></span>
+      </div>
+    </div>
+    <script type="module" src="/src/splash/main.ts"></script>
+  </body>
+</html>

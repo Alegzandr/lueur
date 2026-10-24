@@ -1,6 +1,6 @@
 [package]
 name = "lueur-core"
-description = "Core logic for the Lueur ambilight app: geometry, Yeelight protocol, colour engine and config."
+description = "Core logic for the Lueur ambilight app: geometry, bulb protocols, colour engine and config."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

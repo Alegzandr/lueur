@@ -27,13 +27,17 @@ around you follows what's on screen.
   DXGI Desktop Duplication and shrunk on the GPU, so a frame costs well under a
   millisecond and fullscreen games are captured. macOS and Linux use their
   native APIs (ScreenCaptureKit / X11·PipeWire).
-- 🪶 **Lightweight & portable.** Built on Tauri (system webview, ~10 MB) rather
-  than Electron. Settings live in a `lueur-data` folder next to the executable —
-  run it from a USB stick and leave no trace.
+- 🪶 **Lightweight.** Built on Tauri (system webview, ~10 MB) rather than
+  Electron.
+- 📦 **Installs and updates itself.** On Windows the download is a single
+  executable that installs itself silently for the current user, no admin
+  rights, no wizard. Every launch checks GitHub for a new version and applies
+  it before the app starts.
 - 🔌 **Tray, autostart, start-minimised.** Close to tray, launch at login, and
   optionally auto-start the effect.
-- 🔒 **Minimal attack surface.** The only network traffic is LAN bulb control and
-  SSDP discovery; strict Content-Security-Policy; every IPC input is validated.
+- 🔒 **Minimal attack surface.** The only network traffic is LAN bulb control,
+  SSDP discovery and the update check against GitHub, whose downloads are
+  signature-checked; strict Content-Security-Policy; every IPC input is validated.
 - 🛡️ **Anti-cheat safe.** Lueur reads the screen the way OBS or Discord screen
   share do, and nothing else. See [Competitive games and anti-cheat](#competitive-games-and-anti-cheat).
 
@@ -115,7 +119,7 @@ lueur/
 │   ├─ geometry.rs        Room model + light→screen-zone mapping
 │   ├─ engine.rs          Frame → one colour per light
 │   ├─ yeelight/          LAN protocol, SSDP discovery, music-mode sockets
-│   └─ config.rs          Persisted settings + portable data-dir resolution
+│   └─ config.rs          Persisted settings
 ├─ src-tauri/             Desktop shell (Tauri v2)
 │   ├─ capture.rs         Screen capture behind a FrameSource trait
 │   │  └─ dxgi.rs        Windows: Desktop Duplication, GPU-downscaled
@@ -123,6 +127,8 @@ lueur/
 │   ├─ commands.rs        Validated IPC surface
 │   ├─ tray.rs            Tray menu: start/stop, open, quit
 │   ├─ error.rs           Errors sent as codes the UI words in its language
+│   ├─ install.rs         Windows: silent per-user install and uninstall
+│   ├─ updater.rs         Startup splash and updates from GitHub releases
 │   └─ lib.rs             Tray, autostart, single-instance, window handling
 └─ src/                   Svelte 5 (runes) + TypeScript frontend
     ├─ lib/state.svelte.ts  App state and every action the UI can take
@@ -167,16 +173,48 @@ The UI also runs in a plain browser for design work: `npm run dev`, then open
 `http://localhost:1420/?demo` for a furnished sample room, or `?fresh` for a
 first launch with bulbs waiting on the network.
 
-### Build a release / portable binary
+### Build a release
 
 ```bash
-npm run tauri build
+npm run tauri build -- --no-bundle   # Windows: the self-installing .exe
+npm run tauri build                  # Linux: AppImage, macOS: .app
 ```
 
-The bundle appears under `src-tauri/target/release/` (and installers under
-`.../bundle/`). The plain executable is portable: copy it anywhere and it keeps
-its settings in a `lueur-data` folder beside it (falling back to your user config
-dir if that location isn't writable).
+The output lands in `target/release/`. Settings live in a `lueur` folder in
+your user config dir (`%APPDATA%`, `~/.config`, `~/Library/Application
+Support`); set `LUEUR_DATA_DIR` to put them elsewhere.
+
+## Install, updates and releases
+
+**Windows.** The release is one executable. Started from anywhere, it copies
+itself to `%LOCALAPPDATA%\Lueur`, adds a Start menu shortcut and an entry in
+*Installed apps*, then relaunches from there, without asking anything. An
+older download never replaces a newer install. Uninstalling from *Installed
+apps* removes everything but your settings.
+
+**Linux and macOS.** Download the AppImage or the `.app` (zipped) and run it;
+updates replace that file or bundle in place.
+
+**Updates.** Each launch shows a small window while Lueur checks the latest
+GitHub release; a new version is downloaded, its signature checked, installed,
+and the app restarts into it. Without network it gives up after a few seconds.
+While Lueur runs it checks again every six hours, installs what it finds, and
+offers a restart in the sidebar. This is the only traffic Lueur sends beyond
+your LAN, over HTTPS to github.com. Development builds never update.
+
+**Releasing.** Bump `version` in `Cargo.toml` (`[workspace.package]`) and
+`package.json`, merge to `main`, then push a tag:
+
+```bash
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+`.github/workflows/release.yml` checks the tag against both versions, runs the
+CI, builds Windows, Linux and macOS, signs the update files in a job that
+compiles nothing, and publishes the GitHub release with the `latest.json` the
+updater reads. It needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY`
+and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, from `npx tauri signer generate`,
+whose public key goes in `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
 
 ## First-time setup in the app
 

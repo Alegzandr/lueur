@@ -1,0 +1,181 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Read-only by default; only the publish job can write the release.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Verify tag
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: v
+        name: Tag, version, branch and update key
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          # The app's version is the workspace's (tauri.conf.json has none).
+          cargo_version=$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml)
+          npm_version=$(jq -r .version package.json)
+          if [ "$version" != "$cargo_version" ] || [ "$version" != "$npm_version" ]; then
+            echo "::error::Tag $tag does not match Cargo.toml ($cargo_version) and package.json ($npm_version)"
+            exit 1
+          fi
+          if ! git branch -r --contains "$GITHUB_SHA" | grep -q 'origin/main$'; then
+            echo "::error::Tag $tag must point to a commit on main"
+            exit 1
+          fi
+          if jq -e '.plugins.updater.pubkey | startswith("REPLACE")' src-tauri/tauri.conf.json > /dev/null; then
+            echo "::error::Set the updater public key in src-tauri/tauri.conf.json"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  tests:
+    needs: verify
+    uses: ./.github/workflows/ci.yml
+
+  # Builds run every dependency's build script and never see the signing
+  # key, and they restore no cache another workflow could have written:
+  # what they produce is signed as is.
+  build:
+    name: Build (${{ matrix.name }})
+    needs: [verify, tests]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+          - name: linux
+            os: ubuntu-22.04
+          - name: macos
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: ${{ matrix.name == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - name: System dependencies
+        if: runner.os == 'Linux'
+        run: ./scripts/linux-deps.sh
+      - run: npm ci --ignore-scripts
+
+      # The executable installs itself on first launch (src-tauri/src/install.rs)
+      # and is also the update file.
+      - name: Windows, self-installing executable
+        if: matrix.name == 'windows'
+        shell: bash
+        run: |
+          npx tauri build --no-bundle
+          mkdir -p release
+          cp target/release/lueur.exe "release/Lueur_${VERSION}_windows_x64_setup.exe"
+
+      # The AppImage is its own update file.
+      - name: Linux, AppImage
+        if: matrix.name == 'linux'
+        run: |
+          npx tauri build --bundles appimage
+          mkdir -p release
+          cp target/release/bundle/appimage/*.AppImage "release/Lueur_${VERSION}_linux_x86_64.AppImage"
+
+      # The update file is the archive the bundler would have made: the .app
+      # folder at the top of a gzipped tar, without AppleDouble files.
+      - name: macOS, universal app
+        if: matrix.name == 'macos'
+        run: |
+          npx tauri build --target universal-apple-darwin --bundles app
+          mkdir -p release
+          dir=target/universal-apple-darwin/release/bundle/macos
+          base="release/Lueur_${VERSION}_macos_universal"
+          COPYFILE_DISABLE=1 tar -czf "$base.app.tar.gz" -C "$dir" "Lueur.app"
+          ditto -c -k --keepParent "$dir/Lueur.app" "$base.zip"
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: release-${{ matrix.name }}
+          path: release/*
+          if-no-files-found: error
+
+  # The only job that sees the signing key: a fresh runner that compiles
+  # nothing and runs only the Tauri CLI from the lockfile.
+  sign:
+    name: Sign updates
+    needs: [verify, build]
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: Updater signatures
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npx tauri signer sign "release/Lueur_${VERSION}_windows_x64_setup.exe"
+          npx tauri signer sign "release/Lueur_${VERSION}_linux_x86_64.AppImage"
+          npx tauri signer sign "release/Lueur_${VERSION}_macos_universal.app.tar.gz"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: signed
+          path: release/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [verify, sign]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: signed
+          path: release
+      - name: Update manifest
+        run: ./scripts/latest-json.sh release "$VERSION" "${GITHUB_REPOSITORY}" "${GITHUB_REF_NAME}" > release/latest.json
+      - name: GitHub release
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Lueur $VERSION" \
+            --generate-notes \
+            --verify-tag \
+            release/*

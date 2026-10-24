@@ -17,5 +17,12 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: false,
+    // The app, and the update splash shown before it (see updater.rs).
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        splash: "splash.html",
+      },
+    },
   },
 });

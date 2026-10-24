@@ -11,8 +11,8 @@ node_modules
 /src-tauri/target
 /src-tauri/gen
 
-# Portable app data (created at runtime next to the binary)
-/lueur-data
+# Release files gathered by the release workflow
+/release
 
 # Editor / OS
 .DS_Store

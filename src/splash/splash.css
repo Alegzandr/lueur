@@ -1,0 +1,51 @@
+/* The update splash: the app's name, what is happening, and a thin meter
+   while a download runs. Lit like the rest of Lueur: amber means light. */
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  cursor: default;
+  user-select: none;
+}
+
+.splash {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--s-2);
+  padding: 0 var(--s-5);
+  background: var(--bg);
+}
+
+h1 {
+  margin: 0;
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+
+.stage {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.meter {
+  height: 3px;
+  border-radius: var(--r-full);
+  background: var(--line);
+  overflow: hidden;
+}
+.meter[hidden] {
+  display: none;
+}
+.meter span {
+  display: block;
+  height: 100%;
+  background: var(--glow);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur) var(--ease);
+}

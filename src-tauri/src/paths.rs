@@ -1,4 +1,4 @@
-//! Resolve where Lueur keeps its data, preferring a portable layout.
+//! Resolve where Lueur keeps its data.
 
 use std::path::PathBuf;
 
@@ -6,22 +6,17 @@ use std::path::PathBuf;
 ///
 /// Order of preference:
 /// 1. `LUEUR_DATA_DIR` env var, if set (handy for testing / power users).
-/// 2. A `lueur-data` folder next to the executable (portable mode).
-/// 3. The per-user config dir (`%APPDATA%`, `~/.config`, `~/Library/...`).
+/// 2. A `lueur` folder in the per-user config dir (`%APPDATA%`, `~/.config`,
+///    `~/Library/Application Support`).
+///
+/// Never next to the executable: the install folder is replaced by updates.
 pub fn resolve_data_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("LUEUR_DATA_DIR")
         && !dir.trim().is_empty()
     {
         return PathBuf::from(dir);
     }
-
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    let user_config = user_config_dir();
-    lueur_core::config::resolve_data_dir(&exe_dir, &user_config)
+    user_config_dir().join("lueur")
 }
 
 /// The OS per-user config directory, without pulling in an extra crate.
