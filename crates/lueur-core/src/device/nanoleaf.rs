@@ -26,7 +26,10 @@ fn check(resp: Response) -> io::Result<Response> {
     if resp.ok() {
         Ok(resp)
     } else {
-        Err(io::Error::other(format!("controller answered {}", resp.status)))
+        Err(io::Error::other(format!(
+            "controller answered {}",
+            resp.status
+        )))
     }
 }
 
@@ -35,13 +38,24 @@ fn safe(token: &str) -> io::Result<&str> {
     if !token.is_empty() && token.bytes().all(|b| b.is_ascii_alphanumeric()) {
         Ok(token)
     } else {
-        Err(io::Error::new(io::ErrorKind::InvalidInput, "bad Nanoleaf token"))
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "bad Nanoleaf token",
+        ))
     }
 }
 
 fn put(ip: &str, port: u16, token: &str, path: &str, body: &Value) -> io::Result<()> {
     let path = format!("/api/v1/{}/{path}", safe(token)?);
-    check(http::request("PUT", ip, port, &path, Some(&body.to_string()), TIMEOUT)?).map(|_| ())
+    check(http::request(
+        "PUT",
+        ip,
+        port,
+        &path,
+        Some(&body.to_string()),
+        TIMEOUT,
+    )?)
+    .map(|_| ())
 }
 
 pub fn set_power(ip: &str, port: u16, token: &str, on: bool) -> io::Result<()> {

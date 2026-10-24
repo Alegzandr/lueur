@@ -93,12 +93,24 @@ fn bridge_error(v: &Value) -> Option<(i64, String)> {
 
 fn put_state(ip: &str, username: &str, light: &str, body: &Value) -> io::Result<()> {
     let path = format!("/api/{}/lights/{}/state", safe(username)?, safe(light)?);
-    check(http::request("PUT", ip, PORT, &path, Some(&body.to_string()), TIMEOUT)?).map(|_| ())
+    check(http::request(
+        "PUT",
+        ip,
+        PORT,
+        &path,
+        Some(&body.to_string()),
+        TIMEOUT,
+    )?)
+    .map(|_| ())
 }
 
 /// Path segments come from config; keep them to what the bridge issues.
 fn safe(segment: &str) -> io::Result<&str> {
-    if !segment.is_empty() && segment.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+    if !segment.is_empty()
+        && segment
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
         Ok(segment)
     } else {
         Err(io::Error::new(io::ErrorKind::InvalidInput, "bad Hue id"))
@@ -114,10 +126,20 @@ pub fn set_power(ip: &str, username: &str, light: &str, on: bool) -> io::Result<
 pub fn pair(ip: &str) -> io::Result<HueBridge> {
     let id = bridge_id(ip)?;
     let body = json!({"devicetype": "lueur#desktop"}).to_string();
-    let v = check(http::request("POST", ip, PORT, "/api", Some(&body), TIMEOUT)?)?;
+    let v = check(http::request(
+        "POST",
+        ip,
+        PORT,
+        "/api",
+        Some(&body),
+        TIMEOUT,
+    )?)?;
     if let Some((kind, desc)) = bridge_error(&v) {
         return Err(if kind == 101 {
-            io::Error::new(io::ErrorKind::WouldBlock, "press the link button on the bridge")
+            io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "press the link button on the bridge",
+            )
         } else {
             io::Error::other(desc)
         });
@@ -136,7 +158,14 @@ pub fn pair(ip: &str) -> io::Result<HueBridge> {
 
 /// The bridge's id from its public config (no username needed).
 fn bridge_id(ip: &str) -> io::Result<String> {
-    let v = check(http::request("GET", ip, PORT, "/api/config", None, TIMEOUT)?)?;
+    let v = check(http::request(
+        "GET",
+        ip,
+        PORT,
+        "/api/config",
+        None,
+        TIMEOUT,
+    )?)?;
     v.get("bridgeid")
         .and_then(Value::as_str)
         .map(str::to_ascii_lowercase)
@@ -192,7 +221,10 @@ fn lights(ip: &str, bridge: &str, username: &str) -> io::Result<Vec<DiscoveredDe
     let path = format!("/api/{}/lights", safe(username)?);
     let v = check(http::request("GET", ip, PORT, &path, None, TIMEOUT)?)?;
     if bridge_error(&v).is_some() {
-        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "unauthorized"));
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "unauthorized",
+        ));
     }
     Ok(parse_lights(&v, ip, bridge, username))
 }
@@ -207,7 +239,12 @@ pub fn parse_lights(v: &Value, ip: &str, bridge: &str, username: &str) -> Vec<Di
         .filter(|(_, l)| l.pointer("/state/bri").is_some())
         .filter(|(num, _)| safe(num).is_ok())
         .map(|(num, l)| {
-            let text = |k: &str| l.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+            let text = |k: &str| {
+                l.get(k)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
             DiscoveredDevice {
                 id: format!("hue:{bridge}:{num}"),
                 ip: ip.to_string(),
@@ -215,7 +252,10 @@ pub fn parse_lights(v: &Value, ip: &str, bridge: &str, username: &str) -> Vec<Di
                 model: text("type"),
                 name: text("name"),
                 support: Vec::new(),
-                fw_ver: l.get("swversion").and_then(Value::as_str).map(str::to_string),
+                fw_ver: l
+                    .get("swversion")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 kind: DeviceKind::Hue {
                     username: username.to_string(),
                     light: num.clone(),
@@ -237,8 +277,17 @@ struct HueDriver {
 
 impl Driver for HueDriver {
     fn send(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
-        let ms = if effect == Effect::Smooth { duration_ms } else { 0 };
-        put_state(&self.ip, &self.username, &self.light, &state_body(output, ms, !self.turned_on))?;
+        let ms = if effect == Effect::Smooth {
+            duration_ms
+        } else {
+            0
+        };
+        put_state(
+            &self.ip,
+            &self.username,
+            &self.light,
+            &state_body(output, ms, !self.turned_on),
+        )?;
         self.turned_on = true;
         Ok(())
     }
@@ -248,7 +297,12 @@ impl Driver for HueDriver {
             kelvin: REST_KELVIN,
             bright: REST_BRIGHT,
         };
-        let _ = put_state(&self.ip, &self.username, &self.light, &state_body(rest, 400, true));
+        let _ = put_state(
+            &self.ip,
+            &self.username,
+            &self.light,
+            &state_body(rest, 400, true),
+        );
     }
 }
 

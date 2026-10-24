@@ -52,7 +52,8 @@ pub fn browse(service: &str, timeout: Duration) -> io::Result<Vec<Instance>> {
                 }
             }
             Err(e)
-                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {}
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
+            }
             Err(e) => return Err(e),
         }
     }

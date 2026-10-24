@@ -25,7 +25,6 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::time::Duration;
 
-
 /// Which protocol a bulb speaks, plus what that protocol needs to be spoken.
 ///
 /// Serialised with a `family` tag so a binding written before families
@@ -356,15 +355,19 @@ mod tests {
 
     #[test]
     fn unpaired_kinds_are_not_ready() {
-        assert!(!DeviceKind::Hue {
-            username: String::new(),
-            light: String::new()
-        }
-        .is_ready());
-        assert!(!DeviceKind::Nanoleaf {
-            token: String::new()
-        }
-        .is_ready());
+        assert!(
+            !DeviceKind::Hue {
+                username: String::new(),
+                light: String::new()
+            }
+            .is_ready()
+        );
+        assert!(
+            !DeviceKind::Nanoleaf {
+                token: String::new()
+            }
+            .is_ready()
+        );
         assert!(DeviceKind::Wiz.is_ready());
         assert!(DeviceKind::Yeelight.is_ready());
     }

@@ -123,8 +123,7 @@ pub fn parse_response(raw: &[u8]) -> io::Result<Response> {
     let mut body = raw[split + 4..].to_vec();
     if header(head, "transfer-encoding").is_some_and(|v| v.eq_ignore_ascii_case("chunked")) {
         body = dechunk(&body).ok_or_else(bad)?;
-    } else if let Some(len) = header(head, "content-length").and_then(|v| v.parse::<usize>().ok())
-    {
+    } else if let Some(len) = header(head, "content-length").and_then(|v| v.parse::<usize>().ok()) {
         body.truncate(len);
     }
     Ok(Response {

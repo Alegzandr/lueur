@@ -34,7 +34,13 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Build a frame. `target` is the bulb's MAC (all zero with `tagged` for a
 /// broadcast to every bulb).
-pub fn frame(msg_type: u16, target: [u8; 6], tagged: bool, sequence: u8, payload: &[u8]) -> Vec<u8> {
+pub fn frame(
+    msg_type: u16,
+    target: [u8; 6],
+    tagged: bool,
+    sequence: u8,
+    payload: &[u8],
+) -> Vec<u8> {
     let size = (HEADER_LEN + payload.len()) as u16;
     let mut out = Vec::with_capacity(size as usize);
     out.extend_from_slice(&size.to_le_bytes());
@@ -169,7 +175,11 @@ impl LightStream for LifxStream {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());
         }
-        let ms = if effect == Effect::Smooth { duration_ms } else { 0 };
+        let ms = if effect == Effect::Smooth {
+            duration_ms
+        } else {
+            0
+        };
         self.send(output, ms)?;
         self.last.mark(output);
         Ok(())
@@ -238,7 +248,8 @@ pub fn discover(timeout: Duration) -> io::Result<Vec<DiscoveredDevice>> {
             }
             Ok(_) => {}
             Err(e)
-                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {}
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
+            }
             Err(e) => return Err(e),
         }
     }

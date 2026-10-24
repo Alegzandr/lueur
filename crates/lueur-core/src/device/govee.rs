@@ -45,7 +45,10 @@ pub fn commands(output: BulbOutput) -> [String; 2] {
             }),
         ),
     };
-    let bright = cmd("brightness", json!({"value": output.bright().clamp(1, 100)}));
+    let bright = cmd(
+        "brightness",
+        json!({"value": output.bright().clamp(1, 100)}),
+    );
     [colour, bright]
 }
 
@@ -122,7 +125,8 @@ pub fn discover(timeout: Duration) -> io::Result<Vec<DiscoveredDevice>> {
                 }
             }
             Err(e)
-                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {}
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
+            }
             Err(e) => return Err(e),
         }
     }
@@ -204,6 +208,8 @@ mod tests {
     #[test]
     fn ignores_other_messages() {
         assert!(parse_scan(br#"{"msg":{"cmd":"devStatus","data":{}}}"#).is_none());
-        assert!(parse_scan(br#"{"msg":{"cmd":"scan","data":{"ip":"nope","device":"aa"}}}"#).is_none());
+        assert!(
+            parse_scan(br#"{"msg":{"cmd":"scan","data":{"ip":"nope","device":"aa"}}}"#).is_none()
+        );
     }
 }

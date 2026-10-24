@@ -118,7 +118,8 @@ pub fn discover(timeout: Duration) -> io::Result<Vec<DiscoveredDevice>> {
             }
             Ok(_) => {}
             Err(e)
-                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {}
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
+            }
             Err(e) => return Err(e),
         }
     }

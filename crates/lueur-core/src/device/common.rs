@@ -132,11 +132,10 @@ impl Mailbox {
             std::thread::Builder::new()
                 .name(format!("lueur-{name}"))
                 .spawn(move || {
-                    loop {
-                        match rx.recv_timeout(Duration::from_secs(1)) {
-                            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
-                            Err(RecvTimeoutError::Disconnected) => break,
-                        }
+                    // Wakes at least once a second; ends when the sender is dropped.
+                    while let Ok(_) | Err(RecvTimeoutError::Timeout) =
+                        rx.recv_timeout(Duration::from_secs(1))
+                    {
                         let job = latest.lock().ok().and_then(|mut g| g.take());
                         match job {
                             Some(Job::Frame(output, effect, ms)) => {
@@ -422,6 +421,9 @@ mod tests {
         let log = log.lock().unwrap();
         assert_eq!(log.last().map(String::as_str), Some("rest"));
         assert!(log.len() < 50, "superseded frames are dropped: {log:?}");
-        assert!(log.iter().any(|s| s == "50"), "the newest frame lands: {log:?}");
+        assert!(
+            log.iter().any(|s| s == "50"),
+            "the newest frame lands: {log:?}"
+        );
     }
 }
