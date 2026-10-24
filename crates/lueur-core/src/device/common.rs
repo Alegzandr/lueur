@@ -75,6 +75,20 @@ impl Throttle {
         }
     }
 
+    /// The least time between two commands.
+    pub fn interval(&self) -> Duration {
+        self.interval
+    }
+
+    /// A fade at least as long as the gap to the next command, so a paced
+    /// bulb keeps moving between two of them instead of stepping.
+    pub fn glide(&self, effect: Effect, duration_ms: u32) -> u32 {
+        match effect {
+            Effect::Smooth => duration_ms.max(self.interval.as_millis() as u32),
+            Effect::Sudden => 0,
+        }
+    }
+
     /// True (and the clock restarts) if a command may go now.
     pub fn ready(&mut self) -> bool {
         let now = Instant::now();
@@ -96,7 +110,8 @@ pub enum Job {
 }
 
 /// Something that can drive a bulb, slowly: an HTTP request or an encrypted
-/// TCP exchange per frame.
+/// TCP exchange per frame, or a TCP write that blocks when the bulb stops
+/// reading.
 pub trait Driver: Send + 'static {
     fn send(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()>;
     fn rest(&mut self);
@@ -243,10 +258,24 @@ pub fn lan_hosts() -> Vec<Ipv4Addr> {
         .collect()
 }
 
-/// Parse a bare IPv4 address.
+/// Parse a bare IPv4 address a bulb can have: private or link-local.
+///
+/// Every connection to a bulb goes through here, so an address taken from a
+/// config file or a discovery reply can never send traffic to the internet,
+/// to this machine's own services, or to a multicast group. (A subnet's
+/// broadcast address passes: on a /16 the same `.255` is a host, and the OS
+/// refuses broadcast sends on these sockets anyway.)
 pub fn ipv4(ip: &str) -> io::Result<Ipv4Addr> {
-    ip.parse()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "bad address"))
+    let addr: Ipv4Addr = ip
+        .parse()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "bad address"))?;
+    if !(addr.is_private() || addr.is_link_local()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a LAN address",
+        ));
+    }
+    Ok(addr)
 }
 
 /// A UDP socket "connected" to one bulb, so sends are a single syscall and
@@ -316,6 +345,25 @@ mod tests {
 
     const RED: Rgb = Rgb::new(255, 0, 0);
 
+    #[test]
+    fn only_lan_addresses_are_bulbs() {
+        for ok in ["192.168.1.5", "10.0.0.2", "172.16.4.1", "169.254.3.3"] {
+            assert!(ipv4(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "8.8.8.8",
+            "127.0.0.1",
+            "0.0.0.0",
+            "224.0.0.251",
+            "255.255.255.255",
+            "::1",
+            "fe80::1",
+            "lamp.local",
+        ] {
+            assert!(ipv4(bad).is_err(), "{bad}");
+        }
+    }
+
     fn color(rgb: Rgb, bright: u8) -> BulbOutput {
         BulbOutput::Color { rgb, bright }
     }
@@ -381,6 +429,14 @@ mod tests {
         let mut open = Throttle::new(Duration::ZERO);
         assert!(open.ready());
         assert!(open.ready());
+    }
+
+    #[test]
+    fn a_paced_fade_spans_the_gap() {
+        let t = Throttle::new(Duration::from_millis(300));
+        assert_eq!(t.glide(Effect::Smooth, 40), 300);
+        assert_eq!(t.glide(Effect::Smooth, 800), 800);
+        assert_eq!(t.glide(Effect::Sudden, 800), 0);
     }
 
     #[test]

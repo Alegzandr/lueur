@@ -33,7 +33,7 @@ export interface Toast {
 }
 
 /** What the backend reports while nothing runs. */
-const idle = (): EffectStatus => ({ running: false, connected_lights: 0, mode: null, light_ids: [] });
+const idle = (): EffectStatus => ({ running: false, connected_lights: 0, mode: null, light_ids: [], groups: [] });
 
 class AppState {
   view = $state<View>("lighting");
@@ -58,6 +58,8 @@ class AppState {
   powerBusy = $state<Record<string, boolean>>({});
   /** The mood or mode being switched to, while it starts. */
   pending = $state<string | null>(null);
+  /** Lights whose mode is being switched, while their effects restart. */
+  modeBusy = $state<Record<string, boolean>>({});
 
   /** The light selected on the plan, shared so other views can deep-link. */
   selectedLight = $state<string | null>(null);
@@ -124,6 +126,16 @@ export function isOn(lightId: string): boolean {
 /** True while the running ambilight or show sets this light's colour. */
 export function isDriven(lightId: string): boolean {
   return app.status.running && app.status.light_ids.includes(lightId);
+}
+
+/** The mode a light plays, or null while it is set by hand. */
+export function modeOf(lightId: string): Mode | null {
+  return app.status.groups.find((g) => g.light_ids.includes(lightId))?.mode ?? null;
+}
+
+/** True while some light plays `mode`. */
+export function isPlaying(mode: Mode): boolean {
+  return app.status.groups.some((g) => g.mode === mode);
 }
 
 /** Record a state the backend has already applied and persisted. */
@@ -238,9 +250,7 @@ export async function restartEffect(): Promise<void> {
   app.busy = true;
   try {
     await persistNow();
-    const mode = app.status.mode ?? "ambilight";
-    await ipc.stopEffect();
-    app.status = await ipc.startEffect(mode);
+    app.status = await ipc.restartEffect();
     app.startedWith = topology();
   } catch (e) {
     await refreshStatus();
@@ -377,24 +387,47 @@ export async function setSleepTimer(minutes: number | null): Promise<void> {
   }
 }
 
-/** Start the ambilight or a show; picking the one that runs stops it. */
+/** Start the ambilight or a show on the whole room; picking one that plays
+ *  stops it, on every light playing it. */
 export async function chooseMode(mode: Mode): Promise<void> {
   if (app.busy || app.pending) return;
-  if (app.status.running && app.status.mode === mode) {
-    await toggleEffect();
-    return;
-  }
   app.pending = mode;
   app.busy = true;
   try {
     await persistNow();
-    await start(mode);
+    if (isPlaying(mode)) {
+      await ipc.stopEffect(mode);
+      await reloadStates();
+      await refreshStatus();
+    } else {
+      await start(mode);
+    }
   } catch (e) {
     await refreshStatus();
     fail(e);
   } finally {
     app.busy = false;
     app.pending = null;
+  }
+}
+
+/** Play `mode` on one light, in step with every other light playing it, or
+ *  give the light back to the hand with null. */
+export async function setLightMode(lightId: string, mode: Mode | null): Promise<void> {
+  if (app.busy || app.modeBusy[lightId] || modeOf(lightId) === mode) return;
+  app.modeBusy[lightId] = true;
+  try {
+    await persistNow();
+    const wasRunning = app.status.running;
+    app.status = await ipc.setLightMode(lightId, mode);
+    if (!app.status.running) app.startedWith = null;
+    else if (!wasRunning || app.startedWith === null) app.startedWith = topology();
+    if (mode === null) await reloadStates();
+  } catch (e) {
+    await refreshStatus();
+    fail(e);
+  } finally {
+    delete app.modeBusy[lightId];
   }
 }
 

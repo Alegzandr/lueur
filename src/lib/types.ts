@@ -232,12 +232,21 @@ export interface MonitorInfo {
 /** `ambilight` or a show. */
 export type Mode = "ambilight" | ShowKind;
 
+/** One running effect: a mode and the lights playing it, in step. */
+export interface EffectGroup {
+  mode: Mode;
+  light_ids: string[];
+}
+
 export interface EffectStatus {
   running: boolean;
   connected_lights: number;
+  /** The mode playing, when exactly one does. */
   mode: Mode | null;
-  /** The room lights the running effect drives. */
+  /** Every room light an effect drives. */
   light_ids: string[];
+  /** Each mode playing and its lights. */
+  groups: EffectGroup[];
 }
 
 export interface PowerResult {

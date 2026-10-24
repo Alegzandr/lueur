@@ -72,12 +72,16 @@ impl AudioTap {
         })
     }
 
-    /// Everything captured since the last call.
-    pub fn take(&self) -> Vec<f32> {
-        self.buffer
-            .lock()
-            .map(|mut b| std::mem::take(&mut *b))
-            .unwrap_or_default()
+    /// Swap everything captured since the last call into `out`.
+    ///
+    /// The two buffers trade places rather than one being taken: the capture
+    /// callback runs on the audio thread, and must find room already there
+    /// instead of growing a fresh vector every time.
+    pub fn take_into(&self, out: &mut Vec<f32>) {
+        out.clear();
+        if let Ok(mut b) = self.buffer.lock() {
+            std::mem::swap(&mut *b, out);
+        }
     }
 }
 

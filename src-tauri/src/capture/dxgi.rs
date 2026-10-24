@@ -201,19 +201,27 @@ impl Session {
             }
 
             // A zero present time means only the mouse pointer moved.
-            let read = match resource {
-                Some(r) if info.LastPresentTime != 0 => self.read(&r, frame).map(|()| true),
+            let copied = match resource {
+                Some(r) if info.LastPresentTime != 0 => self.copy(&r).map(|()| true),
                 _ => Ok(false),
             };
+            // Handed back as soon as the copy is queued: the shrink and the
+            // readback below wait on the GPU, which a game can keep busy, and
+            // the desktop image should not stay held for that long.
             unsafe { self.duplication.ReleaseFrame() }
                 .map_err(|e| format!("release desktop frame: {e}"))?;
-            if read? || left.is_zero() {
+            if copied? {
+                return self.shrink(frame);
+            }
+            if left.is_zero() {
                 return Ok(());
             }
         }
     }
 
-    fn read(&mut self, resource: &IDXGIResource, frame: &mut Option<Frame>) -> Result<(), String> {
+    /// Queue a copy of the acquired desktop image into the mip chain's top
+    /// level.
+    fn copy(&mut self, resource: &IDXGIResource) -> Result<(), String> {
         let texture: ID3D11Texture2D = resource.cast().map_err(err("desktop texture"))?;
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         unsafe { texture.GetDesc(&mut desc) };
@@ -229,11 +237,21 @@ impl Session {
             return Err("no capture target".into());
         };
         let source: ID3D11Resource = texture.cast().map_err(err("desktop resource"))?;
-
-        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         unsafe {
             self.context
                 .CopySubresourceRegion(Some(&t.mips), 0, 0, 0, 0, Some(&source), 0, None);
+        }
+        Ok(())
+    }
+
+    /// Shrink the copied desktop down the mip chain and read the small level
+    /// back into `frame`.
+    fn shrink(&mut self, frame: &mut Option<Frame>) -> Result<(), String> {
+        let Some(t) = self.target.as_ref() else {
+            return Err("no capture target".into());
+        };
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        unsafe {
             self.context.GenerateMips(Some(&t.view));
             self.context.CopySubresourceRegion(
                 Some(&t.staging),
@@ -363,13 +381,17 @@ mod tests {
             {
                 continue;
             }
-            if let Some(r) = resource.filter(|_| info.LastPresentTime != 0) {
-                let t = Instant::now();
-                session.read(&r, &mut frame).expect("read");
+            let t = Instant::now();
+            let copied = resource
+                .filter(|_| info.LastPresentTime != 0)
+                .map(|r| session.copy(&r).expect("copy"))
+                .is_some();
+            unsafe { session.duplication.ReleaseFrame() }.expect("release");
+            if copied {
+                session.shrink(&mut frame).expect("shrink");
                 spent += t.elapsed();
                 reads += 1;
             }
-            unsafe { session.duplication.ReleaseFrame() }.expect("release");
         }
         let f = frame.expect("no frame presented");
         let whole = lueur_core::geometry::SampleZone::new(0.0, 0.0, 1.0, 1.0);

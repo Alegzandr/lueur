@@ -1,13 +1,16 @@
 //! The live loops: the ambilight, and the light shows.
 //!
-//! [`start`] and [`start_show`] snapshot the current config, open a stream to
-//! every bound bulb that takes part (music mode for a Yeelight, whatever the
-//! family uses otherwise), then spin a dedicated thread that computes and
-//! pushes colours every frame — from the screen for the ambilight, from the
-//! clock or the sound for a show. Engine and show settings are read from a
-//! shared cell each frame so the UI's sliders take effect instantly without a
-//! restart; changing the *topology* (which lights, where) requires a
-//! stop/start, which the UI does for you.
+//! [`start`] snapshots the current config, opens a stream to every light it is
+//! given (music mode for a Yeelight, whatever the family uses otherwise), then
+//! spins a dedicated thread that computes and pushes colours every frame —
+//! from the screen for the ambilight, from the clock or the sound for a show.
+//! Engine and show settings are read from a shared cell each frame so the UI's
+//! sliders take effect instantly without a restart; changing the *topology*
+//! (which lights, where) requires a stop/start, which the UI does for you.
+//!
+//! Several loops may run at once, one per mode (see [`Effects`]): every light
+//! playing the same mode is driven by the same loop, on the same clock, so
+//! they move together.
 
 use crate::audio::AudioTap;
 use crate::capture::{FrameSource, ScreenSource, check_monitor_index};
@@ -18,11 +21,11 @@ use lueur_core::config::AppConfig;
 use lueur_core::device::LightStream;
 use lueur_core::engine::{Ambilight, EngineSettings};
 use lueur_core::geometry::{LightMapping, map_light};
-use lueur_core::show::{self, Analyzer, Candle, Dance, ShowKind, ShowSettings};
+use lueur_core::show::{Analyzer, Levels, Show, ShowKind, ShowSettings};
 use lueur_core::yeelight::Effect;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -61,11 +64,20 @@ impl Mode {
             Mode::Show(kind) => kind.id(),
         }
     }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "ambilight" => Some(Mode::Ambilight),
+            _ => ShowKind::from_id(id).map(Mode::Show),
+        }
+    }
 }
 
 /// A running effect. Dropping or calling [`Handle::stop`] tears it down cleanly.
 pub struct Handle {
     stop: Arc<AtomicBool>,
+    /// Whether the bulbs settle on a warm glow when the loop ends.
+    settle: Arc<AtomicBool>,
     live: Arc<Mutex<LiveSettings>>,
     thread: Option<JoinHandle<()>>,
     /// Human-readable summary of what started, for the UI/status.
@@ -82,6 +94,13 @@ impl Handle {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+    }
+
+    /// Stop without settling the bulbs: another loop, or the hand, takes
+    /// them over at once, and a warm flash in between would only distract.
+    pub fn hand_over(&mut self) {
+        self.settle.store(false, Ordering::SeqCst);
+        self.stop();
     }
 
     /// Update the live-tunable settings.
@@ -108,18 +127,51 @@ struct ConnectedLight {
     conn: Box<dyn LightStream>,
 }
 
-/// Open a stream to every enabled light that has a bulb, in room order.
+/// How many of `ids` sit behind each host: lights behind one Hue bridge share
+/// its command budget, whichever loop drives them.
+pub fn per_host<'a>(
+    config: &AppConfig,
+    ids: impl IntoIterator<Item = &'a String>,
+) -> HashMap<String, usize> {
+    let mut hosts: HashMap<String, usize> = HashMap::new();
+    for id in ids {
+        if let Some(b) = config.binding_for(id) {
+            *hosts.entry(b.ip.clone()).or_default() += 1;
+        }
+    }
+    hosts
+}
+
+/// The lights an effect started for the whole room takes: every enabled
+/// light that has a bulb, in room order.
+pub fn enabled_ids(config: &AppConfig) -> Vec<String> {
+    config
+        .room
+        .lights
+        .iter()
+        .filter(|l| l.enabled && config.binding_for(&l.id).is_some())
+        .map(|l| l.id.clone())
+        .collect()
+}
+
+/// Open a stream to each of `ids` that has a bulb, in room order. `hosts`
+/// counts every light that will be driven once this starts (see
+/// [`per_host`]).
 ///
 /// Returns an error if there are none, or if none of the bulbs accept a
 /// stream; individual failures are tolerated.
-fn connect(config: &AppConfig) -> AppResult<(Vec<ConnectedLight>, Vec<String>)> {
-    // Resolve the enabled lights that have a device binding, in room order, and
+fn connect(
+    config: &AppConfig,
+    ids: &[String],
+    hosts: &HashMap<String, usize>,
+) -> AppResult<(Vec<ConnectedLight>, Vec<String>)> {
+    // Resolve the lights that have a device binding, in room order, and
     // compute each one's screen mapping (zone plus distance shaping).
     let targets: Vec<_> = config
         .room
         .lights
         .iter()
-        .filter(|l| l.enabled)
+        .filter(|l| ids.contains(&l.id))
         .filter_map(|l| {
             let binding = config.binding_for(&l.id)?;
             Some((map_light(&config.room.screen, l), binding, l))
@@ -129,19 +181,13 @@ fn connect(config: &AppConfig) -> AppResult<(Vec<ConnectedLight>, Vec<String>)> 
         return Err(AppError::new("no_active_lights"));
     }
 
-    // Lights behind one host (a Hue bridge) share its command budget.
-    let mut per_host: HashMap<&str, usize> = HashMap::new();
-    for (_, binding, _) in &targets {
-        *per_host.entry(binding.ip.as_str()).or_default() += 1;
-    }
-
     // Open every bulb at once: an unplugged one costs its whole timeout, and
     // waiting on each in turn would make a few of them feel like a hang.
     let opened: Vec<_> = std::thread::scope(|scope| {
         let handles: Vec<_> = targets
             .iter()
             .map(|(_, binding, _)| {
-                let siblings = per_host[binding.ip.as_str()];
+                let siblings = hosts.get(&binding.ip).copied().unwrap_or(1);
                 scope.spawn(move || devices::open_stream(&binding.endpoint(), siblings))
             })
             .collect();
@@ -178,7 +224,7 @@ fn connect(config: &AppConfig) -> AppResult<(Vec<ConnectedLight>, Vec<String>)> 
 }
 
 /// Run `body` on its own thread over the connected lights; when it returns
-/// (stopped, or every bulb gone) the bulbs settle.
+/// (stopped, or every bulb gone) the bulbs settle, unless handed over.
 fn spawn(
     config: &AppConfig,
     mode: Mode,
@@ -188,22 +234,27 @@ fn spawn(
 ) -> AppResult<Handle> {
     let live = Arc::new(Mutex::new(LiveSettings::of(config)));
     let stop = Arc::new(AtomicBool::new(false));
+    let settle = Arc::new(AtomicBool::new(true));
     let connected_lights = lights.len();
     let thread = {
         let live = Arc::clone(&live);
         let stop = Arc::clone(&stop);
+        let settle = Arc::clone(&settle);
         std::thread::Builder::new()
             .name(format!("lueur-{}", mode.id()))
             .spawn(move || {
                 let mut lights = lights;
                 body(&mut lights, &live, &stop);
                 stop.store(true, Ordering::SeqCst);
-                rest(&mut lights);
+                if settle.load(Ordering::SeqCst) {
+                    rest(&mut lights);
+                }
             })
             .map_err(AppError::internal)?
     };
     Ok(Handle {
         stop,
+        settle,
         live,
         thread: Some(thread),
         connected_lights,
@@ -212,19 +263,34 @@ fn spawn(
     })
 }
 
-/// Start the ambilight from `config`.
+/// Start `mode` on the lights `ids` (see [`connect`] for `hosts`).
 ///
-/// Returns an error if there are no bound+enabled lights, capture can't start,
-/// or none of the bulbs accept a stream.
-pub fn start(config: &AppConfig) -> AppResult<Handle> {
+/// Returns an error if none of them has a bulb that accepts a stream, if
+/// capture can't start (ambilight) or if there is nothing to listen to
+/// (music).
+pub fn start(
+    config: &AppConfig,
+    mode: Mode,
+    ids: &[String],
+    hosts: &HashMap<String, usize>,
+) -> AppResult<Handle> {
+    match mode {
+        Mode::Ambilight => start_ambilight(config, ids, hosts),
+        Mode::Show(kind) => start_show(config, kind, ids, hosts),
+    }
+}
+
+fn start_ambilight(
+    config: &AppConfig,
+    ids: &[String],
+    hosts: &HashMap<String, usize>,
+) -> AppResult<Handle> {
     // Validate the monitor choice before touching the network, so a bad one
     // fails fast without leaving bulbs in music mode. The source itself is
     // opened on the capture thread: its handle is not `Send`.
     let monitor_index = config.capture.monitor_index;
-    if config.room.lights.iter().any(|l| l.enabled) {
-        check_monitor_index(monitor_index)?;
-    }
-    let (lights, ids) = connect(config)?;
+    check_monitor_index(monitor_index)?;
+    let (lights, ids) = connect(config, ids, hosts)?;
     let target_fps = config.capture.target_fps.clamp(1, 120);
     let frame_budget = Duration::from_secs_f64(1.0 / target_fps as f64);
     spawn(
@@ -243,17 +309,17 @@ pub fn start(config: &AppConfig) -> AppResult<Handle> {
     )
 }
 
-/// How often a show computes a frame. Shows move slowly next to a game: this
-/// is smooth to the eye and well inside every family's command budget.
-const SHOW_FRAME: Duration = Duration::from_millis(40);
-
-/// Start a light show on the same lights the ambilight would drive.
-pub fn start_show(config: &AppConfig, kind: ShowKind) -> AppResult<Handle> {
+fn start_show(
+    config: &AppConfig,
+    kind: ShowKind,
+    ids: &[String],
+    hosts: &HashMap<String, usize>,
+) -> AppResult<Handle> {
     // Make sure there is something to listen to before waking the bulbs.
     if kind == ShowKind::Music {
         AudioTap::open().map_err(|e| AppError::new("audio_unavailable").detail(e))?;
     }
-    let (lights, ids) = connect(config)?;
+    let (lights, ids) = connect(config, ids, hosts)?;
     spawn(
         config,
         Mode::Show(kind),
@@ -261,6 +327,83 @@ pub fn start_show(config: &AppConfig, kind: ShowKind) -> AppResult<Handle> {
         ids,
         move |lights, live, stop| run_show(kind, lights, live, stop),
     )
+}
+
+/// Every loop running, at most one per mode.
+#[derive(Default)]
+pub struct Effects {
+    running: Mutex<Vec<Handle>>,
+    /// Held across a whole change (stop, connect, start), so two changes
+    /// asked at once cannot both plan from the same lights.
+    change: Mutex<()>,
+}
+
+impl Effects {
+    fn lock(&self) -> MutexGuard<'_, Vec<Handle>> {
+        // A loop that ended by itself (every bulb gone) is forgotten here.
+        let mut running = self.running.lock().unwrap_or_else(|p| p.into_inner());
+        running.retain(Handle::is_running);
+        running
+    }
+
+    /// Serialise a change to what runs. Not re-entrant: callers holding it
+    /// use the functions that take it as given.
+    pub fn change(&self) -> MutexGuard<'_, ()> {
+        self.change.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    pub fn is_running(&self) -> bool {
+        !self.lock().is_empty()
+    }
+
+    /// What runs: each mode, the lights it drives and how many answered.
+    pub fn groups(&self) -> Vec<(Mode, Vec<String>, usize)> {
+        self.lock()
+            .iter()
+            .map(|h| (h.mode, h.light_ids.clone(), h.connected_lights))
+            .collect()
+    }
+
+    pub fn modes(&self) -> Vec<Mode> {
+        self.lock().iter().map(|h| h.mode).collect()
+    }
+
+    /// The mode driving a light, if any.
+    pub fn mode_of(&self, light_id: &str) -> Option<Mode> {
+        self.lock()
+            .iter()
+            .find(|h| h.light_ids.iter().any(|id| id == light_id))
+            .map(|h| h.mode)
+    }
+
+    /// Every room light some loop drives.
+    pub fn driven_ids(&self) -> Vec<String> {
+        self.lock()
+            .iter()
+            .flat_map(|h| h.light_ids.iter().cloned())
+            .collect()
+    }
+
+    /// Take the loops `which` picks out of the running set, still running.
+    pub fn take(&self, which: impl Fn(&Handle) -> bool) -> Vec<Handle> {
+        let mut running = self.lock();
+        let (taken, kept) = running.drain(..).partition(|h| which(h));
+        *running = kept;
+        taken
+    }
+
+    /// Add a loop. One already playing its mode is replaced.
+    pub fn push(&self, handle: Handle) {
+        let mut running = self.lock();
+        running.retain(|h| h.mode != handle.mode);
+        running.push(handle);
+    }
+
+    pub fn update_live(&self, settings: LiveSettings) {
+        for h in self.lock().iter() {
+            h.update_live(settings);
+        }
+    }
 }
 
 /// Push one frame to every light still answering. False once none is.
@@ -304,8 +447,7 @@ fn run_show(
 ) {
     let n = lights.len();
     let mut alive = vec![true; n];
-    let mut candle = Candle::new(n);
-    let mut dance = Dance::default();
+    let mut show = Show::new(kind, n);
     let tap = if kind == ShowKind::Music {
         match AudioTap::open() {
             Ok(tap) => Some(tap),
@@ -318,29 +460,35 @@ fn run_show(
         None
     };
     let mut analyzer = Analyzer::new(tap.as_ref().map_or(48_000, |t| t.sample_rate));
-    let (effect, duration_ms) = pace(Effect::Smooth, SHOW_FRAME.as_millis() as u32, SHOW_FRAME);
+    let frame = Duration::from_millis(kind.frame_ms());
+    // Each frame fades into the next over the time it has, so the bulbs glide
+    // rather than step; a beat is the exception, sent sharp.
+    let glide = pace(Effect::Smooth, frame.as_millis() as u32, frame);
+    // Room for the tap's whole second, so the audio thread never grows it.
+    let mut samples = Vec::with_capacity(tap.as_ref().map_or(0, |t| t.sample_rate as usize));
 
-    let started = Instant::now();
     let mut last = Instant::now();
     while !stop.load(Ordering::SeqCst) {
-        std::thread::sleep(SHOW_FRAME.saturating_sub(last.elapsed()));
-        let dt = last.elapsed().as_secs_f32();
+        std::thread::sleep(frame.saturating_sub(last.elapsed()));
+        // A stall (a sleeping laptop, a busy machine) must not fast-forward
+        // the show.
+        let dt = last.elapsed().as_secs_f32().min(0.25);
         last = Instant::now();
         let Ok(settings) = live.lock().map(|g| g.show) else {
             break;
         };
-        let outputs = match kind {
-            ShowKind::Candle => candle.frame(&settings, dt),
-            ShowKind::Music => {
-                let samples = tap.as_ref().map(AudioTap::take).unwrap_or_default();
-                let levels = analyzer.feed(&samples, dt);
-                dance.frame(&settings, levels, dt, n)
+        let levels = match &tap {
+            Some(tap) => {
+                tap.take_into(&mut samples);
+                analyzer.feed(&samples)
             }
-            ShowKind::Rainbow | ShowKind::Sunset | ShowKind::Ocean => show::fade(
-                &ShowSettings { kind, ..settings },
-                started.elapsed().as_secs_f32(),
-                n,
-            ),
+            None => Levels::default(),
+        };
+        let outputs = show.frame(&settings, dt, levels);
+        let (effect, duration_ms) = if show.accent() {
+            (Effect::Sudden, 0)
+        } else {
+            glide
         };
         if !push_all(lights, &mut alive, &outputs, effect, duration_ms) {
             break;

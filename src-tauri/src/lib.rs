@@ -21,6 +21,7 @@ mod manual;
 mod natural;
 mod paths;
 mod runner;
+mod secrets;
 mod sleep;
 mod state;
 mod tray;
@@ -28,6 +29,7 @@ mod tuya;
 mod tuya_cloud;
 mod updater;
 
+use lueur_core::config::Appearance;
 use state::AppState;
 use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
@@ -53,11 +55,21 @@ pub(crate) fn start(app: &AppHandle) {
     auto::spawn(app);
     natural::spawn(app);
 
-    let behavior = app
+    let (behavior, appearance) = app
         .state::<AppState>()
         .lock_config()
-        .map(|c| c.behavior)
+        .map(|c| (c.behavior, c.interface.appearance))
         .unwrap_or_default();
+
+    // A forced theme applies before the window first paints, or it would
+    // open in the OS colours and switch once the page reads the config.
+    if let Some(win) = app.get_webview_window(MAIN_WINDOW) {
+        let _ = win.set_theme(match appearance {
+            Appearance::System => None,
+            Appearance::Light => Some(tauri::Theme::Light),
+            Appearance::Dark => Some(tauri::Theme::Dark),
+        });
+    }
 
     // We stay hidden if the user asked to start minimised, or if we were
     // launched by the OS autostart with `--minimized`.
@@ -120,6 +132,8 @@ pub fn run() {
             commands::apply_scene,
             commands::start_effect,
             commands::stop_effect,
+            commands::set_light_mode,
+            commands::restart_effect,
             commands::effect_status,
             commands::set_sleep_timer,
             commands::sleep_timer,

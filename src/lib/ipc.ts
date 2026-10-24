@@ -165,7 +165,7 @@ export async function setLightState(lightId: string, state: LightState): Promise
 /** Apply a built-in mood to every light. Stops whatever effect runs. */
 export async function applyScene(id: string): Promise<PowerResult> {
   if (!inTauri()) {
-    previewRunning = false;
+    previewModes = {};
     return { total: 0, succeeded: 0, failures: [] };
   }
   return invoke<PowerResult>("apply_scene", { id });
@@ -179,41 +179,64 @@ export function onLightsChanged(cb: () => void): Promise<() => void> {
 /** Power every bound bulb on/off. Turning off also stops the effect. */
 export async function setAllPower(on: boolean): Promise<PowerResult> {
   if (!inTauri()) {
-    if (!on) previewRunning = false;
+    if (!on) previewModes = {};
     return { total: 0, succeeded: 0, failures: [] };
   }
   return invoke<PowerResult>("set_all_power", { on });
 }
 
-// The browser preview pretends to run, so the UI can be exercised end to end.
-let previewMode: Mode | null = null;
-let previewRunning = false;
+// The browser preview pretends to run, so the UI can be exercised end to end:
+// each demo light's mode, if it plays one.
+let previewModes: Record<string, Mode> = {};
+const PREVIEW_LIGHTS = ["demo-0", "demo-1", "demo-2"];
 const previewStatus = (): EffectStatus => {
-  const lit = previewRunning && (demo() || preview("fresh"));
+  const groups = [...new Set(Object.values(previewModes))].map((mode) => ({
+    mode,
+    light_ids: PREVIEW_LIGHTS.filter((id) => previewModes[id] === mode),
+  }));
+  const light_ids = groups.flatMap((g) => g.light_ids);
   return {
-    running: previewRunning,
-    connected_lights: lit ? 3 : 0,
-    mode: previewRunning ? (previewMode ?? "ambilight") : null,
-    light_ids: lit ? ["demo-0", "demo-1", "demo-2"] : [],
+    running: groups.length > 0,
+    connected_lights: light_ids.length,
+    mode: groups.length === 1 ? groups[0].mode : null,
+    light_ids,
+    groups,
   };
 };
 
-/** Start the ambilight, or a show, replacing whatever runs. */
+/** Start the ambilight, or a show, on the whole room, replacing whatever runs. */
 export async function startEffect(mode: Mode = "ambilight"): Promise<EffectStatus> {
   if (!inTauri()) {
-    previewRunning = true;
-    previewMode = mode;
+    previewModes = demo() || preview("fresh") ? Object.fromEntries(PREVIEW_LIGHTS.map((id) => [id, mode])) : {};
     return previewStatus();
   }
   return invoke<EffectStatus>("start_effect", { mode });
 }
 
-export async function stopEffect(): Promise<void> {
+/** Stop the effect playing `mode`, or every effect without one. */
+export async function stopEffect(mode?: Mode): Promise<void> {
   if (!inTauri()) {
-    previewRunning = false;
+    previewModes = mode ? Object.fromEntries(Object.entries(previewModes).filter(([, m]) => m !== mode)) : {};
     return;
   }
-  return invoke<void>("stop_effect");
+  return invoke<void>("stop_effect", { mode: mode ?? null });
+}
+
+/** Play `mode` on one light, in step with the others playing it, or give
+ *  it back to the hand with null. */
+export async function setLightMode(lightId: string, mode: Mode | null): Promise<EffectStatus> {
+  if (!inTauri()) {
+    if (mode) previewModes = { ...previewModes, [lightId]: mode };
+    else previewModes = Object.fromEntries(Object.entries(previewModes).filter(([id]) => id !== lightId));
+    return previewStatus();
+  }
+  return invoke<EffectStatus>("set_light_mode", { lightId, mode });
+}
+
+/** Restart the effects on their lights, to pick up room and capture changes. */
+export async function restartEffect(): Promise<EffectStatus> {
+  if (!inTauri()) return previewStatus();
+  return invoke<EffectStatus>("restart_effect");
 }
 
 export async function effectStatus(): Promise<EffectStatus> {

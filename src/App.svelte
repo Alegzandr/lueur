@@ -3,10 +3,10 @@
   import { app, bootstrap, fail, refreshStatus, reloadStates, sleepChanged, toggleEffect, type View } from "./lib/state.svelte";
   import { lang, t, tn } from "./lib/i18n";
   import { onEffectChanged, onLightsChanged, onSleepChanged, onUpdateReady, setUiLanguage, setWindowTheme, updateReady } from "./lib/ipc";
-  import { DETECTS_FULLSCREEN, MOD_KEY } from "./lib/platform";
+  import { MOD_KEY } from "./lib/platform";
   import Icon, { type IconName } from "./lib/ui/Icon.svelte";
   import Toasts from "./lib/ui/Toasts.svelte";
-  import UpdateBanner from "./lib/ui/UpdateBanner.svelte";
+  import UpdateButton from "./lib/ui/UpdateButton.svelte";
   import Lighting from "./lib/views/Lighting.svelte";
   import Room from "./lib/views/Room.svelte";
   import Bulbs from "./lib/views/Bulbs.svelte";
@@ -21,7 +21,15 @@
 
   onMount(() => {
     void bootstrap();
-    const poll = setInterval(refreshStatus, 4000);
+    // Hidden in the tray, nobody reads the status: skip the poll, and catch
+    // up the moment the window shows again.
+    const poll = setInterval(() => {
+      if (!document.hidden) void refreshStatus();
+    }, 4000);
+    const onVisible = () => {
+      if (!document.hidden) void refreshStatus();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     updateReady()
       .then((v) => (app.updateReady = v))
       .catch(() => {});
@@ -40,6 +48,7 @@
     ];
     return () => {
       clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisible);
       // Also unsubscribes a listener still being set up.
       for (const s of subscriptions) void s.then((unlisten) => unlisten());
     };
@@ -74,12 +83,9 @@
     }
   }
 
-  const bound = $derived(app.config.bindings.length);
   const unbound = $derived(
     app.config.room.lights.filter((l) => !app.config.bindings.some((b) => b.light_id === l.id)).length,
   );
-  // Automatic mode only exists where fullscreen can be detected (Windows).
-  const waitingForFullscreen = $derived(DETECTS_FULLSCREEN && app.config.behavior.auto_fullscreen && bound > 0);
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -114,58 +120,54 @@
     </nav>
 
     <div class="foot">
-      <UpdateBanner />
-
-      <div class="power" class:live={app.status.running}>
-        <div class="state" role="status">
-          <span class="dot" aria-hidden="true"></span>
-          <div>
-            <div class="state-title">
-              {app.status.running ? t(`mode_${app.status.mode ?? "ambilight"}`) : t("state_off")}
-            </div>
-            <div class="state-sub">
-              {#if app.status.running}
+      <!-- Effects start from the Lighting view; this only shows one running, from any view. -->
+      {#if app.status.running}
+        <div class="power live">
+          <div class="state" role="status">
+            <span class="lamp" aria-hidden="true"></span>
+            <div>
+              <div class="state-title">{t(`mode_${app.status.mode ?? "mixed"}`)}</div>
+              <div class="state-sub">
                 {app.status.connected_lights === 0
                   ? t("state_no_answer")
                   : tn("n_bulbs_following", app.status.connected_lights)}
-              {:else if bound === 0}
-                {t("state_none")}
-              {:else if waitingForFullscreen}
-                {t("auto_waiting")}
-              {:else}
-                {tn("n_bulbs_ready", bound)}
-              {/if}
+              </div>
             </div>
           </div>
+          <button
+            class="btn power-btn"
+            disabled={app.busy}
+            title="{t('stop')} ({MOD_KEY}Enter)"
+            onclick={toggleEffect}
+          >
+            <Icon name="power" size={14} />
+            {app.busy ? t("wait") : t("stop")}
+          </button>
         </div>
-        <button
-          class="btn power-btn"
-          class:primary={!app.status.running}
-          disabled={app.busy || (!app.status.running && bound === 0)}
-          title="{app.status.running ? t('stop') : t('start')} ({MOD_KEY}Enter)"
-          onclick={toggleEffect}
-        >
-          <Icon name="power" size={14} />
-          {app.busy ? t("wait") : app.status.running ? t("stop") : t("start")}
-        </button>
-      </div>
+      {/if}
     </div>
   </aside>
 
   <main class="content">
-    {#key app.view}
-      <div class="view view-enter">
-        {#if app.view === "lighting"}
-          <Lighting />
-        {:else if app.view === "room"}
-          <Room />
-        {:else if app.view === "bulbs"}
-          <Bulbs />
-        {:else}
-          <Settings />
-        {/if}
-      </div>
-    {/key}
+    <!-- Only there while an installed update waits for a restart, so the views keep their full height otherwise. -->
+    {#if app.updateReady}
+      <div class="topbar"><UpdateButton /></div>
+    {/if}
+    <div class="scroll">
+      {#key app.view}
+        <div class="view view-enter">
+          {#if app.view === "lighting"}
+            <Lighting />
+          {:else if app.view === "room"}
+            <Room />
+          {:else if app.view === "bulbs"}
+            <Bulbs />
+          {:else}
+            <Settings />
+          {/if}
+        </div>
+      {/key}
+    </div>
   </main>
 
   <Toasts />
@@ -278,17 +280,9 @@
     align-items: flex-start;
     gap: var(--s-2);
   }
-  .dot {
-    width: 8px;
-    height: 8px;
+  .lamp {
+    --lamp: 8px;
     margin-top: 5px;
-    flex: none;
-    border-radius: 50%;
-    background: var(--line-strong);
-  }
-  .live .dot {
-    background: var(--glow);
-    box-shadow: 0 0 6px var(--glow);
   }
   .state-title {
     font-weight: 600;
@@ -304,6 +298,18 @@
   .content {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .topbar {
+    display: flex;
+    justify-content: flex-end;
+    flex: none;
+    padding: var(--s-2) var(--s-3) 0;
+  }
+  .scroll {
+    flex: 1;
+    min-height: 0;
     overflow: auto;
     scrollbar-gutter: stable;
   }

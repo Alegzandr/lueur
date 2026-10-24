@@ -188,6 +188,13 @@ jobs:
           path: release
       - name: Update manifest
         run: ./scripts/latest-json.sh release "$VERSION" "${GITHUB_REPOSITORY}" "v$VERSION" > release/latest.json
+      # Updates are signature-checked by the app; a first download is not,
+      # so its checksum is published for anyone who wants to verify it.
+      - name: Checksums
+        run: |
+          cd release
+          sha256sum $(ls Lueur_* | grep -v '\.sig$') > SHA256SUMS.txt
+          cat SHA256SUMS.txt
       - name: GitHub release
         run: |
           gh release create "v$VERSION" \

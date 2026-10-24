@@ -22,7 +22,9 @@
     | "info"
     | "refresh"
     | "link"
-    | "unlink";
+    | "unlink"
+    | "undo"
+    | "redo";
 </script>
 
 <script lang="ts">
@@ -106,6 +108,12 @@
   {:else if name === "unlink"}
     <path d="M9.5 6.5 11 5a3.2 3.2 0 0 1 4.5 4.5L14 11M11 14l-1.5 1.5A3.2 3.2 0 0 1 5 11l1.5-1.5" />
     <path d="M3.5 3.5l13 13" />
+  {:else if name === "undo"}
+    <path d="M7.5 4.5 4 8l3.5 3.5" />
+    <path d="M4 8h7.5a4.5 4.5 0 0 1 0 9H9" />
+  {:else if name === "redo"}
+    <path d="M12.5 4.5 16 8l-3.5 3.5" />
+    <path d="M16 8H8.5a4.5 4.5 0 0 0 0 9H11" />
   {/if}
 </svg>
 

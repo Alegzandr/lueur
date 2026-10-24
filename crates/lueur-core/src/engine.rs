@@ -6,8 +6,8 @@
 //! colour-critical path is fully deterministic and unit-tested.
 
 use crate::color::{
-    BulbOutput, ColorAccumulator, ColorSmoother, Rgb, compensate_wall, compensate_wall_kelvin,
-    saturate, saturation,
+    BulbOutput, ColorAccumulator, ColorSmoother, MAX_KELVIN, MIN_BRIGHT, MIN_KELVIN, Rgb,
+    compensate_wall, compensate_wall_kelvin, saturate, saturation,
 };
 use crate::geometry::{LightMapping, SampleZone};
 use serde::{Deserialize, Serialize};
@@ -129,8 +129,8 @@ pub struct EngineSettings {
     pub saturation: f32,
     /// Pixel step used when averaging a zone (>=1). Trades quality for CPU.
     pub sample_step: u32,
-    /// Colours whose luminance is below this are pulled to black, so dark scenes
-    /// don't leave a muddy glow. 0 disables.
+    /// Colours whose brightest channel is below this are pulled to black, so
+    /// dark scenes don't leave a muddy glow. 0 disables.
     pub black_threshold: u8,
     /// HSV saturation (0..1) below which a frame is considered achromatic and the
     /// bulb is driven as a colour-temperature white instead of an RGB colour.
@@ -181,6 +181,55 @@ impl Default for EngineSettings {
 /// flip-flop between white and colour every frame.
 const WHITE_HYSTERESIS: f32 = 1.6;
 
+/// How much of the smoothing factor a light keeps while the picture is
+/// still. Noise (compression, film grain, a blinking cursor) moves a zone's
+/// average by a unit or two every frame; followed at full speed it becomes
+/// a shimmer on the bulb and a command per frame.
+const STILL_FACTOR: f32 = 0.35;
+
+/// Changes (largest channel, 0..=255) at or below this count as noise,
+/// and at or above `MOVE_DELTA` as real movement, followed at full speed.
+const NOISE_DELTA: f32 = 1.5;
+const MOVE_DELTA: f32 = 16.0;
+
+/// How much of the user's smoothing factor applies when the zone moved from
+/// `prev` to `next`: all of it for real movement, so cuts stay instant, and
+/// a fraction for noise, so a still picture holds still.
+fn steadiness(prev: Option<Rgb>, next: Rgb) -> f32 {
+    let Some(prev) = prev else {
+        return 1.0;
+    };
+    let d = f32::from(
+        prev.r
+            .abs_diff(next.r)
+            .max(prev.g.abs_diff(next.g))
+            .max(prev.b.abs_diff(next.b)),
+    );
+    let x = ((d - NOISE_DELTA) / (MOVE_DELTA - NOISE_DELTA)).clamp(0.0, 1.0);
+    STILL_FACTOR + (1.0 - STILL_FACTOR) * x * x * (3.0 - 2.0 * x)
+}
+
+/// How far a near-grey's leftover tint may move the white, in kelvin per
+/// unit of warmth (red over blue, relative to the peak).
+const TINT_KELVIN: f32 = 3500.0;
+/// Warmth below this is noise and leaves the white alone.
+const TINT_DEADBAND: f32 = 0.05;
+
+/// The white for an achromatic colour: `kelvin`, nudged warmer or cooler by
+/// whatever tint the grey still carries, so a sepia flashback glows warm and
+/// a moonlit night cool rather than every grey becoming the same white.
+/// Rounded to 100 K so a steady scene is not re-sent for invisible changes.
+fn tinted_kelvin(color: Rgb, kelvin: u16) -> u16 {
+    let peak = color.value();
+    if peak == 0 {
+        return kelvin;
+    }
+    let warmth = (f32::from(color.r) - f32::from(color.b)) / f32::from(peak);
+    let excess = (warmth.abs() - TINT_DEADBAND).max(0.0).copysign(warmth);
+    let k = f32::from(kelvin) - excess * TINT_KELVIN;
+    ((k / 100.0).round() * 100.0).clamp(f32::from(MIN_KELVIN), f32::from(MAX_KELVIN)) as u16
+}
+
 /// Holds per-light smoothing state across frames.
 pub struct Ambilight {
     settings: EngineSettings,
@@ -188,6 +237,9 @@ pub struct Ambilight {
     /// Whether each light is currently on the white path. Latched so the
     /// white/colour decision gets hysteresis instead of chattering.
     in_white: Vec<bool>,
+    /// What each light was last given, so a black frame can dim it without
+    /// changing its colour.
+    shown: Vec<Option<BulbOutput>>,
 }
 
 impl Ambilight {
@@ -196,6 +248,7 @@ impl Ambilight {
             settings,
             smoothers: vec![ColorSmoother::new(); light_count],
             in_white: vec![false; light_count],
+            shown: vec![None; light_count],
         }
     }
 
@@ -214,6 +267,7 @@ impl Ambilight {
     pub fn resize(&mut self, light_count: usize) {
         self.smoothers.resize(light_count, ColorSmoother::new());
         self.in_white.resize(light_count, false);
+        self.shown.resize(light_count, None);
     }
 
     /// Compute the screen-referred colour for each light this frame.
@@ -225,19 +279,19 @@ impl Ambilight {
     /// `mappings` must be the same length as the configured light count; extra
     /// or missing entries are handled gracefully (clamped to the shorter
     /// length). Each mapping's `responsiveness` scales the smoothing factor, so
-    /// a lamp across the room drifts rather than snaps.
+    /// a lamp across the room drifts rather than snaps; a still picture scales
+    /// it down further (see [`steadiness`]), so noise never reaches the bulb.
     pub fn process(&mut self, frame: &Frame, mappings: &[LightMapping]) -> Vec<Rgb> {
         let n = mappings.len().min(self.smoothers.len());
         let mut out = Vec::with_capacity(n);
         for (i, m) in mappings.iter().take(n).enumerate() {
             let raw = frame.average_zone(&m.zone, self.settings.sample_step);
+            let steady = steadiness(self.smoothers[i].current(), raw);
             // Floor the factor above 0: a zero would freeze the light forever.
-            let smoothing = (self.settings.smoothing * m.responsiveness).clamp(0.01, 1.0);
+            let smoothing = (self.settings.smoothing * m.responsiveness * steady).clamp(0.01, 1.0);
             let smoothed = self.smoothers[i].push(raw, smoothing);
             let mut shaped = saturate(smoothed, self.settings.saturation);
-            if self.settings.black_threshold > 0
-                && shaped.luminance() < self.settings.black_threshold
-            {
+            if self.settings.black_threshold > 0 && shaped.value() < self.settings.black_threshold {
                 shaped = Rgb::BLACK;
             }
             out.push(shaped);
@@ -250,6 +304,10 @@ impl Ambilight {
     /// Splits every colour into chromaticity + brightness, and falls back to a
     /// colour-temperature white when the frame carries no usable hue.
     ///
+    /// A black frame dims the bulb to its floor but keeps what it showed: a
+    /// fade to black and back is then a pure dimming, rather than a hop to
+    /// white and back that a bulb renders as a visible blink.
+    ///
     /// This is where a mapping's distance `gain` lands: it scales the bulb's
     /// intensity, never its hue, so a far lamp reads as a softer glow of the
     /// same colour rather than a washed-out one.
@@ -257,7 +315,7 @@ impl Ambilight {
         let colors = self.process(frame, mappings);
         let brightness = self.settings.brightness;
         let wall = self.settings.wall;
-        let kelvin = compensate_wall_kelvin(self.settings.white_kelvin, wall);
+        let kelvin = self.settings.white_kelvin;
         let enter = self.settings.white_threshold.clamp(0.0, 1.0);
         let leave = (enter * WHITE_HYSTERESIS).min(1.0);
 
@@ -265,6 +323,24 @@ impl Ambilight {
             .into_iter()
             .enumerate()
             .map(|(i, color)| {
+                if color == Rgb::BLACK {
+                    let out = match self.shown[i] {
+                        Some(BulbOutput::Color { rgb, .. }) => BulbOutput::Color {
+                            rgb,
+                            bright: MIN_BRIGHT,
+                        },
+                        Some(BulbOutput::White { kelvin, .. }) => BulbOutput::White {
+                            kelvin,
+                            bright: MIN_BRIGHT,
+                        },
+                        None => BulbOutput::White {
+                            kelvin: compensate_wall_kelvin(kelvin, wall),
+                            bright: MIN_BRIGHT,
+                        },
+                    };
+                    self.shown[i] = Some(out);
+                    return out;
+                }
                 let gain = mappings.get(i).map(|m| m.gain).unwrap_or(1.0);
                 let brightness = (brightness * gain).clamp(0.0, 1.0);
                 let sat = saturation(color);
@@ -278,7 +354,11 @@ impl Ambilight {
                     sat < enter
                 };
                 self.in_white[i] = white;
-                BulbOutput::build(compensate_wall(color, wall), brightness, white, kelvin)
+                let kelvin = compensate_wall_kelvin(tinted_kelvin(color, kelvin), wall);
+                let out =
+                    BulbOutput::build(compensate_wall(color, wall), brightness, white, kelvin);
+                self.shown[i] = Some(out);
+                out
             })
             .collect()
     }
@@ -289,6 +369,7 @@ impl Ambilight {
             s.reset();
         }
         self.in_white.fill(false);
+        self.shown.fill(None);
     }
 }
 
@@ -414,7 +495,7 @@ mod tests {
         match out[0] {
             BulbOutput::Color { rgb, bright } => {
                 assert_eq!(rgb.r, 255, "chromaticity should be normalised");
-                assert!(bright < 15, "dark frame should dim the bulb, got {bright}");
+                assert!(bright < 20, "dark frame should dim the bulb, got {bright}");
             }
             other => panic!("expected Color, got {other:?}"),
         }
@@ -439,6 +520,70 @@ mod tests {
             }
             other => panic!("expected White, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_tinted_grey_gets_a_tinted_white() {
+        assert_eq!(tinted_kelvin(Rgb::new(80, 80, 80), 4000), 4000);
+        assert!(
+            tinted_kelvin(Rgb::new(90, 80, 66), 4000) < 3500,
+            "sepia is warm"
+        );
+        assert!(
+            tinted_kelvin(Rgb::new(66, 74, 90), 4000) > 4500,
+            "moonlight is cool"
+        );
+        assert_eq!(tinted_kelvin(Rgb::new(90, 80, 66), 4000) % 100, 0);
+    }
+
+    #[test]
+    fn a_black_frame_dims_without_changing_colour() {
+        let settings = EngineSettings {
+            black_threshold: 10,
+            white_threshold: 0.18,
+            ..passthrough()
+        };
+        let mut amb = Ambilight::new(1, settings);
+        let red = split_frame((200, 0, 0), (200, 0, 0));
+        let black = split_frame((0, 0, 0), (0, 0, 0));
+        amb.process_outputs(&red, &full());
+        assert_eq!(
+            amb.process_outputs(&black, &full())[0],
+            BulbOutput::Color {
+                rgb: Rgb::new(255, 0, 0),
+                bright: MIN_BRIGHT
+            }
+        );
+    }
+
+    #[test]
+    fn a_dark_blue_is_not_black() {
+        // A night sky: barely any luminance, but plainly a colour.
+        let settings = EngineSettings {
+            black_threshold: 6,
+            ..passthrough()
+        };
+        let mut amb = Ambilight::new(1, settings);
+        let night = split_frame((0, 0, 40), (0, 0, 40));
+        assert_eq!(amb.process(&night, &full())[0], Rgb::new(0, 0, 40));
+    }
+
+    #[test]
+    fn a_still_picture_holds_still() {
+        let settings = EngineSettings {
+            smoothing: 0.5,
+            ..passthrough()
+        };
+        let mut amb = Ambilight::new(1, settings);
+        let a = split_frame((100, 100, 100), (100, 100, 100));
+        let b = split_frame((101, 101, 101), (101, 101, 101));
+        amb.process(&a, &full());
+        // One unit of noise, followed at half speed, would reach 101.
+        amb.process(&b, &full());
+        assert_eq!(amb.process(&b, &full())[0], Rgb::new(100, 100, 100));
+        // A cut is followed at the full factor.
+        let cut = split_frame((200, 100, 100), (200, 100, 100));
+        assert_eq!(amb.process(&cut, &full())[0].r, 150);
     }
 
     #[test]

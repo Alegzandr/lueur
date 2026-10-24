@@ -9,8 +9,11 @@
     identifyLight,
     isDriven,
     isOn,
+    isPlaying,
     lightState,
+    modeOf,
     setAllPower,
+    setLightMode,
     setSleepTimer,
     toggleEffect,
     toggleLightPower,
@@ -24,6 +27,7 @@
     MOODS,
     NATURAL,
     PALETTE,
+    PALETTE_NAMES,
     SHOWS,
     WALLS,
     hexOf,
@@ -49,11 +53,14 @@
   const arranged = $derived(app.config.interface.room_arranged);
   const setupDone = $derived(bound > 0 && arranged);
   const live = $derived(app.status.running);
-  const mode = $derived(live ? app.status.mode : null);
+  const showPlaying = $derived(app.status.groups.some((g) => g.mode !== "ambilight"));
 
   const feelOptions = $derived(
     FEEL_ORDER.map((f) => ({ value: f, label: t(`feel_${f}`), title: t(`feel_${f}_tip`) })),
   );
+  /** The three feels, explained together behind the Response row's info mark. */
+  const feelTip = $derived(FEEL_ORDER.map((f) => `${t(`feel_${f}`)}: ${t(`feel_${f}_tip`)}`).join("\n"));
+
   const tintOptions = $derived([
     { value: "white" as const, label: t("white") },
     { value: "color" as const, label: t("tint_colour") },
@@ -66,7 +73,13 @@
   ]);
   const next = $derived(steps.findIndex((s) => !s.done));
 
-  const modeName = (m: Mode) => t(`mode_${m}`);
+  const modeName = (m: Mode | "manual") => t(`mode_${m}`);
+
+  /** What a light can play, by hand first. */
+  const LIGHT_MODES: (Mode | null)[] = [null, "ambilight", ...SHOWS.map((s) => s.id)];
+  const SCREEN_SWATCH = "linear-gradient(90deg, oklch(0.62 0.2 30), oklch(0.45 0.12 300), oklch(0.6 0.16 250))";
+  const modeSwatch = (m: Mode | null, s: LightState) =>
+    m === null ? tintCss(s.tint) : m === "ambilight" ? SCREEN_SWATCH : (SHOWS.find((x) => x.id === m)?.preview ?? "");
 
   // --- Lights by hand ---
 
@@ -154,6 +167,28 @@
   );
 
   const sameWall = (a: Rgb, b: Rgb) => a.r === b.r && a.g === b.g && a.b === b.b;
+  const wallIndex = $derived(Math.max(0, WALLS.findIndex((w) => sameWall(app.config.engine.wall, w.rgb))));
+
+  /** The wall swatches are a radio group: the arrows move the choice. */
+  function onWallKey(e: KeyboardEvent & { currentTarget: HTMLElement }) {
+    const last = WALLS.length - 1;
+    const i = wallIndex;
+    const to =
+      e.key === "ArrowRight" || e.key === "ArrowDown"
+        ? (i === last ? 0 : i + 1)
+        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+          ? (i === 0 ? last : i - 1)
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? last
+              : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    const w = WALLS[to];
+    edit((c) => (c.engine.wall = { ...w.rgb }));
+    e.currentTarget.querySelectorAll<HTMLButtonElement>("button")[to]?.focus();
+  }
 </script>
 
 <div class="page">
@@ -198,10 +233,10 @@
       <div class="modes">
         <button
           class="tile screen"
-          class:active={mode === "ambilight"}
+          class:active={isPlaying("ambilight")}
           class:pending={app.pending === "ambilight"}
-          aria-pressed={mode === "ambilight"}
-          title={mode === "ambilight" ? t("click_to_stop") : undefined}
+          aria-pressed={isPlaying("ambilight")}
+          title={isPlaying("ambilight") ? t("click_to_stop") : undefined}
           disabled={app.busy && app.pending !== "ambilight"}
           onclick={() => chooseMode("ambilight")}
         >
@@ -214,15 +249,15 @@
               {DETECTS_FULLSCREEN && app.config.behavior.auto_fullscreen ? t("mode_ambilight_auto") : t("mode_ambilight_sub")}
             </span>
           </span>
-          {#if mode === "ambilight"}<span class="on-dot" aria-hidden="true"></span>{/if}
+          {#if isPlaying("ambilight")}<span class="on-dot" aria-hidden="true"></span>{/if}
         </button>
         {#each SHOWS as s (s.id)}
           <button
             class="tile"
-            class:active={mode === s.id}
+            class:active={isPlaying(s.id)}
             class:pending={app.pending === s.id}
-            aria-pressed={mode === s.id}
-            title={mode === s.id ? t("click_to_stop") : undefined}
+            aria-pressed={isPlaying(s.id)}
+            title={isPlaying(s.id) ? t("click_to_stop") : undefined}
             disabled={app.busy && app.pending !== s.id}
             onclick={() => chooseMode(s.id)}
           >
@@ -230,12 +265,12 @@
             <span class="tile-text">
               <span class="tile-name">{modeName(s.id)}</span>
             </span>
-            {#if mode === s.id}<span class="on-dot" aria-hidden="true"></span>{/if}
+            {#if isPlaying(s.id)}<span class="on-dot" aria-hidden="true"></span>{/if}
           </button>
         {/each}
       </div>
 
-      {#if mode === "ambilight"}
+      {#if isPlaying("ambilight")}
         <div class="card rows tune">
           <Row label={t("brightness")}>
             <Slider
@@ -249,7 +284,7 @@
               onchange={(v) => edit((c) => (c.engine.brightness = v))}
             />
           </Row>
-          <Row label={t("response")}>
+          <Row label={t("response")} tip={feelTip}>
             <Segmented
               label={t("response")}
               value={currentFeel(app.config)}
@@ -258,14 +293,15 @@
             />
           </Row>
           <Row label={t("walls")} tip={t("walls_tip")}>
-            <div class="walls" role="radiogroup" aria-label={t("walls")}>
-              {#each WALLS as w (w.id)}
+            <div class="walls" role="radiogroup" aria-label={t("walls")} tabindex="-1" onkeydown={onWallKey}>
+              {#each WALLS as w, i (w.id)}
                 {@const picked = sameWall(app.config.engine.wall, w.rgb)}
                 <button
                   class="wall"
                   class:picked
                   role="radio"
                   aria-checked={picked}
+                  tabindex={i === wallIndex ? 0 : -1}
                   title={t(`wall_${w.id}`)}
                   aria-label={t(`wall_${w.id}`)}
                   style="--c:{rgbCss([w.rgb.r, w.rgb.g, w.rgb.b])}"
@@ -275,7 +311,8 @@
             </div>
           </Row>
         </div>
-      {:else if mode}
+      {/if}
+      {#if showPlaying}
         <div class="card rows tune">
           <Row label={t("brightness")}>
             <Slider
@@ -349,6 +386,7 @@
           {@const b = bindingFor(l.id)}
           {@const s = lightState(l.id)}
           {@const driven = isDriven(l.id)}
+          {@const lm = modeOf(l.id)}
           {@const expanded = open === l.id && !!b}
           <div class="light" class:expanded>
             <div class="light-row">
@@ -376,10 +414,10 @@
 
               {#if !b}
                 <button class="btn sm" onclick={() => (app.view = "bulbs")}>{t("assign")}</button>
-              {:else if driven && mode}
+              {:else if lm}
                 <span class="live-tag">
-                  <span class="live-dot" aria-hidden="true"></span>
-                  {modeName(mode)}{#if mode === "ambilight"}<span class="where">· {t(describe(m))}</span>{/if}
+                  <span class="lamp" aria-hidden="true"></span>
+                  {modeName(lm)}{#if lm === "ambilight"}<span class="where">· {t(describe(m))}</span>{/if}
                 </span>
               {:else}
                 <div class="bright" class:dim={!s.on}>
@@ -414,6 +452,21 @@
 
             {#if expanded}
               <div class="panel">
+                <div class="light-modes" role="radiogroup" aria-label="{l.name}: {t('light_mode')}" title={t("light_mode_tip")}>
+                  {#each LIGHT_MODES as option (option ?? "manual")}
+                    <button
+                      class="chip"
+                      class:picked={lm === option}
+                      role="radio"
+                      aria-checked={lm === option}
+                      disabled={app.busy || app.modeBusy[l.id]}
+                      onclick={() => setLightMode(l.id, option)}
+                    >
+                      <span class="chip-dot" style="background:{modeSwatch(option, s)}" aria-hidden="true"></span>
+                      {modeName(option ?? "manual")}
+                    </button>
+                  {/each}
+                </div>
                 {#if driven}
                   <p class="hint">{t("driven_hint")}</p>
                 {:else}
@@ -446,12 +499,13 @@
                     </div>
                   {:else}
                     <div class="palette" role="group" aria-label="{l.name}: {t('tint_colour')}">
-                      {#each PALETTE as c}
+                      {#each PALETTE as c, i}
                         <button
                           class="dot"
                           class:picked={sameRgb(s.tint, c)}
                           style="--c:{rgbCss(c)}"
-                          aria-label={rgbCss(c)}
+                          title={t(`colour_${PALETTE_NAMES[i]}`)}
+                          aria-label={t(`colour_${PALETTE_NAMES[i]}`)}
                           aria-pressed={sameRgb(s.tint, c)}
                           onclick={() => setColour(l.id, c)}
                         ></button>
@@ -662,7 +716,7 @@
     border-radius: 50%;
     background: var(--glow);
     box-shadow:
-      0 0 0 2px oklch(1 0 0 / 0.85),
+      0 0 0 2px var(--surface),
       0 0 8px var(--glow);
   }
   .tune {
@@ -696,19 +750,20 @@
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: var(--s-2);
   }
+  /* Names wrap rather than truncate: French ones run long. */
   .mood {
     display: inline-flex;
     align-items: center;
     gap: var(--s-2);
-    height: 38px;
-    padding: 0 var(--s-3);
+    min-height: 38px;
+    padding: 6px var(--s-3);
     border-radius: var(--r-lg);
     background: var(--surface);
     box-shadow: var(--card-edge);
     font-weight: 500;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.2;
+    text-align: left;
+    text-wrap: balance;
     transition: box-shadow 200ms var(--ease);
   }
   .mood:hover:not(:disabled) {
@@ -843,13 +898,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .live-dot {
-    width: 6px;
-    height: 6px;
-    flex: none;
-    border-radius: 50%;
-    background: var(--glow);
-    box-shadow: 0 0 6px var(--glow);
+  .live-tag .lamp {
+    --lamp: 6px;
   }
   .power {
     color: var(--text-3);
@@ -870,6 +920,41 @@
       opacity: 0;
       transform: translateY(-4px);
     }
+  }
+  .light-modes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-1);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 var(--s-3) 0 var(--s-2);
+    border-radius: 999px;
+    background: var(--surface);
+    box-shadow: var(--card-edge);
+    font-size: var(--t-sm);
+    font-weight: 500;
+    white-space: nowrap;
+    transition: box-shadow 200ms var(--ease);
+  }
+  .chip:hover:not(:disabled) {
+    background: var(--surface-hover);
+  }
+  .chip:disabled:not(.picked) {
+    opacity: 0.55;
+  }
+  .chip.picked {
+    box-shadow: inset 0 0 0 2px var(--glow);
+  }
+  .chip-dot {
+    width: 12px;
+    height: 12px;
+    flex: none;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.18);
   }
   .hint {
     margin: 0;
@@ -938,12 +1023,26 @@
     opacity: 0;
     cursor: pointer;
   }
-  .dot.any:focus-within {
-    box-shadow: var(--ring);
+  .dot.any:has(input:focus-visible) {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
   }
   .panel-foot {
     display: flex;
     gap: var(--s-1);
     margin-left: calc(var(--s-2) * -1);
+  }
+  /* Reduced motion: the loops stand still. A pending choice dims instead of
+     breathing; a light the effect drives shows the spectrum without turning. */
+  @media (prefers-reduced-motion: reduce) {
+    .active .preview,
+    .swatch.live {
+      animation: none;
+    }
+    .pending .preview,
+    .mood.pending .mood-dot {
+      animation: none;
+      opacity: 0.5;
+    }
   }
 </style>

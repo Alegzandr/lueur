@@ -175,11 +175,7 @@ impl LightStream for LifxStream {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());
         }
-        let ms = if effect == Effect::Smooth {
-            duration_ms
-        } else {
-            0
-        };
+        let ms = self.pace.glide(effect, duration_ms);
         self.send(output, ms)?;
         self.last.mark(output);
         Ok(())

@@ -12,6 +12,7 @@
     renameLight,
     setLightEnabled,
   } from "../state.svelte";
+  import { history, observe, planKey, redo, track, undo } from "../history.svelte";
   import {
     closestOnSegment,
     describe,
@@ -23,6 +24,7 @@
     type Edge,
   } from "../geometry";
   import { t, pct } from "../i18n";
+  import { MOD_KEY } from "../platform";
   import { defaultConfig, type Vec2 } from "../types";
   import Icon from "../ui/Icon.svelte";
   import Slider from "../ui/Slider.svelte";
@@ -236,9 +238,32 @@
     });
   }
 
+  // --- History ---
+
+  track();
+  // Every change to the plan feeds the history; a drag is one step.
+  $effect(() => observe(planKey(), dragging));
+
+  /** Undo or redo, then let go of what the step took away. */
+  function travel(dir: "undo" | "redo") {
+    if (dir === "undo") undo();
+    else redo();
+    if (app.selectedLight && !lightById(app.selectedLight)) app.selectedLight = null;
+    if (other?.kind === "corner" && other.index >= app.config.room.walls.length) other = null;
+  }
+
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
+    // Text fields keep their own undo.
     if (t.closest("input, select, textarea")) return;
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !drag) {
+      const key = e.key.toLowerCase();
+      if (key === "z" || key === "y") {
+        e.preventDefault();
+        travel(key === "y" || e.shiftKey ? "redo" : "undo");
+      }
+      return;
+    }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const step = e.shiftKey ? 25 : 5;
     switch (e.key) {
@@ -341,6 +366,22 @@
     <header class="bar">
       <h1 class="page-title">{t("nav_room")}</h1>
       <div class="tools">
+        <div class="btn-group">
+          <button
+            class="btn icon"
+            title="{t('undo')} ({MOD_KEY}Z)"
+            aria-label={t("undo")}
+            disabled={!history.canUndo}
+            onclick={() => travel("undo")}><Icon name="undo" size={15} /></button
+          >
+          <button
+            class="btn icon"
+            title="{t('redo')} ({MOD_KEY === '⌘' ? '⇧⌘Z' : 'Ctrl+Y'})"
+            aria-label={t("redo")}
+            disabled={!history.canRedo}
+            onclick={() => travel("redo")}><Icon name="redo" size={15} /></button
+          >
+        </div>
         <button class="btn plain" onclick={resetShape}>{t("reset_shape")}</button>
         <div class="btn-group">
           <button class="btn" onclick={addCorner}>{t("add_corner")}</button>
@@ -351,6 +392,7 @@
 
     {#if !app.config.interface.room_arranged && room.lights.length > 0}
       <div class="coach" role="status">
+        <span class="lamp" aria-hidden="true"></span>
         <p>{t("coach")}</p>
         <button class="btn primary" onclick={markRoomArranged}>{t("coach_done")}</button>
       </div>
@@ -681,15 +723,6 @@
   }
   .coach p {
     flex: 1;
-  }
-  .coach::before {
-    content: "";
-    width: 7px;
-    height: 7px;
-    flex: none;
-    border-radius: 50%;
-    background: var(--glow);
-    box-shadow: 0 0 8px var(--glow);
   }
   .tools {
     display: flex;

@@ -1,6 +1,7 @@
 <script lang="ts" generics="T extends string">
   // Mutually exclusive choices. Segments share the width equally, so the
-  // selection is a single thumb that slides between them.
+  // selection is a single thumb that slides between them. A radio group:
+  // Tab lands on the chosen segment, the arrows move the choice.
   interface Props {
     value: T | null;
     options: { value: T; label: string; title?: string }[];
@@ -12,12 +13,31 @@
 
   const index = $derived(options.findIndex((o) => o.value === value));
 
-  function onKey(e: KeyboardEvent) {
-    const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-    if (!step) return;
+  function onKey(e: KeyboardEvent & { currentTarget: HTMLElement }) {
+    const last = options.length - 1;
+    const from = Math.max(index, 0);
+    let to: number;
+    switch (e.key) {
+      case "ArrowRight":
+      case "ArrowDown":
+        to = from === last ? 0 : from + 1;
+        break;
+      case "ArrowLeft":
+      case "ArrowUp":
+        to = from === 0 ? last : from - 1;
+        break;
+      case "Home":
+        to = 0;
+        break;
+      case "End":
+        to = last;
+        break;
+      default:
+        return;
+    }
     e.preventDefault();
-    const next = options[(Math.max(index, 0) + step + options.length) % options.length];
-    onchange(next.value);
+    onchange(options[to].value);
+    e.currentTarget.querySelectorAll<HTMLButtonElement>("button")[to]?.focus();
   }
 </script>
 
@@ -25,16 +45,16 @@
   class="seg"
   role="radiogroup"
   aria-label={label}
-  tabindex="0"
+  tabindex="-1"
   style="--n:{options.length};--i:{index}"
   onkeydown={onKey}
 >
   {#if index >= 0}<span class="thumb" aria-hidden="true"></span>{/if}
-  {#each options as o (o.value)}
+  {#each options as o, i (o.value)}
     <button
       type="button"
       role="radio"
-      tabindex="-1"
+      tabindex={i === Math.max(index, 0) ? 0 : -1}
       aria-checked={value === o.value}
       class:active={value === o.value}
       title={o.title}
@@ -53,7 +73,10 @@
     padding: 2px;
     border-radius: var(--r-md);
     background: var(--surface-hover);
-    box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.08);
+    box-shadow: inset 0 0 0 0.5px var(--line);
+  }
+  .seg:focus {
+    outline: none;
   }
   .thumb {
     position: absolute;
@@ -71,11 +94,15 @@
     position: relative;
     height: 24px;
     padding: 0 var(--s-3);
+    border-radius: 5px;
     font-size: var(--t-md);
     font-weight: 500;
     color: var(--text-2);
     white-space: nowrap;
     transition: color var(--dur) var(--ease);
+  }
+  button:focus-visible {
+    outline-offset: 0;
   }
   button:hover:not(.active) {
     color: var(--text);

@@ -18,6 +18,8 @@ use std::io;
 use std::time::Duration;
 
 pub const PORT: u16 = 80;
+/// Lamp ids are `hue:<bridge>:<light>`, an unpaired bridge's `hue:<bridge>`.
+pub const ID_PREFIX: &str = "hue:";
 const TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The bridge's whole budget, shared by its lamps.
@@ -91,8 +93,16 @@ fn bridge_error(v: &Value) -> Option<(i64, String)> {
     ))
 }
 
+fn state_path(username: &str, light: &str) -> io::Result<String> {
+    Ok(format!(
+        "/api/{}/lights/{}/state",
+        safe(username)?,
+        safe(light)?
+    ))
+}
+
 fn put_state(ip: &str, username: &str, light: &str, body: &Value) -> io::Result<()> {
-    let path = format!("/api/{}/lights/{}/state", safe(username)?, safe(light)?);
+    let path = state_path(username, light)?;
     check(http::request(
         "PUT",
         ip,
@@ -199,7 +209,7 @@ pub fn discover(timeout: Duration, known: &[HueBridge]) -> io::Result<Vec<Discov
             Some(Ok(lamps)) => out.extend(lamps),
             // Unpaired, or the bridge forgot us (factory reset): offer pairing.
             _ => out.push(DiscoveredDevice {
-                id: format!("hue:{id}"),
+                id: format!("{ID_PREFIX}{id}"),
                 ip,
                 port: PORT,
                 model: "bridge".into(),
@@ -246,7 +256,7 @@ pub fn parse_lights(v: &Value, ip: &str, bridge: &str, username: &str) -> Vec<Di
                     .to_string()
             };
             DiscoveredDevice {
-                id: format!("hue:{bridge}:{num}"),
+                id: format!("{ID_PREFIX}{bridge}:{num}"),
                 ip: ip.to_string(),
                 port: PORT,
                 model: text("type"),
@@ -269,10 +279,21 @@ pub fn parse_lights(v: &Value, ip: &str, bridge: &str, username: &str) -> Vec<Di
 }
 
 struct HueDriver {
-    ip: String,
-    username: String,
-    light: String,
+    /// Kept open between frames: a fresh connection per command costs a
+    /// handshake every time.
+    client: http::Client,
+    path: String,
     turned_on: bool,
+}
+
+impl HueDriver {
+    fn put(&mut self, body: &Value) -> io::Result<()> {
+        check(
+            self.client
+                .request("PUT", &self.path, Some(&body.to_string()))?,
+        )
+        .map(|_| ())
+    }
 }
 
 impl Driver for HueDriver {
@@ -282,12 +303,7 @@ impl Driver for HueDriver {
         } else {
             0
         };
-        put_state(
-            &self.ip,
-            &self.username,
-            &self.light,
-            &state_body(output, ms, !self.turned_on),
-        )?;
+        self.put(&state_body(output, ms, !self.turned_on))?;
         self.turned_on = true;
         Ok(())
     }
@@ -297,12 +313,7 @@ impl Driver for HueDriver {
             kelvin: REST_KELVIN,
             bright: REST_BRIGHT,
         };
-        let _ = put_state(
-            &self.ip,
-            &self.username,
-            &self.light,
-            &state_body(rest, 400, true),
-        );
+        let _ = self.put(&state_body(rest, 400, true));
     }
 }
 
@@ -315,12 +326,9 @@ pub struct HueStream {
 impl HueStream {
     /// `siblings` lamps of the same bridge share its command budget.
     pub fn open(ip: &str, username: &str, light: &str, siblings: usize) -> io::Result<Self> {
-        safe(username)?;
-        safe(light)?;
         let driver = HueDriver {
-            ip: ip.to_string(),
-            username: username.to_string(),
-            light: light.to_string(),
+            client: http::Client::new(ip, PORT, TIMEOUT)?,
+            path: state_path(username, light)?,
             turned_on: false,
         };
         Ok(HueStream {
@@ -336,7 +344,8 @@ impl LightStream for HueStream {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());
         }
-        self.mailbox.push(output, effect, duration_ms)?;
+        let ms = self.pace.glide(effect, duration_ms);
+        self.mailbox.push(output, effect, ms)?;
         self.last.mark(output);
         Ok(())
     }

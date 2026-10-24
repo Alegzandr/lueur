@@ -22,6 +22,7 @@ pub mod wiz;
 
 use crate::color::{BulbOutput, Rgb};
 use crate::yeelight::{self, Effect, MusicConnection, YeelightControl};
+use common::{Driver, Mailbox};
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::time::Duration;
@@ -210,14 +211,31 @@ pub trait LightStream: Send {
 pub const REST_KELVIN: u16 = 2700;
 pub const REST_BRIGHT: u8 = 40;
 
-impl LightStream for MusicConnection {
-    fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
+impl Driver for MusicConnection {
+    fn send(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
         MusicConnection::push(self, output, effect, duration_ms)
     }
 
     fn rest(&mut self) {
         let _ = self.set_bright(REST_BRIGHT, Effect::Smooth, 400);
         let _ = self.set_ct(REST_KELVIN, Effect::Smooth, 400);
+    }
+}
+
+/// A Yeelight's music channel, written from its own thread.
+///
+/// The write is a blocking TCP send: a bulb that stops reading (a Wi-Fi
+/// stall, unplugged without a reset) would otherwise hold the frame loop for
+/// the write timeout, every frame, and freeze every other light with it.
+struct YeelightStream(Mailbox);
+
+impl LightStream for YeelightStream {
+    fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
+        self.0.push(output, effect, duration_ms)
+    }
+
+    fn rest(&mut self) {
+        self.0.rest();
     }
 }
 
@@ -231,11 +249,10 @@ pub const CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
 pub fn open_stream(ep: &Endpoint, siblings: usize) -> io::Result<Box<dyn LightStream>> {
     require_ready(ep)?;
     Ok(match &ep.kind {
-        DeviceKind::Yeelight => Box::new(MusicConnection::establish(
-            &ep.ip,
-            ep.port,
-            CONTROL_TIMEOUT,
-        )?),
+        DeviceKind::Yeelight => Box::new(YeelightStream(Mailbox::spawn(
+            "yeelight",
+            MusicConnection::establish(&ep.ip, ep.port, CONTROL_TIMEOUT)?,
+        )?)),
         DeviceKind::Wiz => Box::new(wiz::WizStream::open(&ep.ip)?),
         DeviceKind::Lifx { target } => Box::new(lifx::LifxStream::open(&ep.ip, ep.port, target)?),
         DeviceKind::Govee => Box::new(govee::GoveeStream::open(&ep.ip)?),

@@ -10,6 +10,10 @@
 //! * The config export and import write and read only the file the user picks
 //!   in the system's own save and open dialogs; the interface never names a
 //!   path.
+//! * Credentials (Hue, Nanoleaf, Tuya keys) never reach the interface nor an
+//!   exported file: see `secrets.rs`.
+//! * Every bulb address is a private or link-local IPv4 (`validate_ip`),
+//!   whether it comes from the interface, an imported file or discovery.
 //! * Discovery/connect timeouts are clamped so a malicious reply can't wedge us.
 
 use crate::capture::{self, MonitorInfo};
@@ -17,42 +21,62 @@ use crate::devices;
 use crate::error::{AppError, AppResult};
 use crate::lights::{self, PowerResult, unreachable, validate_ip};
 use crate::runner::{LiveSettings, Mode};
+use crate::secrets;
 use crate::sleep::Status as SleepStatus;
 use crate::state::AppState;
 use crate::tuya_cloud::{self, CloudError};
 use lueur_core::color::Rgb;
 use lueur_core::config::AppConfig;
-use lueur_core::device::{self, DeviceKind, DiscoveredDevice, Endpoint, hue, nanoleaf, tuya};
+use lueur_core::device::{self, DeviceKind, DiscoveredDevice, Endpoint, hue, nanoleaf};
 use lueur_core::scene::LightState;
-use lueur_core::show::ShowKind;
 use std::io;
 use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
-/// Result of querying/toggling the effect, sent back to the UI.
+/// One running effect: a mode and the lights playing it, in step.
+#[derive(serde::Serialize)]
+pub struct EffectGroup {
+    /// `ambilight` or a show's id.
+    pub mode: &'static str,
+    pub light_ids: Vec<String>,
+}
+
+/// Result of querying/toggling the effects, sent back to the UI.
 #[derive(serde::Serialize)]
 pub struct EffectStatus {
     pub running: bool,
     pub connected_lights: usize,
-    /// `ambilight` or a show's id, while running.
+    /// The mode playing, when exactly one does.
     pub mode: Option<&'static str>,
-    /// The room lights the running effect drives.
+    /// Every room light an effect drives.
     pub light_ids: Vec<String>,
+    /// Each mode playing and its lights.
+    pub groups: Vec<EffectGroup>,
 }
 
 fn status(state: &AppState) -> EffectStatus {
-    let guard = state.effect.lock().ok();
-    let handle = guard
-        .as_ref()
-        .and_then(|g| g.as_ref())
-        .filter(|h| h.is_running());
+    let groups = state.effects.groups();
     EffectStatus {
-        running: handle.is_some(),
-        connected_lights: handle.map_or(0, |h| h.connected_lights),
-        mode: handle.map(|h| h.mode.id()),
-        light_ids: handle.map(|h| h.light_ids.clone()).unwrap_or_default(),
+        running: !groups.is_empty(),
+        connected_lights: groups.iter().map(|g| g.2).sum(),
+        mode: match groups.as_slice() {
+            [(m, _, _)] => Some(m.id()),
+            _ => None,
+        },
+        light_ids: groups.iter().flat_map(|g| g.1.iter().cloned()).collect(),
+        groups: groups
+            .into_iter()
+            .map(|(m, light_ids, _)| EffectGroup {
+                mode: m.id(),
+                light_ids,
+            })
+            .collect(),
     }
+}
+
+fn parse_mode(id: &str) -> AppResult<Mode> {
+    Mode::from_id(id).ok_or_else(|| AppError::new("unknown_mode"))
 }
 
 /// Run a blocking job (the network, a file dialog, a bulb handshake) off the
@@ -65,10 +89,23 @@ async fn blocking<T: Send + 'static>(
         .map_err(AppError::internal)?
 }
 
-/// Return the current configuration.
+/// Return the current configuration, without its credentials.
 #[tauri::command]
 pub fn get_config(state: State<AppState>) -> AppResult<AppConfig> {
-    Ok(state.lock_config()?.clone())
+    let cfg = state.lock_config()?;
+    Ok(secrets::redact_config(&cfg))
+}
+
+/// Every address the effect and the commands would connect to.
+fn validate_addresses(config: &AppConfig) -> AppResult<()> {
+    let pairings = &config.pairings;
+    config
+        .bindings
+        .iter()
+        .map(|b| &b.ip)
+        .chain(pairings.hue.iter().map(|h| &h.ip))
+        .chain(pairings.nanoleaf.iter().map(|n| &n.ip))
+        .try_for_each(|ip| validate_ip(ip))
 }
 
 /// Replace and persist the configuration. If the effect is running, live-tunable
@@ -76,34 +113,50 @@ pub fn get_config(state: State<AppState>) -> AppResult<AppConfig> {
 ///
 /// Pairings are the backend's: they change behind the interface's back (a
 /// bridge paired, a Smart Life import), so the copy sent here is ignored, and
-/// Tuya bindings take their key from them. So is whether the natural light
-/// runs: moods and lights set by hand switch it.
+/// bindings take their credentials from them (the interface never has any).
+/// So is whether the natural light runs: moods and lights set by hand switch
+/// it.
+///
+/// A slider drag saves several times a second, so the disk write runs off
+/// the main thread, and the tray menu is only rebuilt when what it shows
+/// changed.
 #[tauri::command]
-pub fn save_config(app: AppHandle, state: State<AppState>, mut config: AppConfig) -> AppResult<()> {
-    {
-        let mut guard = state.lock_config()?;
-        config.pairings = guard.pairings.clone();
-        config.natural = guard.natural;
-        refresh_tuya_keys(&mut config);
-        *guard = config;
-    }
-    applied(&app, &state)
+pub async fn save_config(app: AppHandle, mut config: AppConfig) -> AppResult<()> {
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let had_lights = {
+            let mut guard = state.lock_config()?;
+            let had_lights = !guard.bindings.is_empty();
+            config.pairings = guard.pairings.clone();
+            config.natural = guard.natural;
+            validate_addresses(&config)?;
+            secrets::restore_bindings(&mut config, &guard.bindings);
+            *guard = config;
+            had_lights
+        };
+        let has_lights = !state.lock_config()?.bindings.is_empty();
+        persist_and_go_live(&state)?;
+        if has_lights != had_lights {
+            crate::tray::refresh(&app);
+        }
+        Ok(())
+    })
+    .await
 }
 
 /// The config was replaced: persist it, push the live-tunable settings to a
 /// running effect (topology changes need a restart, which the UI performs
 /// explicitly) and let the tray grey out what needs a bulb.
 fn applied(app: &AppHandle, state: &AppState) -> AppResult<()> {
-    state.persist()?;
-    {
-        let cfg = state.lock_config()?;
-        if let Ok(guard) = state.effect.lock()
-            && let Some(handle) = guard.as_ref()
-        {
-            handle.update_live(LiveSettings::of(&cfg));
-        }
-    }
+    persist_and_go_live(state)?;
     crate::tray::refresh(app);
+    Ok(())
+}
+
+fn persist_and_go_live(state: &AppState) -> AppResult<()> {
+    state.persist()?;
+    let live = LiveSettings::of(&*state.lock_config()?);
+    state.effects.update_live(live);
     Ok(())
 }
 
@@ -121,14 +174,17 @@ fn config_dialog(app: &AppHandle) -> tauri_plugin_dialog::FileDialogBuilder<taur
     }
 }
 
-/// Save the whole configuration, pairings included, to a file the user
-/// picks. `false` if they cancelled.
+/// Save the configuration to a file the user picks, without the
+/// credentials: the file is safe to share, and on another computer the
+/// bridges are paired again. `false` if they cancelled.
 #[tauri::command]
 pub async fn export_config(app: AppHandle) -> AppResult<bool> {
     let json = {
         let state = app.state::<AppState>();
         let cfg = state.lock_config()?;
-        cfg.to_json().map_err(AppError::internal)?
+        secrets::redact_config(&cfg)
+            .to_json()
+            .map_err(AppError::internal)?
     };
     blocking(move || {
         let Some(path) = config_dialog(&app)
@@ -145,10 +201,11 @@ pub async fn export_config(app: AppHandle) -> AppResult<bool> {
 }
 
 /// Replace the configuration with one read from a file the user picks, and
-/// return it. `None` if they cancelled.
+/// return it (without credentials). `None` if they cancelled.
 ///
 /// Whether Lueur opens at login stays this computer's: it mirrors the OS
-/// login item, which an import does not touch.
+/// login item, which an import does not touch. So do its pairings; those an
+/// older export carries are added to them.
 #[tauri::command]
 pub async fn import_config(app: AppHandle) -> AppResult<Option<AppConfig>> {
     let handle = app.clone();
@@ -165,14 +222,7 @@ pub async fn import_config(app: AppHandle) -> AppResult<Option<AppConfig>> {
         let text = std::fs::read_to_string(&path).map_err(|e| invalid(&e))?;
         let config = AppConfig::from_json(&text).map_err(|e| invalid(&e))?;
         // The effect connects straight to these.
-        for ip in config
-            .bindings
-            .iter()
-            .map(|b| &b.ip)
-            .chain(config.pairings.hue.iter().map(|h| &h.ip))
-        {
-            validate_ip(ip)?;
-        }
+        validate_addresses(&config)?;
         Ok(Some(config))
     })
     .await?;
@@ -184,11 +234,18 @@ pub async fn import_config(app: AppHandle) -> AppResult<Option<AppConfig>> {
     {
         let mut guard = state.lock_config()?;
         config.behavior.run_on_startup = guard.behavior.run_on_startup;
-        refresh_tuya_keys(&mut config);
-        *guard = config.clone();
+        let mut pairings = guard.pairings.clone();
+        secrets::merge_pairings(&mut pairings, std::mem::take(&mut config.pairings));
+        config.pairings = pairings;
+        // An older export's bindings carry their credentials: kept when no
+        // pairing has one.
+        let carried = config.bindings.clone();
+        secrets::restore_bindings(&mut config, &carried);
+        *guard = config;
     }
     applied(&app, &state)?;
-    Ok(Some(config))
+    let cfg = state.lock_config()?;
+    Ok(Some(secrets::redact_config(&cfg)))
 }
 
 /// List connected monitors for the capture picker.
@@ -209,11 +266,13 @@ pub async fn discover_devices(
         let cfg = state.lock_config()?;
         (cfg.pairings.clone(), cfg.bindings.clone())
     };
-    blocking(move || {
+    let mut found = blocking(move || {
         devices::discover(Duration::from_millis(ms), &pairings, &bindings)
             .map_err(|e| AppError::new("discovery_failed").detail(e))
     })
-    .await
+    .await?;
+    secrets::redact_devices(&mut found);
+    Ok(found)
 }
 
 /// A credential a bridge or controller granted.
@@ -268,6 +327,9 @@ pub async fn pair_device(state: State<'_, AppState>, device: DiscoveredDevice) -
                 p.nanoleaf.push(n);
             }
         }
+        // Bindings made before this pairing (an import) get its credential.
+        let before = cfg.bindings.clone();
+        secrets::restore_bindings(&mut cfg, &before);
     }
     state.persist()
 }
@@ -334,35 +396,31 @@ pub async fn tuya_login_poll(
         let known = &mut cfg.pairings.tuya;
         known.retain(|k| !bulbs.iter().any(|b| b.id == k.id));
         known.extend(bulbs);
-        refresh_tuya_keys(&mut cfg);
+        let before = cfg.bindings.clone();
+        secrets::restore_bindings(&mut cfg, &before);
     }
     state.persist()?;
     Ok(Some(count))
 }
 
-/// A bulb re-added in Smart Life gets a new key: carry the imported one to
-/// the binding that drives it.
-fn refresh_tuya_keys(cfg: &mut AppConfig) {
-    let AppConfig {
-        bindings, pairings, ..
-    } = cfg;
-    for binding in bindings {
-        let Some(id) = binding.device_id.strip_prefix(tuya::ID_PREFIX) else {
-            continue;
-        };
-        if let (Some(fresh), DeviceKind::Tuya { key, dps, .. }) =
-            (pairings.tuya.iter().find(|b| b.id == id), &mut binding.kind)
-        {
-            key.clone_from(&fresh.key);
-            *dps = fresh.dps;
-        }
-    }
-}
-
 /// Flash a bulb a colour so the user can identify it while placing lights.
+/// The interface names the bulb; its credential comes from the pairings.
 #[tauri::command]
-pub async fn test_device(endpoint: Endpoint, r: u8, g: u8, b: u8) -> AppResult<()> {
+pub async fn test_device(
+    state: State<'_, AppState>,
+    mut endpoint: Endpoint,
+    r: u8,
+    g: u8,
+    b: u8,
+) -> AppResult<()> {
     validate_ip(&endpoint.ip)?;
+    if !secrets::restore(
+        &endpoint.id,
+        &mut endpoint.kind,
+        &state.lock_config()?.pairings,
+    ) {
+        return Err(unreachable(&endpoint.ip, "not paired"));
+    }
     blocking(move || {
         devices::identify(&endpoint, Rgb::new(r, g, b)).map_err(|e| unreachable(&endpoint.ip, e))
     })
@@ -410,14 +468,11 @@ pub async fn apply_scene(app: AppHandle, id: String) -> AppResult<PowerResult> {
     result
 }
 
-/// Start the ambilight, or the show named by `mode` (see `Mode::id`),
-/// replacing whatever runs.
+/// Start the ambilight, or the show named by `mode` (see `Mode::id`), on the
+/// whole room, replacing whatever runs.
 #[tauri::command]
 pub async fn start_effect(app: AppHandle, mode: Option<String>) -> AppResult<EffectStatus> {
-    let mode = match mode.as_deref() {
-        None | Some("ambilight") => Mode::Ambilight,
-        Some(id) => Mode::Show(ShowKind::from_id(id).ok_or_else(|| AppError::new("unknown_mode"))?),
-    };
+    let mode = parse_mode(mode.as_deref().unwrap_or("ambilight"))?;
     // Opening the bulbs blocks (music-mode handshake); keep it off the UI thread.
     let handle = app.clone();
     let result = blocking(move || {
@@ -431,20 +486,56 @@ pub async fn start_effect(app: AppHandle, mode: Option<String>) -> AppResult<Eff
     Ok(status(&app.state::<AppState>()))
 }
 
-/// Stop the effect if running.
+/// Stop the effect playing `mode`, or every effect without one.
 #[tauri::command]
-pub async fn stop_effect(app: AppHandle) -> AppResult<()> {
+pub async fn stop_effect(app: AppHandle, mode: Option<String>) -> AppResult<()> {
+    let mode = mode.as_deref().map(parse_mode).transpose()?;
     // stop() joins the loop thread; do it off the UI thread.
     let handle = app.clone();
     blocking(move || {
         let state = handle.state::<AppState>();
         crate::auto::user_took_over(&state);
-        lights::stop_effect(&state, true);
+        match mode {
+            Some(m) => lights::stop_mode(&state, m, true),
+            None => lights::stop_effect(&state, true),
+        }
         Ok(())
     })
     .await?;
     crate::tray::refresh(&app);
     Ok(())
+}
+
+/// Play the mode named by `mode` on one light, in step with the others
+/// playing it, or give the light back to the hand with null.
+#[tauri::command]
+pub async fn set_light_mode(
+    app: AppHandle,
+    light_id: String,
+    mode: Option<String>,
+) -> AppResult<EffectStatus> {
+    let mode = mode.as_deref().map(parse_mode).transpose()?;
+    let handle = app.clone();
+    let result = blocking(move || {
+        let state = handle.state::<AppState>();
+        crate::auto::user_took_over(&state);
+        lights::set_light_mode(&state, &light_id, mode)
+    })
+    .await;
+    crate::tray::refresh(&app);
+    result?;
+    Ok(status(&app.state::<AppState>()))
+}
+
+/// Restart the effects so they pick up changes to the room, the bulbs or
+/// the capture. Each keeps its lights.
+#[tauri::command]
+pub async fn restart_effect(app: AppHandle) -> AppResult<EffectStatus> {
+    let handle = app.clone();
+    let result = blocking(move || lights::restart(&handle.state::<AppState>())).await;
+    crate::tray::refresh(&app);
+    result?;
+    Ok(status(&app.state::<AppState>()))
 }
 
 /// Turn the lights off in `minutes` (1 to 240), or cancel the timer with

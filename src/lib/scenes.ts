@@ -38,6 +38,19 @@ export const PALETTE: RgbTuple[] = [
   [255, 45, 146],
 ];
 
+/** What each palette colour is called, in order, for screen readers. */
+export const PALETTE_NAMES = [
+  "red",
+  "orange",
+  "yellow",
+  "green",
+  "teal",
+  "blue",
+  "indigo",
+  "purple",
+  "pink",
+] as const;
+
 /** The colour a white of `kelvin` looks like (Tanner Helland's fit). */
 export function kelvinRgb(kelvin: number): RgbTuple {
   const t = kelvin / 100;
@@ -78,11 +91,11 @@ export const SHOWS: { id: ShowKind; preview: string }[] = [
   { id: "music", preview: "linear-gradient(135deg, #ff0050, #7a00ff 55%, #0078ff)" },
   {
     id: "rainbow",
-    preview: "linear-gradient(135deg, #ff3b30, #ffa000, #c8ff00, #00ff78, #008cff, #9600ff)",
+    preview: "linear-gradient(135deg, #ff0000, #ff6e00, #ffd700, #00ff32, #00e1ff, #0046ff, #8c00ff, #ff00aa)",
   },
-  { id: "sunset", preview: "linear-gradient(135deg, #ff461e, #ff8c00 40%, #ff2878 70%, #a028dc)" },
-  { id: "ocean", preview: "linear-gradient(135deg, #005aff, #00c8d2 55%, #00e696)" },
-  { id: "candle", preview: "radial-gradient(circle at 50% 70%, #ffd27a, #ff8a1e 45%, #7a2a00)" },
+  { id: "sunset", preview: "linear-gradient(135deg, #ff8c0a, #ff550a 25%, #ff2d23 50%, #ff1e69 75%, #be1eb4)" },
+  { id: "ocean", preview: "linear-gradient(135deg, #1423ff, #0069ff 35%, #00b9eb 70%, #00ebaf)" },
+  { id: "candle", preview: "radial-gradient(circle at 50% 70%, #ffc46a, #ff982a 30%, #ff4e04 60%, #5a1c00)" },
 ];
 
 /** Common wall paints. Lueur compensates for the one picked. */

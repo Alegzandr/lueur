@@ -7,6 +7,7 @@
 
 {#if needsRestart()}
   <div class="banner" role="status">
+    <span class="lamp" aria-hidden="true"></span>
     <p>{t("restart_text")}</p>
     <button class="btn sm primary" disabled={app.busy} onclick={restartEffect}>
       {t("apply")}
@@ -23,15 +24,6 @@
     border-radius: var(--r-lg);
     background: var(--surface);
     box-shadow: var(--card-edge);
-  }
-  .banner::before {
-    content: "";
-    width: 7px;
-    height: 7px;
-    flex: none;
-    border-radius: 50%;
-    background: var(--glow);
-    box-shadow: 0 0 8px var(--glow);
   }
   p {
     flex: 1;

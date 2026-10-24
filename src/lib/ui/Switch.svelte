@@ -32,17 +32,22 @@
     flex: none;
     border-radius: var(--r-full);
     background: var(--line-strong);
-    box-shadow: inset 0 0.5px 1.5px oklch(0 0 0 / 0.18);
-    transition: background 180ms var(--ease);
+    /* The edge reads against the surface whether the switch is off or on. */
+    box-shadow:
+      inset 0 0 0 1px var(--control-line),
+      inset 0 0.5px 1.5px oklch(0 0 0 / 0.18);
+    transition:
+      background 180ms var(--ease),
+      box-shadow 180ms var(--ease);
   }
   .switch.on {
     background: var(--glow);
+    box-shadow:
+      inset 0 0 0 1px var(--glow-text),
+      inset 0 0.5px 1.5px oklch(0 0 0 / 0.18);
   }
   .switch:disabled {
     opacity: 0.5;
-  }
-  .switch:focus-visible {
-    border-radius: var(--r-full);
   }
   .knob {
     position: absolute;

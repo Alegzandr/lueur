@@ -13,7 +13,7 @@ resolver = "2"
 members = ["crates/lueur-core", "src-tauri"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 authors = ["Lueur contributors"]
@@ -22,3 +22,9 @@ rust-version = "1.90"
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Release builds optimise across crates: a smaller binary, and the frame loop
+# inlines through the core crate. Slower to link, which only CI pays.
+[profile.release]
+lto = "thin"
+codegen-units = 1

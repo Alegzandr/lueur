@@ -50,7 +50,9 @@ around you follows what's on screen.
 - 🔒 **Minimal attack surface.** Network traffic is LAN bulb control and
   discovery, the update check against GitHub (whose downloads are
   signature-checked) and, only while you import Smart Life bulbs, Tuya's
-  sign-in API; strict Content-Security-Policy; every IPC input is validated.
+  sign-in API; bulbs are only ever reached at private LAN addresses; strict
+  Content-Security-Policy; every IPC input is validated; bridge and bulb
+  credentials never leave the backend, nor go into an exported config.
 - 🛡️ **Anti-cheat safe.** Lueur reads the screen the way OBS or Discord screen
   share do, and nothing else. See [Competitive games and anti-cheat](#competitive-games-and-anti-cheat).
 
@@ -221,7 +223,8 @@ The output lands in `target/release/`. Settings live in a `lueur` folder in
 your user config dir (`%APPDATA%`, `~/.config`, `~/Library/Application
 Support`); set `LUEUR_DATA_DIR` to put them elsewhere. **Settings →
 Configuration** exports them to a file and imports one back, to keep a copy
-or move to another computer.
+or move to another computer. The export holds no credential, so it is safe
+to share: on another computer, pair the bridges and import Smart Life again.
 
 ## Install, updates and releases
 
@@ -247,7 +250,8 @@ github.com. Development builds never update.
 `v<version>` tag yet, `.github/workflows/release.yml` checks both versions
 agree, runs the CI, builds Windows, Linux and macOS, signs the update files in a job that
 compiles nothing, and publishes the GitHub release, which creates the tag, with the
-`latest.json` the updater reads. A failed release is retried from the
+`latest.json` the updater reads and a `SHA256SUMS.txt` to check a first download
+against. A failed release is retried from the
 workflow's "Run workflow" button. It needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY`
 and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, from `npx tauri signer generate`,
 whose public key goes in `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.

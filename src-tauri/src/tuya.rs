@@ -11,7 +11,7 @@
 //! imported key: only the right key gets a readable answer.
 
 use lueur_core::color::{BulbOutput, Rgb};
-use lueur_core::device::common::{LastSent, Throttle, lan_hosts};
+use lueur_core::device::common::{LastSent, Throttle, ipv4, lan_hosts};
 use lueur_core::device::tuya::{self as dps, ID_PREFIX, PORT, TuyaDps};
 use lueur_core::device::{
     DeviceKind, DiscoveredDevice, Endpoint, LightStream, REST_BRIGHT, REST_KELVIN, TuyaDevice,
@@ -128,6 +128,7 @@ async fn connect_any(
 fn parts(ep: &Endpoint) -> io::Result<(&str, &str, &str, &TuyaDps)> {
     match &ep.kind {
         DeviceKind::Tuya { key, version, dps } if !key.is_empty() => {
+            ipv4(&ep.ip)?;
             let id = ep.id.strip_prefix(ID_PREFIX).unwrap_or(&ep.id);
             Ok((id, key, version, dps))
         }
@@ -316,7 +317,8 @@ pub fn discover(
 
         let mut found: HashMap<String, (String, Option<Version>)> = HashMap::new();
         for info in announced {
-            if devices.iter().any(|d| d.id == info.id) {
+            // A forged announcement must not send the keys off the LAN.
+            if devices.iter().any(|d| d.id == info.id) && ipv4(&info.ip.to_string()).is_ok() {
                 found.insert(info.id.clone(), (info.ip.to_string(), info.version));
             }
         }

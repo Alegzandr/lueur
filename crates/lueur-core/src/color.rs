@@ -30,6 +30,12 @@ impl Rgb {
         ((self.r as u32) << 16) | ((self.g as u32) << 8) | (self.b as u32)
     }
 
+    /// The brightest channel: how hard the colour drives a light, whatever
+    /// its hue.
+    pub fn value(self) -> u8 {
+        self.r.max(self.g).max(self.b)
+    }
+
     /// Perceived luminance in 0..=255 (Rec. 601 weights). Cheap and good enough
     /// for deciding whether a frame is "dark".
     pub fn luminance(self) -> u8 {
@@ -156,6 +162,15 @@ impl ColorSmoother {
         }
     }
 
+    /// The smoothed colour, once a first sample has arrived.
+    pub fn current(&self) -> Option<Rgb> {
+        self.seeded.then(|| Rgb {
+            r: self.r.round().clamp(0.0, 255.0) as u8,
+            g: self.g.round().clamp(0.0, 255.0) as u8,
+            b: self.b.round().clamp(0.0, 255.0) as u8,
+        })
+    }
+
     pub fn reset(&mut self) {
         *self = Self::default();
     }
@@ -269,14 +284,19 @@ pub fn compensate_wall_kelvin(kelvin: u16, wall: Rgb) -> u16 {
 pub const MIN_BRIGHT: u8 = 1;
 pub const MAX_BRIGHT: u8 = 100;
 
-/// Map a colour's luminance onto a bulb brightness percentage (1..=100),
+/// Map a colour's intensity onto a bulb brightness percentage (1..=100),
 /// scaled by the user's overall `brightness` setting (0..=1).
+///
+/// Intensity is the brightest channel, not the perceived luminance: the bulb
+/// is sent the hue at full chroma, and its own LEDs already make a full blue
+/// look darker than a full yellow. Scaling by luminance as well would count
+/// that twice, leaving a bright blue sky at a tenth of the bulb's power.
 ///
 /// The bulb cannot go below 1%, so a fully black frame lands on 1 rather than
 /// off — turning the bulb off and on per frame would strobe.
 pub fn bulb_brightness(color: Rgb, brightness: f32) -> u8 {
     let bri = brightness.clamp(0.0, 1.0);
-    let pct = (color.luminance() as f32 / 255.0) * bri * 100.0;
+    let pct = (color.value() as f32 / 255.0) * bri * 100.0;
     (pct.round().clamp(MIN_BRIGHT as f32, MAX_BRIGHT as f32)) as u8
 }
 
@@ -465,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn bulb_brightness_tracks_luminance() {
+    fn bulb_brightness_tracks_intensity() {
         assert_eq!(bulb_brightness(Rgb::new(255, 255, 255), 1.0), 100);
         // A dark frame must dim the bulb — this is the intensity dimension that
         // set_rgb alone can never convey.
@@ -473,6 +493,13 @@ mod tests {
         assert!((20..=30).contains(&dark), "expected a dim bulb, got {dark}");
         // Never 0: the bulb's floor is 1%, and toggling power would strobe.
         assert_eq!(bulb_brightness(Rgb::BLACK, 1.0), MIN_BRIGHT);
+    }
+
+    #[test]
+    fn a_saturated_colour_drives_the_bulb_fully() {
+        // A full blue is as bright as a blue can be; its luminance is 11%.
+        assert_eq!(bulb_brightness(Rgb::new(0, 0, 255), 1.0), 100);
+        assert_eq!(bulb_brightness(Rgb::new(255, 0, 0), 1.0), 100);
     }
 
     #[test]
@@ -490,7 +517,7 @@ mod tests {
         match BulbOutput::build(Rgb::new(30, 15, 60), 1.0, false, 2700) {
             BulbOutput::Color { rgb, bright } => {
                 assert_eq!(rgb.r.max(rgb.g).max(rgb.b), 255);
-                assert!(bright > 0 && bright < 20, "dim scene, got {bright}");
+                assert!(bright > 0 && bright < 30, "dim scene, got {bright}");
             }
             other => panic!("expected Color, got {other:?}"),
         }

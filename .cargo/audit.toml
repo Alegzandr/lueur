@@ -1,0 +1,17 @@
+# Read by `cargo audit` (the CI's dependency audit).
+#
+# Every ignore says why it cannot reach Lueur, and goes once a fixed
+# version is available.
+
+[advisories]
+ignore = [
+    # zip < 9 extraction flaws (SUID bits, symlinks escaping the target).
+    # Only tauri-plugin-updater 2.x pulls it in, for Windows zip and MSI
+    # bundles: Lueur's Windows update is a bare .exe swapped in by
+    # `self_replace`, the other platforms use tar.gz and AppImage, and the
+    # plugin checks the minisign signature before extracting anything.
+    # Drop these once a 2.x updater depends on zip >= 9.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+]

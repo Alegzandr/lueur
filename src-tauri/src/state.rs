@@ -14,8 +14,8 @@ use std::sync::{Mutex, MutexGuard};
 pub struct AppState {
     pub data_dir: PathBuf,
     pub config: Mutex<AppConfig>,
-    /// The running effect, if any.
-    pub effect: Mutex<Option<runner::Handle>>,
+    /// The running effects, one per mode.
+    pub effects: runner::Effects,
     /// Lights being set by hand.
     pub manual: Manual,
     /// Who started the running effect, for automatic mode.
@@ -37,7 +37,7 @@ impl AppState {
         AppState {
             data_dir,
             config: Mutex::new(config),
-            effect: Mutex::new(None),
+            effects: runner::Effects::default(),
             manual: Manual::default(),
             auto_owner: Mutex::new(auto::Owner::default()),
             sleep: sleep::Timer::default(),
@@ -56,10 +56,8 @@ impl AppState {
         config::save(&self.data_dir, &cfg).map_err(|e| AppError::new("save_failed").detail(e))
     }
 
-    /// Is the ambilight effect currently running?
+    /// Does any effect drive some light?
     pub fn is_running(&self) -> bool {
-        self.effect
-            .lock()
-            .is_ok_and(|g| g.as_ref().is_some_and(|h| h.is_running()))
+        self.effects.is_running()
     }
 }

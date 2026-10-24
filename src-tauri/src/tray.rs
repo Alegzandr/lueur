@@ -114,10 +114,9 @@ fn language(state: &AppState) -> &'static str {
     state.ui_language.lock().map_or("en", |l| *l)
 }
 
-/// What runs now, if anything.
-fn running_mode(state: &AppState) -> Option<Mode> {
-    let guard = state.effect.lock().ok()?;
-    guard.as_ref().filter(|h| h.is_running()).map(|h| h.mode)
+/// The modes playing now, one per effect.
+fn running_modes(state: &AppState) -> Vec<Mode> {
+    state.effects.modes()
 }
 
 /// Build the menu for the current state and language.
@@ -125,19 +124,19 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let state = app.state::<AppState>();
     let lang = language(&state);
     let l = labels(lang);
-    let running = running_mode(&state);
+    let running = running_modes(&state);
     let has_lights = state.lock_config().is_ok_and(|c| !c.bindings.is_empty());
 
-    let toggle_label = match running {
-        None => l.start,
-        Some(Mode::Ambilight) => l.stop,
-        Some(Mode::Show(_)) => l.stop_show,
+    let toggle_label = match running.as_slice() {
+        [] => l.start,
+        [Mode::Ambilight] => l.stop,
+        _ => l.stop_show,
     };
     let toggle = MenuItem::with_id(
         app,
         "toggle",
         toggle_label,
-        has_lights || running.is_some(),
+        has_lights || !running.is_empty(),
         None::<&str>,
     )?;
 
@@ -148,7 +147,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             format!("{SHOW_PREFIX}{}", kind.id()),
             name(lang, kind.id()),
             true,
-            running == Some(Mode::Show(kind)),
+            running.contains(&Mode::Show(kind)),
             None::<&str>,
         )?)?;
     }
@@ -259,8 +258,8 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     in_background(app, move |state| {
                         crate::auto::user_took_over(state);
                         // Picking the show that plays stops it, like its tick.
-                        if running_mode(state) == Some(Mode::Show(kind)) {
-                            lights::stop_effect(state, true);
+                        if running_modes(state).contains(&Mode::Show(kind)) {
+                            lights::stop_mode(state, Mode::Show(kind), true);
                             Ok(())
                         } else {
                             lights::start(state, Mode::Show(kind)).map(drop)

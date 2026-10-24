@@ -257,6 +257,13 @@
       transform: rotate(360deg);
     }
   }
+  /* Reduced motion still needs to say "working": a slower turn, not a stop. */
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation-duration: 1.6s !important;
+      animation-iteration-count: infinite !important;
+    }
+  }
 
   .empty {
     padding: var(--s-6) var(--s-5);

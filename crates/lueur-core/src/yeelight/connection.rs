@@ -16,7 +16,7 @@ use super::protocol::{self, Effect};
 use crate::color::{BulbOutput, Rgb};
 use crate::device::common::{bright_needs_update, ipv4, local_ip_toward};
 use std::io::{self, Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -34,9 +34,7 @@ pub struct YeelightControl {
 impl YeelightControl {
     /// Connect to the bulb's control port with a connect timeout.
     pub fn connect(ip: &str, port: u16, timeout: Duration) -> io::Result<Self> {
-        let addr: SocketAddr = format!("{ip}:{port}")
-            .parse()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "bad address"))?;
+        let addr = SocketAddr::V4(SocketAddrV4::new(ipv4(ip)?, port));
         let stream = TcpStream::connect_timeout(&addr, timeout)?;
         stream.set_write_timeout(Some(timeout))?;
         stream.set_read_timeout(Some(timeout))?;
@@ -131,7 +129,8 @@ impl MusicConnection {
         let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))?;
         let local_port = listener.local_addr()?.port();
 
-        let local_ip = local_ip_toward(ipv4(ip)?)?.to_string();
+        let bulb = ipv4(ip)?;
+        let local_ip = local_ip_toward(bulb)?.to_string();
 
         // Tell the bulb to connect back to us.
         let mut control = YeelightControl::connect(ip, port, handshake_timeout)?;
@@ -143,7 +142,10 @@ impl MusicConnection {
         let deadline = std::time::Instant::now() + handshake_timeout;
         let stream = loop {
             match listener.accept() {
-                Ok((s, _peer)) => break s,
+                // Only the bulb itself may take the music channel; anyone
+                // else on the LAN who connects first is turned away.
+                Ok((s, peer)) if peer.ip() == IpAddr::V4(bulb) => break s,
+                Ok(_) => continue,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                     if std::time::Instant::now() >= deadline {
                         return Err(io::Error::new(

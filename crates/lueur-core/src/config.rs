@@ -243,12 +243,26 @@ pub fn load(data_dir: &Path) -> Result<AppConfig, ConfigError> {
 
 /// Atomically save config to `data_dir/config.json` (write temp, then rename) so
 /// a crash mid-write can't corrupt the existing file.
+///
+/// The file holds the bulbs' credentials, so on Unix only its owner may read
+/// it (on Windows the per-user `%APPDATA%` already sees to that).
 pub fn save(data_dir: &Path, config: &AppConfig) -> Result<(), ConfigError> {
+    use std::io::Write;
+
     std::fs::create_dir_all(data_dir).map_err(ConfigError::Io)?;
     let json = config.to_json().map_err(ConfigError::Parse)?;
     let final_path = data_dir.join(CONFIG_FILE_NAME);
     let tmp_path = data_dir.join(format!("{CONFIG_FILE_NAME}.tmp"));
-    std::fs::write(&tmp_path, json.as_bytes()).map_err(ConfigError::Io)?;
+    // A leftover temp file would keep its old permissions.
+    let _ = std::fs::remove_file(&tmp_path);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options
+        .open(&tmp_path)
+        .and_then(|mut f| f.write_all(json.as_bytes()))
+        .map_err(ConfigError::Io)?;
     std::fs::rename(&tmp_path, &final_path).map_err(ConfigError::Io)?;
     Ok(())
 }
