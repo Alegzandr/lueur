@@ -20,6 +20,10 @@ use std::collections::BTreeMap;
 /// The local TCP port every Tuya device listens on.
 pub const PORT: u16 = 6668;
 
+/// What a Tuya bulb's device id starts with in Lueur; the cloud's own id
+/// follows it.
+pub const ID_PREFIX: &str = "tuya:";
+
 /// The white range Tuya maps its 0..max temperature onto.
 const WARMEST_KELVIN: u16 = 2700;
 const COOLEST_KELVIN: u16 = 6500;

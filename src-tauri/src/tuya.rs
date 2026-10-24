@@ -12,7 +12,7 @@
 
 use lueur_core::color::{BulbOutput, Rgb};
 use lueur_core::device::common::{LastSent, Throttle, lan_hosts};
-use lueur_core::device::tuya::{self as dps, PORT, TuyaDps};
+use lueur_core::device::tuya::{self as dps, ID_PREFIX, PORT, TuyaDps};
 use lueur_core::device::{
     DeviceKind, DiscoveredDevice, Endpoint, LightStream, REST_BRIGHT, REST_KELVIN, TuyaDevice,
 };
@@ -128,7 +128,7 @@ async fn connect_any(
 fn parts(ep: &Endpoint) -> io::Result<(&str, &str, &str, &TuyaDps)> {
     match &ep.kind {
         DeviceKind::Tuya { key, version, dps } if !key.is_empty() => {
-            let id = ep.id.strip_prefix("tuya:").unwrap_or(&ep.id);
+            let id = ep.id.strip_prefix(ID_PREFIX).unwrap_or(&ep.id);
             Ok((id, key, version, dps))
         }
         _ => Err(io::Error::new(
@@ -382,7 +382,7 @@ pub fn discover(
             .filter_map(|d| {
                 let (ip, version) = verified.get(&d.id)?;
                 Some(DiscoveredDevice {
-                    id: format!("tuya:{}", d.id),
+                    id: format!("{ID_PREFIX}{}", d.id),
                     ip: ip.clone(),
                     port: PORT,
                     model: d.product.clone(),

@@ -72,6 +72,13 @@ const en = {
   mood_reading: "Reading",
   mood_relax: "Relax",
   mood_night: "Night light",
+  mood_natural: "Natural light",
+  mood_natural_tip: "Follows the time of day: cool and bright by day, warm and low in the evening.",
+  sleep_timer: "Sleep timer",
+  sleep_timer_tip: "Every light fades out over the last minute, then turns off.",
+  sleep_off: "Off",
+  sleep_left: "Lights off in {n} min",
+  sleep_fading: "Fading out…",
   click_to_stop: "Click again to stop",
   walls: "Wall colour",
   walls_tip: "Lueur corrects for it, so the light keeps the screen's colours.",
@@ -235,6 +242,7 @@ const en = {
   e_light_unbound: "This light has no bulb yet.",
   e_light_following: "This light follows the running effect.",
   e_scene_missing: "This scene no longer exists.",
+  e_invalid_timer: "This timer is out of range.",
   e_no_bindings: "No bulbs added yet.",
   e_no_active_lights: "No light with a bulb takes part in effects.",
   e_audio_unavailable: "Lueur cannot hear this computer's sound.",
@@ -316,6 +324,13 @@ const fr: Record<Key, string> = {
   mood_reading: "Lecture",
   mood_relax: "Détente",
   mood_night: "Veilleuse",
+  mood_natural: "Lumière naturelle",
+  mood_natural_tip: `Suit l'heure de la journée${NB}: froide et vive le jour, chaude et douce le soir.`,
+  sleep_timer: "Minuteur de sommeil",
+  sleep_timer_tip: "Les lumières baissent pendant la dernière minute, puis s'éteignent.",
+  sleep_off: "Non",
+  sleep_left: "Extinction dans {n} min",
+  sleep_fading: "Extinction en cours…",
   click_to_stop: "Cliquez à nouveau pour arrêter",
   walls: "Couleur des murs",
   walls_tip: "Lueur la compense pour que la lumière garde les couleurs de l'écran.",
@@ -478,6 +493,7 @@ const fr: Record<Key, string> = {
   e_light_unbound: "Cette lumière n'a pas encore d'ampoule.",
   e_light_following: "Cette lumière suit l'effet en cours.",
   e_scene_missing: "Cette ambiance n'existe plus.",
+  e_invalid_timer: "Cette durée n'est pas valable.",
   e_no_bindings: "Aucune ampoule ajoutée.",
   e_no_active_lights: "Aucune lumière avec ampoule ne participe aux effets.",
   e_audio_unavailable: "Lueur n'arrive pas à capter le son de cet ordinateur.",
@@ -549,7 +565,7 @@ interface BackendError {
   detail?: string;
 }
 
-function isBackendError(e: unknown): e is BackendError {
+export function isBackendError(e: unknown): e is BackendError {
   return typeof e === "object" && e !== null && typeof (e as BackendError).code === "string";
 }
 

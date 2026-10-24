@@ -188,6 +188,17 @@ export interface AppConfig {
   /** What each light was last set to by hand, by room light id. */
   states: Record<string, LightState>;
   show: ShowSettings;
+  /** The lights follow the time of day. The backend switches it (moods,
+   *  lights set by hand) and ignores the copy the interface saves. */
+  natural?: boolean;
+}
+
+/** A running sleep timer. */
+export interface SleepStatus {
+  /** What it was set to. */
+  minutes: number;
+  /** Seconds until the lights go off. */
+  left: number;
 }
 
 export interface DiscoveredDevice {
@@ -274,5 +285,6 @@ export function defaultConfig(): AppConfig {
     interface: { appearance: "system", language: "system", room_arranged: false },
     states: {},
     show: { kind: "music", bright: 80 },
+    natural: false,
   };
 }

@@ -9,6 +9,7 @@
 
 use crate::color::Rgb;
 use serde::{Deserialize, Serialize};
+use std::net::Ipv4Addr;
 
 /// The transition Yeelight applies between colours.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,11 +107,6 @@ pub fn set_music(id: u32, enable: bool, host: &str, port: u16) -> String {
     }
 }
 
-/// `get_prop`: query properties (e.g. `["power", "bright", "rgb"]`).
-pub fn get_prop(id: u32, props: &[&str]) -> String {
-    encode(id, "get_prop", serde_json::json!(props))
-}
-
 fn normalise_duration(effect: Effect, duration_ms: u32) -> u32 {
     match effect {
         Effect::Sudden => 0,
@@ -174,7 +170,7 @@ pub fn parse_discovery(raw: &str) -> Option<DiscoveredDevice> {
     let addr = loc.strip_prefix("yeelight://").unwrap_or(&loc);
     let (ip, port) = match addr.rsplit_once(':') {
         Some((ip, port)) => (ip.to_string(), port.parse().ok()?),
-        None => (addr.to_string(), 55443),
+        None => (addr.to_string(), DEFAULT_CONTROL_PORT),
     };
 
     if ip.is_empty() {
@@ -193,7 +189,7 @@ pub fn parse_discovery(raw: &str) -> Option<DiscoveredDevice> {
 }
 
 /// The multicast group and port Yeelight uses for SSDP discovery.
-pub const SSDP_ADDR: &str = "239.255.255.250";
+pub const SSDP_ADDR: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
 pub const SSDP_PORT: u16 = 1982;
 pub const DEFAULT_CONTROL_PORT: u16 = 55443;
 
@@ -263,14 +259,6 @@ mod tests {
     fn set_power_on_off() {
         assert!(set_power(1, true, Effect::Smooth, 300).contains("\"on\",\"smooth\",300"));
         assert!(set_power(1, false, Effect::Sudden, 0).contains("\"off\",\"sudden\",0"));
-    }
-
-    #[test]
-    fn get_prop_lists_props() {
-        assert_eq!(
-            get_prop(3, &["power", "bright"]),
-            "{\"id\":3,\"method\":\"get_prop\",\"params\":[\"power\",\"bright\"]}\r\n"
-        );
     }
 
     #[test]

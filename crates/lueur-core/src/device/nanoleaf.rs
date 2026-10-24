@@ -18,6 +18,9 @@ use std::net::UdpSocket;
 use std::time::Duration;
 
 pub const PORT: u16 = 16021;
+/// What a Nanoleaf controller's device id starts with in Lueur; its own id
+/// follows it.
+pub const ID_PREFIX: &str = "nanoleaf:";
 const STREAM_PORT: u16 = 60222;
 const TIMEOUT: Duration = Duration::from_secs(2);
 const FRAME_INTERVAL: Duration = Duration::from_millis(40);
@@ -108,7 +111,7 @@ pub fn discover(timeout: Duration, known: &[NanoleafPairing]) -> io::Result<Vec<
             .map(|k| k.token.clone())
             .unwrap_or_default();
         out.push(DiscoveredDevice {
-            id: format!("nanoleaf:{id}"),
+            id: format!("{ID_PREFIX}{id}"),
             ip: inst.ip,
             port: if inst.port == 0 { PORT } else { inst.port },
             model: inst.txt.get("md").cloned().unwrap_or_default(),

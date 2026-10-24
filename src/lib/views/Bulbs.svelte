@@ -10,7 +10,6 @@
     endpointOf,
     endpointOfDevice,
     identify,
-    lightById,
     openTuya,
     pair,
     renameLight,
@@ -29,9 +28,9 @@
 
   const lights = $derived(app.config.room.lights);
   const unboundLights = $derived(lights.filter((l) => !bindingFor(l.id)));
-  const fresh = $derived(
-    app.discovered.filter((d) => d.paired && !app.config.bindings.some((b) => b.device_id === d.id)),
-  );
+  // Bulbs already bound are listed under "In the room"; only show the rest here.
+  const unbound = $derived(app.discovered.filter((d) => !app.config.bindings.some((b) => b.device_id === d.id)));
+  const fresh = $derived(unbound.filter((d) => d.paired));
 
   // Brand names, the same in every language.
   const FAMILY: Record<Family, string> = {
@@ -45,11 +44,6 @@
   };
 
   let userCode = $state("");
-
-  function ownerOf(d: DiscoveredDevice) {
-    const b = app.config.bindings.find((x) => x.device_id === d.id);
-    return b ? lightById(b.light_id) : undefined;
-  }
 
   /** Only Yeelight reports what it can do; every other family can stream. */
   function supportsMusic(d: DiscoveredDevice): boolean {
@@ -128,16 +122,17 @@
     </section>
   {/if}
 
+  {#if unbound.length > 0 || lights.length === 0}
   <section class="group">
     <div class="group-head">
       <h2 class="group-title">{t("on_network")}</h2>
       {#if app.hasScanned && !app.scanning}
-        <span class="note">{tn("n_found", app.discovered.length)}</span>
+        <span class="note">{tn("n_found", unbound.length)}</span>
       {/if}
     </div>
 
     <div class="card rows">
-      {#if app.discovered.length === 0}
+      {#if unbound.length === 0}
         <div class="empty">
           {#if app.scanning}
             <p>{t("listening")}</p>
@@ -149,12 +144,11 @@
           {/if}
         </div>
       {:else}
-        {#each app.discovered as d (d.id)}
-          {@const owner = ownerOf(d)}
+        {#each unbound as d (d.id)}
           <div class="device">
-            <span class="device-icon" class:used={owner}><Icon name="bulb" size={16} /></span>
+            <span class="device-icon"><Icon name="bulb" size={16} /></span>
             <div class="device-text">
-              <div class="device-name">{owner ? owner.name : deviceName(d)}</div>
+              <div class="device-name">{deviceName(d)}</div>
               <div class="device-meta num">
                 {FAMILY[d.kind.family]} {d.model || ""} · {d.ip}{#if !d.paired}<span class="warn"
                     >, {t("needs_pairing")}</span
@@ -171,8 +165,6 @@
                 {#if app.pairing === d.id}<span class="spinner" aria-hidden="true"></span>{/if}
                 {app.pairing === d.id ? t("pairing") : t("pair")}
               </button>
-            {:else if owner}
-              <span class="in-room"><Icon name="check" size={14} /> {t("in_room")}</span>
             {:else if unboundLights.length > 0}
               <select class="assign" aria-label="{deviceName(d)}: {t('use_for')}" onchange={(e) => onAssign(d, e)}>
                 <option value="" selected disabled>{t("use_for")}</option>
@@ -189,6 +181,7 @@
       {/if}
     </div>
   </section>
+  {/if}
 
   {#if lights.length > 0}
     <section class="group">
@@ -292,9 +285,6 @@
     background: var(--surface-2);
     color: var(--text-3);
   }
-  .device-icon.used {
-    color: var(--glow-text);
-  }
   .device-text,
   .grow {
     flex: 1;
@@ -312,17 +302,6 @@
   }
   .warn {
     color: var(--glow-text);
-  }
-  .in-room {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 0 var(--s-2);
-    color: var(--text-3);
-    font-size: var(--t-sm);
-  }
-  .in-room :global(svg) {
-    color: var(--ok);
   }
   .assign {
     height: 26px;

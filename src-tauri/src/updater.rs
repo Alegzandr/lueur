@@ -51,7 +51,7 @@ pub enum Stage {
     Restarting,
 }
 
-/// What the splash window shows, polled by `src/splash.ts`.
+/// What the splash window shows, polled by `src/splash/main.ts`.
 #[derive(Clone, Copy, Default, Serialize)]
 pub struct Progress {
     stage: Stage,
@@ -83,11 +83,8 @@ pub fn update_ready(state: State<'_, UpdateState>) -> Option<String> {
 #[tauri::command]
 pub fn restart_app(app: AppHandle) {
     // The bulbs are in music mode while the effect runs: hand them back.
-    if let Some(state) = app.try_state::<AppState>()
-        && let Ok(mut guard) = state.effect.lock()
-        && let Some(mut h) = guard.take()
-    {
-        h.stop();
+    if let Some(state) = app.try_state::<AppState>() {
+        crate::lights::stop_effect(&state, false);
     }
     // Goes through RunEvent::Exit so the single-instance lock is released
     // before the new process starts; `restart()` would skip it.
@@ -174,8 +171,7 @@ pub fn enabled() -> bool {
 fn splash_url(app: &AppHandle) -> String {
     let interface = app
         .state::<AppState>()
-        .config
-        .lock()
+        .lock_config()
         .map(|c| c.interface)
         .unwrap_or_default();
     let mut query = Vec::new();

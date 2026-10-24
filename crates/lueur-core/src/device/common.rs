@@ -14,8 +14,9 @@ use std::time::{Duration, Instant};
 /// Smallest brightness change worth a command, in percentage points.
 ///
 /// Brightness is derived from a frame average, so it jitters by a point or two
-/// even on still content. A 1-point error is imperceptible; a command storm
-/// that destabilises the bulb is not.
+/// even on still content. Without a deadband that jitter becomes a brightness
+/// command every frame, racing the colour stream and visibly destabilising the
+/// bulb. A 1-point error is imperceptible; a command storm is not.
 pub const BRIGHT_DEADBAND: u8 = 2;
 
 /// Whether a brightness change is worth sending.
@@ -53,10 +54,6 @@ impl LastSent {
 
     pub fn mark(&mut self, sent: BulbOutput) {
         self.0 = Some(sent);
-    }
-
-    pub fn forget(&mut self) {
-        self.0 = None;
     }
 }
 
@@ -349,10 +346,31 @@ mod tests {
     }
 
     #[test]
+    fn first_brightness_always_sends() {
+        assert!(bright_needs_update(None, 50));
+    }
+
+    #[test]
+    fn single_point_jitter_is_absorbed() {
+        // The command storm this prevents is what destabilises the bulb.
+        assert!(!bright_needs_update(Some(50), 50));
+        assert!(!bright_needs_update(Some(50), 51));
+        assert!(!bright_needs_update(Some(50), 49));
+    }
+
+    #[test]
+    fn real_movement_gets_through() {
+        assert!(bright_needs_update(Some(50), 52));
+        assert!(bright_needs_update(Some(50), 48));
+        assert!(bright_needs_update(Some(50), 90));
+    }
+
+    #[test]
     fn extremes_are_never_absorbed() {
+        // Drifting to 2 and stopping would leave the bulb visibly glowing when
+        // the scene is black; same story at the top of the range.
         assert!(bright_needs_update(Some(2), MIN_BRIGHT));
         assert!(bright_needs_update(Some(99), MAX_BRIGHT));
-        assert!(!bright_needs_update(Some(50), 50));
     }
 
     #[test]

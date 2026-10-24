@@ -3,6 +3,9 @@
 
 import type { LightState, Rgb, ShowKind, Tint } from "./types";
 
+/** A colour as its red, green and blue channels, 0..=255. */
+export type RgbTuple = [number, number, number];
+
 export type MoodId = "daylight" | "reading" | "relax" | "night";
 
 /** Mirrors `MOODS` in lueur-core scene.rs; the backend applies them by id. */
@@ -13,6 +16,9 @@ export const MOODS: { id: MoodId; kelvin: number; bright: number }[] = [
   { id: "night", kelvin: 2200, bright: 8 },
 ];
 
+/** The mood that follows the time of day (`NATURAL` in scene.rs). */
+export const NATURAL = "natural";
+
 /** A warm, comfortable white: what a light shows before anyone sets it. */
 export const DEFAULT_STATE: LightState = { on: true, bright: 80, tint: { mode: "white", kelvin: 2700 } };
 
@@ -20,7 +26,7 @@ export const MIN_KELVIN = 2200;
 export const MAX_KELVIN = 6500;
 
 /** Saturated enough to read as a choice, spread evenly round the wheel. */
-export const PALETTE: [number, number, number][] = [
+export const PALETTE: RgbTuple[] = [
   [255, 59, 48],
   [255, 122, 0],
   [255, 184, 0],
@@ -33,7 +39,7 @@ export const PALETTE: [number, number, number][] = [
 ];
 
 /** The colour a white of `kelvin` looks like (Tanner Helland's fit). */
-export function kelvinRgb(kelvin: number): [number, number, number] {
+export function kelvinRgb(kelvin: number): RgbTuple {
   const t = kelvin / 100;
   const clamp = (v: number) => Math.round(Math.max(0, Math.min(255, v)));
   const r = t <= 66 ? 255 : 329.698727446 * Math.pow(t - 60, -0.1332047592);
@@ -42,11 +48,11 @@ export function kelvinRgb(kelvin: number): [number, number, number] {
   return [clamp(r), clamp(g), clamp(b)];
 }
 
-export function tintRgb(tint: Tint): [number, number, number] {
+export function tintRgb(tint: Tint): RgbTuple {
   return tint.mode === "white" ? kelvinRgb(tint.kelvin) : [tint.r, tint.g, tint.b];
 }
 
-export function rgbCss([r, g, b]: [number, number, number]): string {
+export function rgbCss([r, g, b]: RgbTuple): string {
   return `rgb(${r} ${g} ${b})`;
 }
 
@@ -54,7 +60,7 @@ export function tintCss(tint: Tint): string {
   return rgbCss(tintRgb(tint));
 }
 
-export function sameRgb(tint: Tint, [r, g, b]: [number, number, number]): boolean {
+export function sameRgb(tint: Tint, [r, g, b]: RgbTuple): boolean {
   return tint.mode === "color" && tint.r === r && tint.g === g && tint.b === b;
 }
 
@@ -62,7 +68,7 @@ export function hexOf(tint: Tint): string {
   return "#" + tintRgb(tint).map((v) => v.toString(16).padStart(2, "0")).join("");
 }
 
-export function rgbOfHex(hex: string): [number, number, number] | null {
+export function rgbOfHex(hex: string): RgbTuple | null {
   const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
   return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : null;
 }

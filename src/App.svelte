@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { app, bootstrap, fail, refreshStatus, reloadStates, toggleEffect, type View } from "./lib/state.svelte";
+  import { app, bootstrap, fail, refreshStatus, reloadStates, sleepChanged, toggleEffect, type View } from "./lib/state.svelte";
   import { lang, t, tn } from "./lib/i18n";
-  import { onEffectChanged, onLightsChanged, onUpdateReady, setUiLanguage, setWindowTheme, updateReady } from "./lib/ipc";
+  import { onEffectChanged, onLightsChanged, onSleepChanged, onUpdateReady, setUiLanguage, setWindowTheme, updateReady } from "./lib/ipc";
+  import { DETECTS_FULLSCREEN, MOD_KEY } from "./lib/platform";
   import Icon, { type IconName } from "./lib/ui/Icon.svelte";
   import Toasts from "./lib/ui/Toasts.svelte";
   import UpdateBanner from "./lib/ui/UpdateBanner.svelte";
@@ -21,26 +22,26 @@
   onMount(() => {
     void bootstrap();
     const poll = setInterval(refreshStatus, 4000);
-    // Started or stopped from the tray: update now rather than at the next poll.
-    let unlisten = () => {};
-    onEffectChanged((error) => {
-      if (error) fail(error);
-      void refreshStatus();
-    }).then((u) => (unlisten = u));
-    // The tray or automatic mode changed what the lights show.
-    let unlistenLights = () => {};
-    onLightsChanged(() => void reloadStates()).then((u) => (unlistenLights = u));
-    // An update installed in the background waits for a restart.
-    let unlistenUpdate = () => {};
     updateReady()
       .then((v) => (app.updateReady = v))
       .catch(() => {});
-    onUpdateReady((v) => (app.updateReady = v)).then((u) => (unlistenUpdate = u));
+    const subscriptions = [
+      // Started or stopped from the tray: update now rather than at the next poll.
+      onEffectChanged((error) => {
+        if (error) fail(error);
+        void refreshStatus();
+      }),
+      // The tray or automatic mode changed what the lights show.
+      onLightsChanged(() => void reloadStates()),
+      // The sleep timer was set from the tray, or ran out.
+      onSleepChanged(sleepChanged),
+      // An update installed in the background waits for a restart.
+      onUpdateReady((v) => (app.updateReady = v)),
+    ];
     return () => {
       clearInterval(poll);
-      unlisten();
-      unlistenLights();
-      unlistenUpdate();
+      // Also unsubscribes a listener still being set up.
+      for (const s of subscriptions) void s.then((unlisten) => unlisten());
     };
   });
 
@@ -78,10 +79,7 @@
     app.config.room.lights.filter((l) => !app.config.bindings.some((b) => b.light_id === l.id)).length,
   );
   // Automatic mode only exists where fullscreen can be detected (Windows).
-  const waitingForFullscreen = $derived(
-    /windows/i.test(navigator.userAgent) && app.config.behavior.auto_fullscreen && bound > 0,
-  );
-  const mod = navigator.platform.toLowerCase().includes("mac") ? "⌘" : "Ctrl+";
+  const waitingForFullscreen = $derived(DETECTS_FULLSCREEN && app.config.behavior.auto_fullscreen && bound > 0);
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -103,7 +101,7 @@
           class="nav-item"
           class:active={app.view === n.id}
           aria-current={app.view === n.id ? "page" : undefined}
-          title="{n.label()} ({mod}{n.key})"
+          title="{n.label()} ({MOD_KEY}{n.key})"
           onclick={() => (app.view = n.id)}
         >
           <Icon name={n.icon} size={16} />
@@ -144,7 +142,7 @@
           class="btn power-btn"
           class:primary={!app.status.running}
           disabled={app.busy || (!app.status.running && bound === 0)}
-          title="{app.status.running ? t('stop') : t('start')} ({mod}Enter)"
+          title="{app.status.running ? t('stop') : t('start')} ({MOD_KEY}Enter)"
           onclick={toggleEffect}
         >
           <Icon name="power" size={14} />

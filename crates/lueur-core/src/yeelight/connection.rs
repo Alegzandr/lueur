@@ -13,9 +13,10 @@
 //!   rate limit** on this channel, which is what makes fluid ambilight possible.
 
 use super::protocol::{self, Effect};
-use crate::color::{BulbOutput, MAX_BRIGHT, MIN_BRIGHT, Rgb};
+use crate::color::{BulbOutput, Rgb};
+use crate::device::common::{bright_needs_update, ipv4, local_ip_toward};
 use std::io::{self, Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -63,11 +64,6 @@ impl YeelightControl {
         self.send_line(&protocol::set_music(next_id(), true, host, port))
     }
 
-    /// Disable music mode (bulb returns to normal rate-limited control).
-    pub fn disable_music(&mut self) -> io::Result<()> {
-        self.send_line(&protocol::set_music(next_id(), false, "", 0))
-    }
-
     /// Read and discard any pending response bytes (best-effort).
     pub fn drain(&mut self) {
         let mut buf = [0u8; 1024];
@@ -79,8 +75,6 @@ impl YeelightControl {
 /// buffered, unthrottled TCP send.
 pub struct MusicConnection {
     stream: TcpStream,
-    ip: String,
-    port: u16,
     sent: Sent,
 }
 
@@ -137,7 +131,7 @@ impl MusicConnection {
         let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))?;
         let local_port = listener.local_addr()?.port();
 
-        let local_ip = local_ip_toward(ip, port)?;
+        let local_ip = local_ip_toward(ipv4(ip)?)?.to_string();
 
         // Tell the bulb to connect back to us.
         let mut control = YeelightControl::connect(ip, port, handshake_timeout)?;
@@ -169,26 +163,8 @@ impl MusicConnection {
 
         Ok(Self {
             stream,
-            ip: ip.to_string(),
-            port,
             sent: Sent::default(),
         })
-    }
-
-    pub fn ip(&self) -> &str {
-        &self.ip
-    }
-
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-
-    /// Push a colour with the given effect. On the music channel this is not rate
-    /// limited, so it can be called every frame.
-    pub fn set_rgb(&mut self, color: Rgb, effect: Effect, duration_ms: u32) -> io::Result<()> {
-        let line = protocol::set_rgb(next_id(), color, effect, duration_ms);
-        self.sent = Sent::default();
-        self.stream.write_all(line.as_bytes())
     }
 
     /// Set brightness on the music channel.
@@ -244,40 +220,6 @@ impl MusicConnection {
     }
 }
 
-/// Smallest brightness change worth a command, in percentage points.
-///
-/// Brightness is derived from a frame average, so it jitters by a point or two
-/// even on still content. Without a deadband that jitter becomes a `set_bright`
-/// every frame, racing the `set_rgb` stream and visibly destabilising the bulb.
-/// A 1-point error is imperceptible; a command storm is not.
-pub const BRIGHT_DEADBAND: u8 = 2;
-
-/// Whether a brightness change is worth sending.
-fn bright_needs_update(last: Option<u8>, next: u8) -> bool {
-    match last {
-        None => true,
-        // Always honour the extremes: they are what "off-dark" and "full" look
-        // like, and a deadband must never leave the bulb stranded short of them.
-        Some(prev) => {
-            next != prev
-                && (next == MIN_BRIGHT
-                    || next == MAX_BRIGHT
-                    || prev.abs_diff(next) >= BRIGHT_DEADBAND)
-        }
-    }
-}
-
-/// Determine the local IPv4 address that routes toward `peer_ip`.
-///
-/// Trick: "connect" a UDP socket to the peer (no packets are actually sent for
-/// UDP) and read back the local address the OS selected. This picks the right
-/// interface on multi-homed machines without any external dependency.
-fn local_ip_toward(peer_ip: &str, peer_port: u16) -> io::Result<String> {
-    let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))?;
-    socket.connect(format!("{peer_ip}:{peer_port}"))?;
-    Ok(socket.local_addr()?.ip().to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,37 +270,5 @@ mod tests {
         // Same colour as before white, but the bulb is in CT mode now.
         let (_, mode, _) = sent.plan(color(RED, 50));
         assert_eq!(mode, Some(color(RED, 50)));
-    }
-
-    #[test]
-    fn first_brightness_always_sends() {
-        assert!(bright_needs_update(None, 50));
-    }
-
-    #[test]
-    fn identical_brightness_is_skipped() {
-        assert!(!bright_needs_update(Some(50), 50));
-    }
-
-    #[test]
-    fn single_point_jitter_is_absorbed() {
-        // The command storm this prevents is what destabilises the bulb.
-        assert!(!bright_needs_update(Some(50), 51));
-        assert!(!bright_needs_update(Some(50), 49));
-    }
-
-    #[test]
-    fn real_movement_gets_through() {
-        assert!(bright_needs_update(Some(50), 52));
-        assert!(bright_needs_update(Some(50), 48));
-        assert!(bright_needs_update(Some(50), 90));
-    }
-
-    #[test]
-    fn extremes_are_never_absorbed() {
-        // Drifting to 2 and stopping would leave the bulb visibly glowing when
-        // the scene is black; same story at the top of the range.
-        assert!(bright_needs_update(Some(2), MIN_BRIGHT));
-        assert!(bright_needs_update(Some(99), MAX_BRIGHT));
     }
 }

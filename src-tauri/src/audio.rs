@@ -7,7 +7,7 @@
 //! the room instead.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{SampleFormat, Stream};
+use cpal::{FromSample, SampleFormat, SizedSample, Stream, StreamConfig};
 use std::io;
 use std::sync::{Arc, Mutex};
 
@@ -49,60 +49,17 @@ impl AudioTap {
         let cap = sample_rate as usize;
         let buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::with_capacity(cap)));
 
-        fn sink<T: Copy>(
-            buffer: Arc<Mutex<Vec<f32>>>,
-            channels: usize,
-            cap: usize,
-            to_f32: impl Fn(T) -> f32,
-        ) -> impl FnMut(&[T], &cpal::InputCallbackInfo) {
-            move |data: &[T], _| {
-                let Ok(mut buf) = buffer.lock() else {
-                    return;
-                };
-                for frame in data.chunks(channels) {
-                    let sum: f32 = frame.iter().map(|&s| to_f32(s)).sum();
-                    buf.push(sum / frame.len() as f32);
-                }
-                if buf.len() > cap {
-                    let extra = buf.len() - cap;
-                    buf.drain(..extra);
-                }
-            }
-        }
-
-        let on_error = |e| eprintln!("lueur: audio: {e}");
+        let tap = Tap {
+            buffer: Arc::clone(&buffer),
+            channels,
+            cap,
+        };
         let stream_config = config.config();
         let stream = match config.sample_format() {
-            SampleFormat::F32 => device.build_input_stream(
-                &stream_config,
-                sink(Arc::clone(&buffer), channels, cap, |s: f32| s),
-                on_error,
-                None,
-            ),
-            SampleFormat::I16 => device.build_input_stream(
-                &stream_config,
-                sink(Arc::clone(&buffer), channels, cap, |s: i16| {
-                    f32::from(s) / 32768.0
-                }),
-                on_error,
-                None,
-            ),
-            SampleFormat::U16 => device.build_input_stream(
-                &stream_config,
-                sink(Arc::clone(&buffer), channels, cap, |s: u16| {
-                    (f32::from(s) - 32768.0) / 32768.0
-                }),
-                on_error,
-                None,
-            ),
-            SampleFormat::I32 => device.build_input_stream(
-                &stream_config,
-                sink(Arc::clone(&buffer), channels, cap, |s: i32| {
-                    s as f32 / 2_147_483_648.0
-                }),
-                on_error,
-                None,
-            ),
+            SampleFormat::F32 => tap.stream::<f32>(&device, &stream_config),
+            SampleFormat::I16 => tap.stream::<i16>(&device, &stream_config),
+            SampleFormat::U16 => tap.stream::<u16>(&device, &stream_config),
+            SampleFormat::I32 => tap.stream::<i32>(&device, &stream_config),
             other => return Err(err(format!("unsupported sample format {other}"))),
         }
         .map_err(err)?;
@@ -121,5 +78,50 @@ impl AudioTap {
             .lock()
             .map(|mut b| std::mem::take(&mut *b))
             .unwrap_or_default()
+    }
+}
+
+/// Where the capture callback mixes its samples down to.
+struct Tap {
+    buffer: Arc<Mutex<Vec<f32>>>,
+    channels: usize,
+    /// Most samples kept; the oldest go first.
+    cap: usize,
+}
+
+impl Tap {
+    /// An input stream of `T` samples feeding the buffer, mixed down to mono.
+    fn stream<T>(
+        self,
+        device: &cpal::Device,
+        config: &StreamConfig,
+    ) -> Result<Stream, cpal::BuildStreamError>
+    where
+        T: SizedSample,
+        f32: FromSample<T>,
+    {
+        let Tap {
+            buffer,
+            channels,
+            cap,
+        } = self;
+        device.build_input_stream(
+            config,
+            move |data: &[T], _: &cpal::InputCallbackInfo| {
+                let Ok(mut buf) = buffer.lock() else {
+                    return;
+                };
+                for frame in data.chunks(channels) {
+                    let sum: f32 = frame.iter().map(|&s| s.to_sample::<f32>()).sum();
+                    buf.push(sum / frame.len() as f32);
+                }
+                if buf.len() > cap {
+                    let extra = buf.len() - cap;
+                    buf.drain(..extra);
+                }
+            },
+            |e| eprintln!("lueur: audio: {e}"),
+            None,
+        )
     }
 }

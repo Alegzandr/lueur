@@ -9,12 +9,10 @@
     type Language,
     type MonitorInfo,
   } from "../types";
+  import { DETECTS_FULLSCREEN } from "../platform";
   import Row from "../ui/Row.svelte";
   import Switch from "../ui/Switch.svelte";
   import Segmented from "../ui/Segmented.svelte";
-
-  // Fullscreen can only be detected on Windows (see src-tauri/src/auto.rs).
-  const AUTO = typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent);
 
   let monitors = $state<MonitorInfo[]>([]);
   let version = $state("");
@@ -69,11 +67,11 @@
     <h1 class="page-title">{t("nav_settings")}</h1>
   </header>
 
-  {#if AUTO || monitors.length > 1}
+  {#if DETECTS_FULLSCREEN || monitors.length > 1}
     <section class="group">
       <div class="group-head"><h2 class="group-title">{t("mode_ambilight")}</h2></div>
       <div class="card rows">
-        {#if AUTO}
+        {#if DETECTS_FULLSCREEN}
           <Row label={t("auto_mode")} tip={t("auto_mode_tip")}>
             <Switch
               checked={c.behavior.auto_fullscreen}

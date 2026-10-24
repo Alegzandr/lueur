@@ -40,6 +40,11 @@ impl AppError {
     pub fn internal(d: impl std::fmt::Display) -> Self {
         AppError::new("internal").detail(d)
     }
+
+    /// A lock whose holder panicked.
+    pub fn poisoned() -> Self {
+        AppError::internal("lock poisoned")
+    }
 }
 
 impl std::fmt::Display for AppError {

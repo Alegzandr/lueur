@@ -3,8 +3,9 @@
 // change to the backend.
 
 import * as ipc from "./ipc";
-import { errorDetail, errorText, t, tn } from "./i18n";
-import { DEFAULT_STATE } from "./scenes";
+import { errorDetail, errorText, isBackendError, t, tn } from "./i18n";
+import { facing, rightAxis } from "./geometry";
+import { DEFAULT_STATE, type RgbTuple } from "./scenes";
 import {
   defaultConfig,
   type AppConfig,
@@ -15,6 +16,7 @@ import {
   type Light,
   type LightState,
   type Mode,
+  type SleepStatus,
   type TuyaLogin,
   type Vec2,
 } from "./types";
@@ -30,10 +32,13 @@ export interface Toast {
   action?: { label: string; run: () => void };
 }
 
+/** What the backend reports while nothing runs. */
+const idle = (): EffectStatus => ({ running: false, connected_lights: 0, mode: null, light_ids: [] });
+
 class AppState {
   view = $state<View>("lighting");
   config = $state<AppConfig>(defaultConfig());
-  status = $state<EffectStatus>({ running: false, connected_lights: 0, mode: null, light_ids: [] });
+  status = $state<EffectStatus>(idle());
   /** True while the effect is being started or stopped. */
   busy = $state(false);
   /** True once the backend config has arrived, so the UI does not flash the
@@ -59,6 +64,9 @@ class AppState {
 
   /** What the running effect was started with (see `topology`). */
   startedWith = $state<string | null>(null);
+
+  /** The sleep timer, if set, and when it was last heard of (to count down). */
+  sleep = $state<{ status: SleepStatus; at: number } | null>(null);
 
   /** Version installed in the background, applied at the next restart. */
   updateReady = $state<string | null>(null);
@@ -149,23 +157,30 @@ export async function persistNow(): Promise<void> {
   }
 }
 
+/** Fill in what a config from the backend or a file may lack: older configs
+ *  predate some interface fields, the light states and the shows. */
+function normalized(cfg: AppConfig): AppConfig {
+  const def = defaultConfig();
+  cfg.interface = { ...def.interface, ...cfg.interface };
+  cfg.states ??= {};
+  cfg.show ??= def.show;
+  return cfg;
+}
+
 let loaded = false;
 
 export async function bootstrap(): Promise<void> {
   if (loaded) return;
   loaded = true;
   try {
-    const cfg = await ipc.getConfig();
-    // Older configs predate some interface fields.
-    cfg.interface = { ...defaultConfig().interface, ...cfg.interface };
-    cfg.states ??= {};
-    cfg.show ??= defaultConfig().show;
+    const cfg = normalized(await ipc.getConfig());
     // Someone upgrading with a furnished room has arranged it already.
     if (cfg.room.lights.length > 0 && cfg.bindings.length > 0 && !cfg.interface.room_arranged) {
       cfg.interface.room_arranged = true;
     }
     app.config = cfg;
     app.status = await ipc.effectStatus();
+    sleepChanged(await ipc.sleepTimer());
     // Running already (autostart): it was started from the saved config.
     if (app.status.running) app.startedWith = topology();
   } catch (e) {
@@ -190,6 +205,13 @@ export async function refreshStatus(): Promise<void> {
 
 // --- Effect ---
 
+/** Start the ambilight or a show from the saved config. */
+async function start(mode: Mode): Promise<void> {
+  app.status = await ipc.startEffect(mode);
+  app.startedWith = topology();
+  if (app.status.connected_lights === 0) notify("error", t("started_silent"));
+}
+
 export async function toggleEffect(): Promise<void> {
   if (app.busy) return;
   app.busy = true;
@@ -198,12 +220,10 @@ export async function toggleEffect(): Promise<void> {
     if (app.status.running) {
       await ipc.stopEffect();
       await reloadStates();
-      app.status = { running: false, connected_lights: 0, mode: null, light_ids: [] };
+      app.status = idle();
       app.startedWith = null;
     } else {
-      app.status = await ipc.startEffect();
-      app.startedWith = topology();
-      if (app.status.connected_lights === 0) notify("error", t("started_silent"));
+      await start("ambilight");
     }
   } catch (e) {
     fail(e);
@@ -306,6 +326,8 @@ export function adjustLight(lightId: string, patch: Partial<LightState>): void {
   const next: LightState = { ...lightState(lightId), on: true, ...patch };
   edit((c) => {
     c.states = { ...c.states, [lightId]: next };
+    // The backend stops the natural light too.
+    c.natural = false;
   });
   void send(lightId, next);
 }
@@ -318,6 +340,7 @@ export async function reloadStates(): Promise<void> {
     await persistNow();
     const cfg = await ipc.getConfig();
     app.config.states = cfg.states ?? {};
+    app.config.natural = cfg.natural ?? false;
   } catch {
     /* the next change will catch up */
   }
@@ -340,6 +363,20 @@ export async function applyScene(id: string): Promise<void> {
   }
 }
 
+/** The sleep timer changed (here, from the tray, or it ran out). */
+export function sleepChanged(s: SleepStatus | null): void {
+  app.sleep = s && { status: s, at: Date.now() };
+}
+
+/** Set the sleep timer, or cancel it with null. */
+export async function setSleepTimer(minutes: number | null): Promise<void> {
+  try {
+    sleepChanged(await ipc.setSleepTimer(minutes));
+  } catch (e) {
+    fail(e);
+  }
+}
+
 /** Start the ambilight or a show; picking the one that runs stops it. */
 export async function chooseMode(mode: Mode): Promise<void> {
   if (app.busy || app.pending) return;
@@ -351,9 +388,7 @@ export async function chooseMode(mode: Mode): Promise<void> {
   app.busy = true;
   try {
     await persistNow();
-    app.status = await ipc.startEffect(mode);
-    app.startedWith = topology();
-    if (app.status.connected_lights === 0) notify("error", t("started_silent"));
+    await start(mode);
   } catch (e) {
     await refreshStatus();
     fail(e);
@@ -365,7 +400,7 @@ export async function chooseMode(mode: Mode): Promise<void> {
 
 // Warm white: an identify flash should read as "this one", never as a colour
 // the effect could have picked.
-const IDENTIFY_RGB: [number, number, number] = [255, 190, 120];
+const IDENTIFY_RGB: RgbTuple = [255, 190, 120];
 
 export async function identify(endpoint: Endpoint): Promise<void> {
   try {
@@ -387,9 +422,7 @@ export async function identifyLight(lightId: string): Promise<void> {
 /** The backend changed what only it writes (pairings, Tuya keys): reload. */
 async function reloadConfig(): Promise<void> {
   await persistNow();
-  const cfg = await ipc.getConfig();
-  cfg.interface = { ...defaultConfig().interface, ...cfg.interface };
-  app.config = cfg;
+  app.config = normalized(await ipc.getConfig());
 }
 
 /** Save the config to a file of the user's choosing. */
@@ -409,10 +442,7 @@ export async function importConfig(): Promise<void> {
     await persistNow();
     const cfg = await ipc.importConfig();
     if (!cfg) return;
-    cfg.interface = { ...defaultConfig().interface, ...cfg.interface };
-    cfg.states ??= {};
-    cfg.show ??= defaultConfig().show;
-    app.config = cfg;
+    app.config = normalized(cfg);
     notify("info", t("imported"));
     if (cfg.bindings.length > 0) void scan(3000, true);
   } catch (e) {
@@ -437,7 +467,7 @@ export async function pair(d: DiscoveredDevice): Promise<void> {
         await ipc.pairDevice($state.snapshot(d));
         break;
       } catch (e) {
-        const waiting = typeof e === "object" && e !== null && (e as { code?: string }).code === "pair_waiting";
+        const waiting = isBackendError(e) && e.code === "pair_waiting";
         if (!waiting || Date.now() > deadline) throw e;
         await sleep(1500);
       }
@@ -557,9 +587,8 @@ export function deviceName(d: DiscoveredDevice): string {
  */
 function freshPositions(count: number): Vec2[] {
   const s = app.config.room.screen;
-  const rad = (s.facing_deg * Math.PI) / 180;
-  const f = { x: Math.sin(rad), y: Math.cos(rad) };
-  const r = { x: f.y, y: -f.x };
+  const f = facing(s);
+  const r = rightAxis(s);
   const at = (u: number, depth: number): Vec2 => ({
     x: Math.round(Math.max(20, Math.min(980, s.center.x + r.x * u * s.width + f.x * depth))),
     y: Math.round(Math.max(20, Math.min(730, s.center.y + r.y * u * s.width + f.y * depth))),
@@ -658,7 +687,8 @@ export function removeLight(id: string): void {
   const index = app.config.room.lights.findIndex((l) => l.id === id);
   if (index < 0) return;
   const light = $state.snapshot(app.config.room.lights[index]);
-  const binding = bindingFor(id) ? $state.snapshot(bindingFor(id)!) : undefined;
+  const bound = bindingFor(id);
+  const binding = bound ? $state.snapshot(bound) : undefined;
   edit((c) => {
     c.room.lights.splice(index, 1);
     c.bindings = c.bindings.filter((x) => x.light_id !== id);
@@ -683,10 +713,16 @@ export function markRoomArranged(): void {
 
 let toastSeq = 0;
 
-export function notify(kind: Toast["kind"], msg: string, action?: Toast["action"]): void {
+/** Show a toast, keeping at most three. Errors and toasts with an action
+ *  stay longer, so there is time to read or act on them. */
+function toast(entry: Omit<Toast, "id">): void {
   const id = ++toastSeq;
-  app.toasts = [...app.toasts.slice(-2), { id, kind, msg, action }];
-  setTimeout(() => dismiss(id), kind === "error" || action ? 7000 : 3600);
+  app.toasts = [...app.toasts.slice(-2), { id, ...entry }];
+  setTimeout(() => dismiss(id), entry.kind === "error" || entry.action ? 7000 : 3600);
+}
+
+export function notify(kind: Toast["kind"], msg: string, action?: Toast["action"]): void {
+  toast({ kind, msg, action });
 }
 
 export function dismiss(id: number): void {
@@ -698,9 +734,6 @@ export function dismiss(id: number): void {
  * interface language; `fallback` words anything else (a frontend-only step).
  */
 export function fail(e: unknown, fallback?: "err_save" | "err_load" | "err_displays"): void {
-  const coded = typeof e === "object" && e !== null && "code" in e;
-  const msg = coded || !fallback ? errorText(e) : t(fallback);
-  const id = ++toastSeq;
-  app.toasts = [...app.toasts.slice(-2), { id, kind: "error", msg, detail: errorDetail(e) }];
-  setTimeout(() => dismiss(id), 7000);
+  const msg = isBackendError(e) || !fallback ? errorText(e) : t(fallback);
+  toast({ kind: "error", msg, detail: errorDetail(e) });
 }

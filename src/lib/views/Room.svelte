@@ -12,7 +12,16 @@
     renameLight,
     setLightEnabled,
   } from "../state.svelte";
-  import { describe, endpoints, facing, mapLight, EDGE_COLOR, EDGE_KIND, type Edge } from "../geometry";
+  import {
+    closestOnSegment,
+    describe,
+    endpoints,
+    facing,
+    mapLight,
+    EDGE_COLOR,
+    EDGE_KIND,
+    type Edge,
+  } from "../geometry";
   import { t, pct } from "../i18n";
   import { defaultConfig, type Vec2 } from "../types";
   import Icon from "../ui/Icon.svelte";
@@ -150,12 +159,7 @@
     let bestDist = Infinity;
     let bestPoint = p;
     for (let i = 0; i < w.length; i++) {
-      const a = w[i];
-      const b = w[(i + 1) % w.length];
-      const ab = sub(b, a);
-      const len2 = ab.x * ab.x + ab.y * ab.y || 1;
-      const t = Math.max(0, Math.min(1, ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / len2));
-      const q = { x: a.x + ab.x * t, y: a.y + ab.y * t };
+      const q = closestOnSegment(p, w[i], w[(i + 1) % w.length]);
       const dist = Math.hypot(p.x - q.x, p.y - q.y);
       if (dist < bestDist) {
         bestDist = dist;
@@ -319,20 +323,10 @@
   /** A light's name sits below it, or above when the light is just behind
    *  the screen, so names never sit across the screen. */
   function labelPos(p: Vec2): Vec2 {
-    const q = nearestOnScreen(p);
+    const q = closestOnSegment(p, ends.left, ends.right);
     const behind = Math.abs(p.x - q.x) < 70 * k && p.y < q.y && q.y - p.y < 120 * k;
     return behind ? { x: p.x, y: p.y - 16 * k } : { x: p.x, y: p.y + 24 * k };
   }
-
-  function nearestOnScreen(p: Vec2): Vec2 {
-    const a = ends.left;
-    const ab = sub(ends.right, a);
-    const len2 = ab.x * ab.x + ab.y * ab.y || 1;
-    const t = Math.max(0, Math.min(1, ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / len2));
-    return { x: a.x + ab.x * t, y: a.y + ab.y * t };
-  }
-
-
 
   const heightLabel = (v: number) =>
     t(v < 0.18 ? "h_floor" : v < 0.42 ? "h_low" : v < 0.58 ? "h_level" : v < 0.82 ? "h_high" : "h_ceiling");

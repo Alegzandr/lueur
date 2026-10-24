@@ -18,8 +18,10 @@ mod error;
 mod install;
 mod lights;
 mod manual;
+mod natural;
 mod paths;
 mod runner;
+mod sleep;
 mod state;
 mod tray;
 mod tuya;
@@ -32,6 +34,9 @@ use tauri_plugin_autostart::ManagerExt;
 
 /// Launch argument the OS autostart passes, so a login launch opens hidden.
 const MINIMIZED_ARG: &str = "--minimized";
+
+/// Label of the main window (see `tauri.conf.json`).
+pub(crate) const MAIN_WINDOW: &str = "main";
 
 /// Starts the tray, the window and the effect, once the startup update check
 /// is done.
@@ -46,11 +51,11 @@ pub(crate) fn start(app: &AppHandle) {
         eprintln!("lueur: tray: {e}");
     }
     auto::spawn(app);
+    natural::spawn(app);
 
     let behavior = app
         .state::<AppState>()
-        .config
-        .lock()
+        .lock_config()
         .map(|c| c.behavior)
         .unwrap_or_default();
 
@@ -109,7 +114,6 @@ pub fn run() {
             commands::tuya_login_start,
             commands::tuya_login_poll,
             commands::test_device,
-            commands::set_device_power,
             commands::set_light_power,
             commands::set_all_power,
             commands::set_light_state,
@@ -117,8 +121,9 @@ pub fn run() {
             commands::start_effect,
             commands::stop_effect,
             commands::effect_status,
+            commands::set_sleep_timer,
+            commands::sleep_timer,
             commands::set_run_on_startup,
-            commands::show_main_window,
             commands::set_ui_language,
             updater::update_progress,
             updater::update_ready,
@@ -137,13 +142,12 @@ pub fn run() {
             // Close-to-tray: hide instead of quitting when the user closes the
             // window and has tray-minimise enabled.
             if let WindowEvent::CloseRequested { api, .. } = event
-                && window.label() == "main"
+                && window.label() == MAIN_WINDOW
             {
                 let app = window.app_handle();
                 let minimize_to_tray = app
                     .state::<AppState>()
-                    .config
-                    .lock()
+                    .lock_config()
                     .map(|c| c.behavior.minimize_to_tray)
                     .unwrap_or(true);
                 if minimize_to_tray {

@@ -15,13 +15,14 @@
 use crate::capture::{self, MonitorInfo};
 use crate::devices;
 use crate::error::{AppError, AppResult};
-use crate::lights::{self, PowerResult, poisoned, power_one, unreachable, validate_ip};
+use crate::lights::{self, PowerResult, unreachable, validate_ip};
 use crate::runner::{LiveSettings, Mode};
+use crate::sleep::Status as SleepStatus;
 use crate::state::AppState;
 use crate::tuya_cloud::{self, CloudError};
 use lueur_core::color::Rgb;
 use lueur_core::config::AppConfig;
-use lueur_core::device::{self, DeviceKind, DiscoveredDevice, Endpoint, hue, nanoleaf};
+use lueur_core::device::{self, DeviceKind, DiscoveredDevice, Endpoint, hue, nanoleaf, tuya};
 use lueur_core::scene::LightState;
 use lueur_core::show::ShowKind;
 use std::io;
@@ -54,14 +55,20 @@ fn status(state: &AppState) -> EffectStatus {
     }
 }
 
+/// Run a blocking job (the network, a file dialog, a bulb handshake) off the
+/// async runtime's worker.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> AppResult<T> + Send + 'static,
+) -> AppResult<T> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(AppError::internal)?
+}
+
 /// Return the current configuration.
 #[tauri::command]
 pub fn get_config(state: State<AppState>) -> AppResult<AppConfig> {
-    state
-        .config
-        .lock()
-        .map(|c| c.clone())
-        .map_err(|_| poisoned())
+    Ok(state.lock_config()?.clone())
 }
 
 /// Replace and persist the configuration. If the effect is running, live-tunable
@@ -69,31 +76,34 @@ pub fn get_config(state: State<AppState>) -> AppResult<AppConfig> {
 ///
 /// Pairings are the backend's: they change behind the interface's back (a
 /// bridge paired, a Smart Life import), so the copy sent here is ignored, and
-/// Tuya bindings take their key from them.
+/// Tuya bindings take their key from them. So is whether the natural light
+/// runs: moods and lights set by hand switch it.
 #[tauri::command]
 pub fn save_config(app: AppHandle, state: State<AppState>, mut config: AppConfig) -> AppResult<()> {
     {
-        let mut guard = state.config.lock().map_err(|_| poisoned())?;
+        let mut guard = state.lock_config()?;
         config.pairings = guard.pairings.clone();
+        config.natural = guard.natural;
         refresh_tuya_keys(&mut config);
         *guard = config;
     }
-    state.persist()?;
-    push_live(&state)?;
-    // The tray greys out what needs a bulb.
-    crate::tray::refresh(&app);
-    Ok(())
+    applied(&app, &state)
 }
 
-/// Push live settings to a running effect (topology changes need a restart,
-/// which the UI performs explicitly).
-fn push_live(state: &AppState) -> AppResult<()> {
-    let cfg = state.config.lock().map_err(|_| poisoned())?;
-    if let Ok(guard) = state.effect.lock()
-        && let Some(handle) = guard.as_ref()
+/// The config was replaced: persist it, push the live-tunable settings to a
+/// running effect (topology changes need a restart, which the UI performs
+/// explicitly) and let the tray grey out what needs a bulb.
+fn applied(app: &AppHandle, state: &AppState) -> AppResult<()> {
+    state.persist()?;
     {
-        handle.update_live(LiveSettings::of(&cfg));
+        let cfg = state.lock_config()?;
+        if let Ok(guard) = state.effect.lock()
+            && let Some(handle) = guard.as_ref()
+        {
+            handle.update_live(LiveSettings::of(&cfg));
+        }
     }
+    crate::tray::refresh(app);
     Ok(())
 }
 
@@ -105,7 +115,7 @@ const IMPORT_MAX_BYTES: u64 = 4 * 1024 * 1024;
 /// A file dialog for config files, over the main window.
 fn config_dialog(app: &AppHandle) -> tauri_plugin_dialog::FileDialogBuilder<tauri::Wry> {
     let dialog = app.dialog().file().add_filter("JSON", &["json"]);
-    match app.get_webview_window("main") {
+    match app.get_webview_window(crate::MAIN_WINDOW) {
         Some(win) => dialog.set_parent(&win),
         None => dialog,
     }
@@ -116,8 +126,8 @@ fn config_dialog(app: &AppHandle) -> tauri_plugin_dialog::FileDialogBuilder<taur
 #[tauri::command]
 pub async fn export_config(app: AppHandle) -> AppResult<bool> {
     let json = {
-        let cfg = app.state::<AppState>();
-        let cfg = cfg.config.lock().map_err(|_| poisoned())?;
+        let state = app.state::<AppState>();
+        let cfg = state.lock_config()?;
         cfg.to_json().map_err(AppError::internal)?
     };
     blocking(move || {
@@ -172,14 +182,12 @@ pub async fn import_config(app: AppHandle) -> AppResult<Option<AppConfig>> {
 
     let state = app.state::<AppState>();
     {
-        let mut guard = state.config.lock().map_err(|_| poisoned())?;
+        let mut guard = state.lock_config()?;
         config.behavior.run_on_startup = guard.behavior.run_on_startup;
         refresh_tuya_keys(&mut config);
         *guard = config.clone();
     }
-    state.persist()?;
-    push_live(&state)?;
-    crate::tray::refresh(&app);
+    applied(&app, &state)?;
     Ok(Some(config))
 }
 
@@ -198,16 +206,14 @@ pub async fn discover_devices(
 ) -> AppResult<Vec<DiscoveredDevice>> {
     let ms = timeout_ms.unwrap_or(2500).clamp(500, 8000);
     let (pairings, bindings) = {
-        let cfg = state.config.lock().map_err(|_| poisoned())?;
+        let cfg = state.lock_config()?;
         (cfg.pairings.clone(), cfg.bindings.clone())
     };
-    // Discovery blocks on the network; run it off the async runtime's worker.
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking(move || {
         devices::discover(Duration::from_millis(ms), &pairings, &bindings)
             .map_err(|e| AppError::new("discovery_failed").detail(e))
     })
     .await
-    .map_err(AppError::internal)?
 }
 
 /// A credential a bridge or controller granted.
@@ -224,29 +230,33 @@ enum Granted {
 pub async fn pair_device(state: State<'_, AppState>, device: DiscoveredDevice) -> AppResult<()> {
     validate_ip(&device.ip)?;
     let family = device.kind.family();
-    let granted = tauri::async_runtime::spawn_blocking(move || match &device.kind {
-        DeviceKind::Hue { .. } => hue::pair(&device.ip).map(Granted::Hue),
-        DeviceKind::Nanoleaf { .. } => {
-            let id = device.id.strip_prefix("nanoleaf:").unwrap_or(&device.id);
-            nanoleaf::pair(&device.ip, device.port, id).map(Granted::Nanoleaf)
+    let granted = blocking(move || {
+        match &device.kind {
+            DeviceKind::Hue { .. } => hue::pair(&device.ip).map(Granted::Hue),
+            DeviceKind::Nanoleaf { .. } => {
+                let id = device
+                    .id
+                    .strip_prefix(nanoleaf::ID_PREFIX)
+                    .unwrap_or(&device.id);
+                nanoleaf::pair(&device.ip, device.port, id).map(Granted::Nanoleaf)
+            }
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "this device needs no pairing",
+            )),
         }
-        _ => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "this device needs no pairing",
-        )),
+        .map_err(|e| {
+            if e.kind() == io::ErrorKind::WouldBlock {
+                AppError::new("pair_waiting").subject(family)
+            } else {
+                AppError::new("pair_failed").detail(e)
+            }
+        })
     })
-    .await
-    .map_err(AppError::internal)?
-    .map_err(|e| {
-        if e.kind() == io::ErrorKind::WouldBlock {
-            AppError::new("pair_waiting").subject(family)
-        } else {
-            AppError::new("pair_failed").detail(e)
-        }
-    })?;
+    .await?;
 
     {
-        let mut cfg = state.config.lock().map_err(|_| poisoned())?;
+        let mut cfg = state.lock_config()?;
         let p = &mut cfg.pairings;
         match granted {
             Granted::Hue(b) => {
@@ -283,7 +293,7 @@ pub async fn tuya_login_start(user_code: String) -> AppResult<TuyaLogin> {
     if !tuya_cloud::valid_code(&user_code) {
         return Err(AppError::new("invalid_user_code"));
     }
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking(move || {
         let pending = tuya_cloud::start_login(&user_code).map_err(cloud_error)?;
         let svg = tuya_cloud::qr_svg(&pending.qr).ok_or_else(|| AppError::internal("QR"))?;
         Ok(TuyaLogin {
@@ -292,7 +302,6 @@ pub async fn tuya_login_start(user_code: String) -> AppResult<TuyaLogin> {
         })
     })
     .await
-    .map_err(AppError::internal)?
 }
 
 /// Check whether the QR code was scanned. `None` until it is; then the
@@ -306,7 +315,7 @@ pub async fn tuya_login_poll(
     if !tuya_cloud::valid_code(&token) || !tuya_cloud::valid_code(&user_code) {
         return Err(AppError::new("invalid_user_code"));
     }
-    let bulbs = tauri::async_runtime::spawn_blocking(move || {
+    let bulbs = blocking(move || {
         let Some(session) = tuya_cloud::poll_login(&token, &user_code).map_err(cloud_error)? else {
             return Ok(None);
         };
@@ -314,15 +323,14 @@ pub async fn tuya_login_poll(
         session.end();
         bulbs.map(Some).map_err(cloud_error)
     })
-    .await
-    .map_err(AppError::internal)??;
+    .await?;
     let Some(bulbs) = bulbs else {
         return Ok(None);
     };
 
     let count = bulbs.len();
     {
-        let mut cfg = state.config.lock().map_err(|_| poisoned())?;
+        let mut cfg = state.lock_config()?;
         let known = &mut cfg.pairings.tuya;
         known.retain(|k| !bulbs.iter().any(|b| b.id == k.id));
         known.extend(bulbs);
@@ -339,7 +347,7 @@ fn refresh_tuya_keys(cfg: &mut AppConfig) {
         bindings, pairings, ..
     } = cfg;
     for binding in bindings {
-        let Some(id) = binding.device_id.strip_prefix("tuya:") else {
+        let Some(id) = binding.device_id.strip_prefix(tuya::ID_PREFIX) else {
             continue;
         };
         if let (Some(fresh), DeviceKind::Tuya { key, dps, .. }) =
@@ -355,29 +363,10 @@ fn refresh_tuya_keys(cfg: &mut AppConfig) {
 #[tauri::command]
 pub async fn test_device(endpoint: Endpoint, r: u8, g: u8, b: u8) -> AppResult<()> {
     validate_ip(&endpoint.ip)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    blocking(move || {
         devices::identify(&endpoint, Rgb::new(r, g, b)).map_err(|e| unreachable(&endpoint.ip, e))
     })
     .await
-    .map_err(AppError::internal)?
-}
-
-/// Turn a single bulb on or off. Used by the per-light power button and by
-/// anything that knows a bulb but not a room light.
-#[tauri::command]
-pub async fn set_device_power(endpoint: Endpoint, on: bool) -> AppResult<()> {
-    tauri::async_runtime::spawn_blocking(move || power_one(&endpoint, on))
-        .await
-        .map_err(AppError::internal)?
-}
-
-/// Run a blocking light command off the async runtime's worker.
-async fn blocking<T: Send + 'static>(
-    f: impl FnOnce() -> AppResult<T> + Send + 'static,
-) -> AppResult<T> {
-    tauri::async_runtime::spawn_blocking(f)
-        .await
-        .map_err(AppError::internal)?
 }
 
 /// Turn the bulb bound to a room light on or off.
@@ -391,10 +380,16 @@ pub async fn set_light_power(app: AppHandle, light_id: String, on: bool) -> AppR
 
 /// Set a light by hand: on or off, brightness, white or colour. Called as a
 /// slider moves; the interface keeps at most one call per light in flight.
-/// The interface records the state in the config itself.
+/// The interface records the state in the config itself. A light set by hand
+/// no longer follows the natural light, nor do the others.
 #[tauri::command]
 pub async fn set_light_state(app: AppHandle, light_id: String, state: LightState) -> AppResult<()> {
-    blocking(move || lights::set_light(&app.state::<AppState>(), &light_id, state)).await
+    blocking(move || {
+        let s = app.state::<AppState>();
+        lights::set_natural(&s, false)?;
+        lights::set_light(&s, &light_id, state)
+    })
+    .await
 }
 
 /// Turn every bound bulb on or off at once. Off also stops the effect.
@@ -452,6 +447,19 @@ pub async fn stop_effect(app: AppHandle) -> AppResult<()> {
     Ok(())
 }
 
+/// Turn the lights off in `minutes` (1 to 240), or cancel the timer with
+/// null.
+#[tauri::command]
+pub fn set_sleep_timer(app: AppHandle, minutes: Option<u32>) -> AppResult<Option<SleepStatus>> {
+    crate::sleep::set(&app, minutes)
+}
+
+/// The sleep timer, if one is set.
+#[tauri::command]
+pub fn sleep_timer(state: State<AppState>) -> Option<SleepStatus> {
+    crate::sleep::status(&state)
+}
+
 /// Record the language the interface settled on, for the tray menu.
 #[tauri::command]
 pub fn set_ui_language(app: AppHandle, state: State<AppState>, lang: String) -> AppResult<()> {
@@ -459,7 +467,7 @@ pub fn set_ui_language(app: AppHandle, state: State<AppState>, lang: String) -> 
         "fr" => "fr",
         _ => "en",
     };
-    *state.ui_language.lock().map_err(|_| poisoned())? = lang.to_string();
+    *state.ui_language.lock().map_err(|_| AppError::poisoned())? = lang;
     crate::tray::refresh(&app);
     Ok(())
 }
@@ -476,28 +484,12 @@ pub fn effect_status(state: State<AppState>) -> AppResult<EffectStatus> {
 pub fn set_run_on_startup(app: AppHandle, state: State<AppState>, enabled: bool) -> AppResult<()> {
     use tauri_plugin_autostart::ManagerExt;
     let manager = app.autolaunch();
-    if enabled {
-        manager
-            .enable()
-            .map_err(|e| AppError::new("login_item_failed").detail(e))?;
+    let changed = if enabled {
+        manager.enable()
     } else {
-        manager
-            .disable()
-            .map_err(|e| AppError::new("login_item_failed").detail(e))?;
-    }
-    {
-        let mut cfg = state.config.lock().map_err(|_| poisoned())?;
-        cfg.behavior.run_on_startup = enabled;
-    }
+        manager.disable()
+    };
+    changed.map_err(|e| AppError::new("login_item_failed").detail(e))?;
+    state.lock_config()?.behavior.run_on_startup = enabled;
     state.persist()
-}
-
-/// Show and focus the main window (used by the tray "Open" action / frontend).
-#[tauri::command]
-pub fn show_main_window(app: AppHandle) -> AppResult<()> {
-    if let Some(win) = app.get_webview_window("main") {
-        win.show().map_err(AppError::internal)?;
-        win.set_focus().map_err(AppError::internal)?;
-    }
-    Ok(())
 }

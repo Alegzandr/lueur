@@ -8,7 +8,9 @@
 use crate::tuya;
 use lueur_core::color::Rgb;
 use lueur_core::config::DeviceBinding;
-use lueur_core::device::{self, DeviceKind, DiscoveredDevice, Endpoint, LightStream, Pairings};
+use lueur_core::device::{
+    self, DeviceKind, DiscoveredDevice, Endpoint, LightStream, Pairings, tuya::ID_PREFIX,
+};
 use std::collections::HashMap;
 use std::io;
 use std::time::Duration;
@@ -52,7 +54,7 @@ pub fn discover(
         .iter()
         .filter_map(|b| match &b.kind {
             DeviceKind::Tuya { version, .. } => Some((
-                b.device_id.strip_prefix("tuya:")?.to_string(),
+                b.device_id.strip_prefix(ID_PREFIX)?.to_string(),
                 (b.ip.clone(), version.clone()),
             )),
             _ => None,

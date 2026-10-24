@@ -236,11 +236,35 @@ fn open(sealed: &str, secret: &[u8]) -> Result<String> {
     String::from_utf8(plain).map_err(|_| bad("utf-8"))
 }
 
+/// The two verbs the device-sharing API uses.
+#[derive(Clone, Copy)]
+enum Method {
+    Get,
+    Post,
+}
+
+/// Add the signed headers and the sealed query to a request.
+fn signed<B>(
+    mut req: ureq::RequestBuilder<B>,
+    headers: &[(&str, &str)],
+    sign: &str,
+    query_enc: &str,
+) -> ureq::RequestBuilder<B> {
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    req = req.header("X-sign", sign);
+    if !query_enc.is_empty() {
+        req = req.query("encdata", query_enc);
+    }
+    req
+}
+
 impl Session {
     /// One signed, sealed request; returns the unsealed `result`.
     fn request(
         &self,
-        method: &str,
+        method: Method,
         path: &str,
         query: Option<Value>,
         body: Option<Value>,
@@ -284,32 +308,15 @@ impl Session {
         let url = format!("{}{path}", self.endpoint);
         let agent = agent();
         let resp = match method {
-            "POST" => {
-                let mut req = agent.post(&url);
-                for (k, v) in headers {
-                    req = req.header(k, v);
-                }
-                req = req.header("X-sign", &sign);
-                if !query_enc.is_empty() {
-                    req = req.query("encdata", &query_enc);
-                }
+            Method::Post => {
+                let req = signed(agent.post(&url), &headers, &sign, &query_enc);
                 if body_enc.is_empty() {
                     req.send_empty()
                 } else {
                     req.send_json(json!({ "encdata": body_enc }))
                 }
             }
-            _ => {
-                let mut req = agent.get(&url);
-                for (k, v) in headers {
-                    req = req.header(k, v);
-                }
-                req = req.header("X-sign", &sign);
-                if !query_enc.is_empty() {
-                    req = req.query("encdata", &query_enc);
-                }
-                req.call()
-            }
+            Method::Get => signed(agent.get(&url), &headers, &sign, &query_enc).call(),
         };
         let v = result_of(read_json(resp)?)?;
         match v.get("result") {
@@ -323,7 +330,7 @@ impl Session {
     }
 
     fn get(&self, path: &str, query: Option<Value>) -> Result<Value> {
-        self.request("GET", path, query, None)
+        self.request(Method::Get, path, query, None)
     }
 
     /// Every colour bulb in the user's homes that can be driven locally.
@@ -393,7 +400,12 @@ impl Session {
     /// End the session on Tuya's side; Lueur keeps no token.
     pub fn end(self) {
         let body = json!({ "accessToken": self.access_token, "terminalId": self.terminal_id });
-        let _ = self.request("POST", "/v1.0/m/token/terminal/expire", None, Some(body));
+        let _ = self.request(
+            Method::Post,
+            "/v1.0/m/token/terminal/expire",
+            None,
+            Some(body),
+        );
     }
 }
 

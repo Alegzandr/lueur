@@ -23,10 +23,6 @@ pub struct PowerResult {
     pub failures: Vec<String>,
 }
 
-pub fn poisoned() -> AppError {
-    AppError::internal("lock poisoned")
-}
-
 pub fn unreachable(ip: &str, e: impl std::fmt::Display) -> AppError {
     AppError::new("bulb_unreachable").subject(ip).detail(e)
 }
@@ -57,7 +53,7 @@ pub fn start(state: &AppState, mode: Mode) -> AppResult<usize> {
     stop_effect(state, false);
     state.manual.release_all();
     let config = {
-        let mut cfg = state.config.lock().map_err(|_| poisoned())?;
+        let mut cfg = state.lock_config()?;
         if let Mode::Show(kind) = mode {
             cfg.show.kind = kind;
         }
@@ -71,7 +67,7 @@ pub fn start(state: &AppState, mode: Mode) -> AppResult<usize> {
         Mode::Show(kind) => runner::start_show(&config, kind)?,
     };
     let connected = handle.connected_lights;
-    *state.effect.lock().map_err(|_| poisoned())? = Some(handle);
+    *state.effect.lock().map_err(|_| AppError::poisoned())? = Some(handle);
     Ok(connected)
 }
 
@@ -87,14 +83,15 @@ pub fn stop_effect(state: &AppState, restore: bool) {
     if !restore {
         return;
     }
-    let jobs: Vec<(DeviceBinding, LightState)> = match state.config.lock() {
-        Ok(cfg) => handle
-            .light_ids
-            .iter()
-            .filter_map(|id| Some((cfg.binding_for(id)?.clone(), *cfg.states.get(id)?)))
-            .collect(),
-        Err(_) => return,
+    let Ok(cfg) = state.lock_config() else {
+        return;
     };
+    let jobs: Vec<(DeviceBinding, LightState)> = handle
+        .light_ids
+        .iter()
+        .filter_map(|id| Some((cfg.binding_for(id)?.clone(), *cfg.states.get(id)?)))
+        .collect();
+    drop(cfg);
     std::thread::scope(|scope| {
         for (b, wish) in &jobs {
             scope.spawn(move || apply_one(state, b, *wish));
@@ -108,7 +105,7 @@ fn manual_binding(state: &AppState, light_id: &str) -> AppResult<DeviceBinding> 
     let driven = state
         .effect
         .lock()
-        .map_err(|_| poisoned())?
+        .map_err(|_| AppError::poisoned())?
         .as_ref()
         .is_some_and(|h| h.is_running() && h.light_ids.iter().any(|id| id == light_id));
     if driven {
@@ -118,7 +115,7 @@ fn manual_binding(state: &AppState, light_id: &str) -> AppResult<DeviceBinding> 
 }
 
 fn binding(state: &AppState, light_id: &str) -> AppResult<DeviceBinding> {
-    let cfg = state.config.lock().map_err(|_| poisoned())?;
+    let cfg = state.lock_config()?;
     let binding = cfg
         .binding_for(light_id)
         .cloned()
@@ -168,7 +165,7 @@ fn apply_many(
     // Each bulb with the name of the light it drives, which is what the
     // user calls it.
     let jobs: Vec<(DeviceBinding, String, LightState)> = {
-        let cfg = state.config.lock().map_err(|_| poisoned())?;
+        let cfg = state.lock_config()?;
         cfg.bindings
             .iter()
             .filter_map(|b| {
@@ -251,16 +248,81 @@ pub fn set_all_power(state: &AppState, on: bool) -> AppResult<PowerResult> {
 }
 
 /// Apply a built-in mood (by its id) to every light. A mood is a decision
-/// about the whole room, so whatever effect runs stops first.
+/// about the whole room, so whatever effect runs stops first. The natural
+/// light shows what suits the time now, and keeps following the day (see
+/// [`follow_natural`]).
 pub fn apply_scene(state: &AppState, id: &str) -> AppResult<PowerResult> {
-    let mood = scene::mood(id).ok_or_else(|| AppError::new("scene_missing"))?;
+    let wish = if id == scene::NATURAL {
+        crate::natural::now()
+    } else {
+        scene::mood(id)
+            .ok_or_else(|| AppError::new("scene_missing"))?
+            .state()
+    };
     crate::auto::user_took_over(state);
     stop_effect(state, false);
-    apply_many(state, |_| Some(mood.state()), false)
+    set_natural(state, id == scene::NATURAL)?;
+    apply_many(state, |_| Some(wish), false)
+}
+
+/// Turn the natural light on or off, without touching the lights.
+pub fn set_natural(state: &AppState, on: bool) -> AppResult<()> {
+    let mut cfg = state.lock_config()?;
+    if cfg.natural == on {
+        return Ok(());
+    }
+    cfg.natural = on;
+    drop(cfg);
+    state.persist()
+}
+
+/// Bring every light that is on, and free, to what the natural light shows
+/// now. Lights already there are left alone, so this is cheap to call
+/// often. `true` if any light was changed.
+pub fn follow_natural(state: &AppState, wish: LightState) -> AppResult<bool> {
+    let driven = driven_ids(state);
+    let behind: Vec<String> = {
+        let cfg = state.lock_config()?;
+        if !cfg.natural {
+            return Ok(false);
+        }
+        cfg.bindings
+            .iter()
+            .map(|b| &b.light_id)
+            .filter(|id| {
+                let now = cfg.states.get(*id).copied().unwrap_or_default();
+                now.on && now != wish && !driven.contains(id)
+            })
+            .cloned()
+            .collect()
+    };
+    if behind.is_empty() {
+        return Ok(false);
+    }
+    apply_many(
+        state,
+        |b| behind.contains(&b.light_id).then_some(wish),
+        false,
+    )?;
+    Ok(true)
+}
+
+/// The room lights the running effect drives.
+fn driven_ids(state: &AppState) -> Vec<String> {
+    state
+        .effect
+        .lock()
+        .ok()
+        .and_then(|g| {
+            g.as_ref()
+                .filter(|h| h.is_running())
+                .map(|h| h.light_ids.clone())
+        })
+        .unwrap_or_default()
 }
 
 /// Record what lights were set to, and persist it.
 fn remember(state: &AppState, f: impl FnOnce(&mut BTreeMap<String, LightState>)) -> AppResult<()> {
-    f(&mut state.config.lock().map_err(|_| poisoned())?.states);
+    f(&mut state.lock_config()?.states);
     state.persist()
 }

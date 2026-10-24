@@ -11,6 +11,7 @@
     isOn,
     lightState,
     setAllPower,
+    setSleepTimer,
     toggleEffect,
     toggleLightPower,
   } from "../state.svelte";
@@ -21,6 +22,7 @@
     MAX_KELVIN,
     MIN_KELVIN,
     MOODS,
+    NATURAL,
     PALETTE,
     SHOWS,
     WALLS,
@@ -30,8 +32,10 @@
     rgbOfHex,
     sameRgb,
     tintCss,
+    type RgbTuple,
   } from "../scenes";
   import { defaultConfig, type LightState, type Mode, type Rgb } from "../types";
+  import { DETECTS_FULLSCREEN } from "../platform";
   import Icon from "../ui/Icon.svelte";
   import Slider from "../ui/Slider.svelte";
   import Segmented from "../ui/Segmented.svelte";
@@ -39,8 +43,6 @@
   import RestartBanner from "../ui/RestartBanner.svelte";
 
   const DEF = defaultConfig();
-  // Fullscreen can only be detected on Windows (see src-tauri/src/auto.rs).
-  const AUTO = typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent);
 
   const lights = $derived(app.config.room.lights);
   const bound = $derived(app.config.bindings.length);
@@ -74,7 +76,7 @@
   // What each light was last given in the other mode, so switching between
   // White and Colour comes back to it rather than to a default.
   const lastKelvin: Record<string, number> = {};
-  const lastColour: Record<string, [number, number, number]> = {};
+  const lastColour: Record<string, RgbTuple> = {};
 
   function setTintMode(id: string, to: "white" | "color") {
     const tint = lightState(id).tint;
@@ -89,7 +91,7 @@
     }
   }
 
-  function setColour(id: string, [r, g, b]: [number, number, number]) {
+  function setColour(id: string, [r, g, b]: RgbTuple) {
     adjustLight(id, { tint: { mode: "color", r, g, b } });
   }
 
@@ -107,7 +109,9 @@
   const currentMood = $derived(
     live
       ? null
-      : (MOODS.find((m) =>
+      : app.config.natural
+        ? NATURAL
+        : (MOODS.find((m) =>
           app.config.bindings.every((b) =>
             same(app.config.states[b.light_id], {
               on: true,
@@ -116,6 +120,37 @@
             }),
           ),
         )?.id ?? null),
+  );
+
+  /** The natural light's swatch: its day, from night to noon and back. */
+  const naturalSwatch = `linear-gradient(135deg, ${[2200, 4000, 5500, 3000].map((k) => rgbCss(kelvinRgb(k))).join(", ")})`;
+
+  // --- Sleep timer ---
+
+  /** The timers offered, in minutes; the tray offers the same. */
+  const SLEEP_PRESETS = [15, 30, 60, 90];
+  const sleepOptions = $derived([
+    { value: "off", label: t("sleep_off") },
+    ...SLEEP_PRESETS.map((m) => ({ value: String(m), label: `${m} min` })),
+  ]);
+
+  let now = $state(Date.now());
+  $effect(() => {
+    if (!app.sleep) return;
+    const tick = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(tick);
+  });
+  /** Seconds until the lights go off. */
+  const sleepLeft = $derived(
+    // `now` may predate the timer until the next tick.
+    app.sleep ? Math.max(0, app.sleep.status.left - Math.max(0, now - app.sleep.at) / 1000) : null,
+  );
+  const sleepLabel = $derived(
+    sleepLeft === null
+      ? t("sleep_timer")
+      : sleepLeft <= 60
+        ? t("sleep_fading")
+        : t("sleep_left", { n: Math.ceil(sleepLeft / 60) }),
   );
 
   const sameWall = (a: Rgb, b: Rgb) => a.r === b.r && a.g === b.g && a.b === b.b;
@@ -176,7 +211,7 @@
           <span class="tile-text">
             <span class="tile-name">{t("mode_ambilight")}</span>
             <span class="tile-sub">
-              {AUTO && app.config.behavior.auto_fullscreen ? t("mode_ambilight_auto") : t("mode_ambilight_sub")}
+              {DETECTS_FULLSCREEN && app.config.behavior.auto_fullscreen ? t("mode_ambilight_auto") : t("mode_ambilight_sub")}
             </span>
           </span>
           {#if mode === "ambilight"}<span class="on-dot" aria-hidden="true"></span>{/if}
@@ -261,6 +296,19 @@
     <section class="group">
       <div class="group-head"><h2 class="group-title">{t("moods")}</h2></div>
       <div class="moods">
+        <button
+          class="mood"
+          class:active={currentMood === NATURAL}
+          class:pending={app.pending === NATURAL}
+          aria-pressed={currentMood === NATURAL}
+          title={t("mood_natural_tip")}
+          disabled={app.pending !== null}
+          onclick={() => applyScene(NATURAL)}
+        >
+          <span class="mood-dot" style="--c:{rgbCss(kelvinRgb(4000))};--a:1;background:{naturalSwatch}" aria-hidden="true"
+          ></span>
+          {t("mood_natural")}
+        </button>
         {#each MOODS as m (m.id)}
           <button
             class="mood"
@@ -278,6 +326,16 @@
             {t(`mood_${m.id}`)}
           </button>
         {/each}
+      </div>
+      <div class="card rows tune">
+        <Row label={sleepLabel} tip={t("sleep_timer_tip")}>
+          <Segmented
+            label={t("sleep_timer")}
+            value={app.sleep ? String(app.sleep.status.minutes) : "off"}
+            options={sleepOptions}
+            onchange={(v) => setSleepTimer(v === "off" ? null : +v)}
+          />
+        </Row>
       </div>
     </section>
   {/if}
@@ -635,7 +693,7 @@
   /* --- Moods --- */
   .moods {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: var(--s-2);
   }
   .mood {

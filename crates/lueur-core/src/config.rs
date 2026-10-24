@@ -103,12 +103,8 @@ pub struct BehaviorSettings {
     pub autostart_effect: bool,
     /// Start the ambilight when a game or video goes fullscreen, and stop it
     /// when that ends (Windows).
-    #[serde(default = "yes")]
+    #[serde(default = "crate::default_true")]
     pub auto_fullscreen: bool,
-}
-
-fn yes() -> bool {
-    true
 }
 
 impl Default for BehaviorSettings {
@@ -185,6 +181,10 @@ pub struct AppConfig {
     /// How the light shows (fade, candle, music) play.
     #[serde(default)]
     pub show: ShowSettings,
+    /// The lights follow the time of day (see [`crate::scene::natural_at`])
+    /// until something else is asked of them.
+    #[serde(default)]
+    pub natural: bool,
 }
 
 fn default_version() -> u32 {
@@ -205,6 +205,7 @@ impl Default for AppConfig {
             interface: InterfaceSettings::default(),
             states: BTreeMap::new(),
             show: ShowSettings::default(),
+            natural: false,
         }
     }
 }

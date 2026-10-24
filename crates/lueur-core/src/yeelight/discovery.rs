@@ -23,7 +23,7 @@ pub fn discover(timeout: Duration) -> std::io::Result<Vec<DiscoveredDevice>> {
     socket.set_multicast_loop_v4(true).ok();
 
     let msg = protocol::ssdp_search_message();
-    let target = SocketAddrV4::new(SSDP_ADDR.parse().unwrap(), SSDP_PORT);
+    let target = SocketAddrV4::new(SSDP_ADDR, SSDP_PORT);
 
     // Send the search a few times; UDP is lossy and bulbs can be slow to wake.
     for _ in 0..3 {

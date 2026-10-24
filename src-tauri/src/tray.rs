@@ -2,14 +2,15 @@
 //!
 //! The tray is how Lueur is used mid-game, and how the lights are switched
 //! without opening the window: the menu starts and stops the ambilight and
-//! the effects, applies the moods and turns every light on or off. Its
+//! the effects, applies the moods, sets the sleep timer and turns every
+//! light on or off. Its
 //! labels follow the interface language the frontend reports.
 
 use crate::error::AppResult;
 use crate::lights;
 use crate::runner::Mode;
 use crate::state::AppState;
-use lueur_core::scene::MOODS;
+use lueur_core::scene::{MOODS, NATURAL};
 use lueur_core::show::{SHOWS, ShowKind};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
@@ -25,6 +26,10 @@ pub const LIGHTS_CHANGED: &str = "lights-changed";
 const TRAY_ID: &str = "lueur-tray";
 const SCENE_PREFIX: &str = "scene:";
 const SHOW_PREFIX: &str = "show:";
+const SLEEP_PREFIX: &str = "sleep:";
+
+/// The sleep timers the tray offers, in minutes.
+const SLEEP_PRESETS: [u32; 4] = [15, 30, 60, 90];
 
 struct Labels {
     start: &'static str,
@@ -32,6 +37,8 @@ struct Labels {
     stop_show: &'static str,
     shows: &'static str,
     scenes: &'static str,
+    sleep: &'static str,
+    sleep_cancel: &'static str,
     all_on: &'static str,
     all_off: &'static str,
     open: &'static str,
@@ -48,6 +55,8 @@ fn labels(lang: &str) -> Labels {
             stop_show: "Arrêter l'effet",
             shows: "Effets",
             scenes: "Ambiances",
+            sleep: "Minuteur de sommeil",
+            sleep_cancel: "Annuler le minuteur",
             all_on: "Tout allumer",
             all_off: "Tout éteindre",
             open: "Ouvrir Lueur",
@@ -61,6 +70,8 @@ fn labels(lang: &str) -> Labels {
             stop_show: "Stop effect",
             shows: "Effects",
             scenes: "Moods",
+            sleep: "Sleep timer",
+            sleep_cancel: "Cancel timer",
             all_on: "All on",
             all_off: "All off",
             open: "Open Lueur",
@@ -79,6 +90,7 @@ fn name(lang: &str, id: &str) -> &'static str {
         ("fr", "reading") => "Lecture",
         ("fr", "relax") => "Détente",
         ("fr", "night") => "Veilleuse",
+        ("fr", "natural") => "Lumière naturelle",
         ("fr", "music") => "Musique",
         ("fr", "rainbow") => "Arc-en-ciel",
         ("fr", "sunset") => "Coucher de soleil",
@@ -88,6 +100,7 @@ fn name(lang: &str, id: &str) -> &'static str {
         (_, "reading") => "Reading",
         (_, "relax") => "Relax",
         (_, "night") => "Night light",
+        (_, "natural") => "Natural light",
         (_, "music") => "Music",
         (_, "rainbow") => "Rainbow",
         (_, "sunset") => "Sunset",
@@ -97,12 +110,8 @@ fn name(lang: &str, id: &str) -> &'static str {
     }
 }
 
-fn language(state: &AppState) -> String {
-    state
-        .ui_language
-        .lock()
-        .map(|l| l.clone())
-        .unwrap_or_default()
+fn language(state: &AppState) -> &'static str {
+    state.ui_language.lock().map_or("en", |l| *l)
 }
 
 /// What runs now, if anything.
@@ -115,13 +124,9 @@ fn running_mode(state: &AppState) -> Option<Mode> {
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let state = app.state::<AppState>();
     let lang = language(&state);
-    let l = labels(&lang);
+    let l = labels(lang);
     let running = running_mode(&state);
-    let has_lights = state
-        .config
-        .lock()
-        .map(|c| !c.bindings.is_empty())
-        .unwrap_or(false);
+    let has_lights = state.lock_config().is_ok_and(|c| !c.bindings.is_empty());
 
     let toggle_label = match running {
         None => l.start,
@@ -141,22 +146,53 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         shows.append(&CheckMenuItem::with_id(
             app,
             format!("{SHOW_PREFIX}{}", kind.id()),
-            name(&lang, kind.id()),
+            name(lang, kind.id()),
             true,
             running == Some(Mode::Show(kind)),
             None::<&str>,
         )?)?;
     }
+    let natural = state.lock_config().is_ok_and(|c| c.natural);
     let scenes = Submenu::with_id(app, "scenes", l.scenes, has_lights)?;
+    scenes.append(&CheckMenuItem::with_id(
+        app,
+        format!("{SCENE_PREFIX}{NATURAL}"),
+        name(lang, NATURAL),
+        true,
+        natural,
+        None::<&str>,
+    )?)?;
+    scenes.append(&PredefinedMenuItem::separator(app)?)?;
     for m in MOODS {
         scenes.append(&MenuItem::with_id(
             app,
             format!("{SCENE_PREFIX}{}", m.id),
-            name(&lang, m.id),
+            name(lang, m.id),
             true,
             None::<&str>,
         )?)?;
     }
+
+    let timer = crate::sleep::minutes(&state);
+    let sleep = Submenu::with_id(app, "sleep", l.sleep, has_lights)?;
+    for m in SLEEP_PRESETS {
+        sleep.append(&CheckMenuItem::with_id(
+            app,
+            format!("{SLEEP_PREFIX}{m}"),
+            format!("{m} min"),
+            true,
+            timer == Some(m),
+            None::<&str>,
+        )?)?;
+    }
+    sleep.append(&PredefinedMenuItem::separator(app)?)?;
+    sleep.append(&MenuItem::with_id(
+        app,
+        "sleep_cancel",
+        l.sleep_cancel,
+        timer.is_some(),
+        None::<&str>,
+    )?)?;
 
     let all_on = MenuItem::with_id(app, "all_on", l.all_on, has_lights, None::<&str>)?;
     let all_off = MenuItem::with_id(app, "all_off", l.all_off, has_lights, None::<&str>)?;
@@ -168,6 +204,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &toggle,
             &shows,
             &scenes,
+            &sleep,
             &PredefinedMenuItem::separator(app)?,
             &all_on,
             &all_off,
@@ -197,6 +234,9 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             }),
             "all_on" => in_background(app, |state| lights::set_all_power(state, true).map(drop)),
             "all_off" => in_background(app, |state| lights::set_all_power(state, false).map(drop)),
+            "sleep_cancel" => {
+                let _ = crate::sleep::set(app, None);
+            }
             "open" => focus_main(app),
             "quit" => {
                 if let Some(state) = app.try_state::<AppState>() {
@@ -210,6 +250,10 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     in_background(app, move |state| {
                         lights::apply_scene(state, &scene).map(drop)
                     });
+                } else if let Some(m) = id.strip_prefix(SLEEP_PREFIX).and_then(|m| m.parse().ok()) {
+                    // Picking the timer that runs cancels it, like its tick.
+                    let again = crate::sleep::minutes(&app.state::<AppState>()) == Some(m);
+                    let _ = crate::sleep::set(app, (!again).then_some(m));
                 } else if let Some(kind) = id.strip_prefix(SHOW_PREFIX).and_then(ShowKind::from_id)
                 {
                     in_background(app, move |state| {
@@ -244,7 +288,7 @@ pub fn refresh(app: &AppHandle) {
     let (Some(tray), Some(state)) = (app.tray_by_id(TRAY_ID), app.try_state::<AppState>()) else {
         return;
     };
-    let l = labels(&language(&state));
+    let l = labels(language(&state));
     if let Ok(menu) = build_menu(app) {
         let _ = tray.set_menu(Some(menu));
     }
@@ -269,7 +313,7 @@ fn in_background(app: &AppHandle, job: impl FnOnce(&AppState) -> AppResult<()> +
 
 /// Show and focus the main window.
 pub fn focus_main(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
+    if let Some(win) = app.get_webview_window(crate::MAIN_WINDOW) {
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();

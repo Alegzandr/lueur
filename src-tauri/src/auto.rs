@@ -70,10 +70,8 @@ fn watch(app: &AppHandle) {
         std::thread::sleep(POLL);
         let state = app.state::<AppState>();
         let enabled = state
-            .config
-            .lock()
-            .map(|c| c.behavior.auto_fullscreen && !c.bindings.is_empty())
-            .unwrap_or(false);
+            .lock_config()
+            .is_ok_and(|c| c.behavior.auto_fullscreen && !c.bindings.is_empty());
 
         if fullscreen() {
             last_seen = Some(Instant::now());

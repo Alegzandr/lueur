@@ -26,6 +26,14 @@ export function endpoints(screen: Screen): { left: Vec2; right: Vec2 } {
   };
 }
 
+/** The point of the segment from `a` to `b` closest to `p`. */
+export function closestOnSegment(p: Vec2, a: Vec2, b: Vec2): Vec2 {
+  const ab = { x: b.x - a.x, y: b.y - a.y };
+  const len2 = ab.x * ab.x + ab.y * ab.y || 1;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / len2));
+  return { x: a.x + ab.x * t, y: a.y + ab.y * t };
+}
+
 export type Edge = "left" | "right" | "center";
 
 export interface Mapping {

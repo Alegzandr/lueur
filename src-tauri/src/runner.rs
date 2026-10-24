@@ -423,7 +423,7 @@ fn run_ambilight(
                     break; // every bulb is gone; nothing left to do
                 }
             }
-            Err(_e) => {
+            Err(_) => {
                 // Transient capture hiccup (e.g. a display mode switch). Back off
                 // briefly and try again rather than tearing everything down.
                 std::thread::sleep(Duration::from_millis(50));

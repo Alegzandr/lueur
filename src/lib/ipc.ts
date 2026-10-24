@@ -14,6 +14,7 @@ import {
   type Mode,
   type MonitorInfo,
   type PowerResult,
+  type SleepStatus,
   type TuyaLogin,
 } from "./types";
 
@@ -63,6 +64,14 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
     throw new Error(`not running in Tauri; cannot call ${cmd}`);
   }
   return tauriInvoke<T>(cmd, args);
+}
+
+/** Listen to an event the shell emits (names from src-tauri: `tray.rs`,
+ *  `updater.rs`, `sleep.rs`). Resolves to the function that stops listening. */
+async function subscribe<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<T>(event, (e) => cb(e.payload));
 }
 
 export async function getConfig(): Promise<AppConfig> {
@@ -122,11 +131,6 @@ export async function testDevice(
   return invoke<void>("test_device", { endpoint, r, g, b });
 }
 
-/** Power one bulb on/off. */
-export async function setDevicePower(endpoint: Endpoint, on: boolean): Promise<void> {
-  if (!inTauri()) return;
-  return invoke<void>("set_device_power", { endpoint, on });
-}
 
 /** Pair with a Hue bridge or Nanoleaf controller. Rejects with
  *  `pair_waiting` until its button has been pressed. */
@@ -168,10 +172,8 @@ export async function applyScene(id: string): Promise<PowerResult> {
 }
 
 /** Called when the tray or automatic mode changed what the lights show. */
-export async function onLightsChanged(cb: () => void): Promise<() => void> {
-  if (!inTauri()) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen("lights-changed", () => cb());
+export function onLightsChanged(cb: () => void): Promise<() => void> {
+  return subscribe("lights-changed", () => cb());
 }
 
 /** Power every bound bulb on/off. Turning off also stops the effect. */
@@ -219,6 +221,32 @@ export async function effectStatus(): Promise<EffectStatus> {
   return invoke<EffectStatus>("effect_status");
 }
 
+// The browser preview keeps its own timer, so the control can be tried.
+let previewSleep: { minutes: number; until: number } | null = null;
+const previewSleepStatus = (): SleepStatus | null =>
+  previewSleep && { minutes: previewSleep.minutes, left: Math.max(0, Math.round((previewSleep.until - Date.now()) / 1000)) };
+
+/** Turn every light off in `minutes`, fading out over the last one, or
+ *  cancel the timer with null. */
+export async function setSleepTimer(minutes: number | null): Promise<SleepStatus | null> {
+  if (!inTauri()) {
+    previewSleep = minutes === null ? null : { minutes, until: Date.now() + minutes * 60_000 };
+    return previewSleepStatus();
+  }
+  return invoke<SleepStatus | null>("set_sleep_timer", { minutes });
+}
+
+export async function sleepTimer(): Promise<SleepStatus | null> {
+  if (!inTauri()) return previewSleepStatus();
+  return invoke<SleepStatus | null>("sleep_timer");
+}
+
+/** Called when the sleep timer is set, cancelled or runs out (from the
+ *  tray too). */
+export function onSleepChanged(cb: (s: SleepStatus | null) => void): Promise<() => void> {
+  return subscribe("sleep-changed", cb);
+}
+
 export async function setRunOnStartup(enabled: boolean): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>("set_run_on_startup", { enabled });
@@ -245,10 +273,8 @@ export async function setUiLanguage(lang: "en" | "fr"): Promise<void> {
 
 /** Called when the effect is started or stopped from the tray. The payload
  *  is an error message when a start failed. */
-export async function onEffectChanged(cb: (error: unknown) => void): Promise<() => void> {
-  if (!inTauri()) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen<unknown>("effect-changed", (e) => cb(e.payload));
+export function onEffectChanged(cb: (error: unknown) => void): Promise<() => void> {
+  return subscribe("effect-changed", cb);
 }
 
 /** The version installed in the background and waiting for a restart. */
@@ -258,10 +284,8 @@ export async function updateReady(): Promise<string | null> {
 }
 
 /** Called when an update has been installed in the background. */
-export async function onUpdateReady(cb: (version: string) => void): Promise<() => void> {
-  if (!inTauri()) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen<string>("update-ready", (e) => cb(e.payload));
+export function onUpdateReady(cb: (version: string) => void): Promise<() => void> {
+  return subscribe("update-ready", cb);
 }
 
 /** Restart into the installed update. */

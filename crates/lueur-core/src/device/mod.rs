@@ -120,12 +120,8 @@ pub struct DiscoveredDevice {
     pub kind: DeviceKind,
     /// False for a Hue bridge or Nanoleaf Lueur cannot drive yet:
     /// the interface offers pairing instead of adding it.
-    #[serde(default = "yes")]
+    #[serde(default = "crate::default_true")]
     pub paired: bool,
-}
-
-fn yes() -> bool {
-    true
 }
 
 impl DiscoveredDevice {
