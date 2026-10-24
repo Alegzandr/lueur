@@ -14,7 +14,7 @@ env:
 jobs:
   verify:
     name: Verify tag
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
@@ -61,7 +61,7 @@ jobs:
           - name: windows
             os: windows-latest
           - name: linux
-            os: ubuntu-22.04
+            os: ubuntu-24.04
           - name: macos
             os: macos-latest
     runs-on: ${{ matrix.os }}
@@ -123,7 +123,7 @@ jobs:
   sign:
     name: Sign updates
     needs: [verify, build]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.verify.outputs.version }}
     steps:
@@ -156,7 +156,7 @@ jobs:
   publish:
     name: Publish release
     needs: [verify, sign]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
