@@ -6,8 +6,8 @@
 //! colour-critical path is fully deterministic and unit-tested.
 
 use crate::color::{
-    BulbOutput, ColorAccumulator, ColorSmoother, MAX_KELVIN, MIN_BRIGHT, MIN_KELVIN, Rgb,
-    compensate_wall, compensate_wall_kelvin, saturate, saturation,
+    BulbOutput, ColorAccumulator, ColorSmoother, MAX_KELVIN, MIN_BRIGHT, MIN_KELVIN, Rgb, saturate,
+    saturation,
 };
 use crate::geometry::{LightMapping, SampleZone};
 use serde::{Deserialize, Serialize};
@@ -120,8 +120,10 @@ fn taper(d: f32) -> f32 {
 /// Runtime settings for the engine. These map directly onto the UI's sliders.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct EngineSettings {
-    /// Weight of each new frame in the temporal smoother (0..1). Higher =
-    /// snappier / lower perceived latency; lower = smoother / cosier.
+    /// Weight of each new frame in the temporal smoother (0..1), for frames
+    /// [`REFERENCE_FRAME`] apart; other frame rates get the same response
+    /// over time (see [`Ambilight::set_frame_time`]). Higher = snappier /
+    /// lower perceived latency; lower = smoother / cosier.
     pub smoothing: f32,
     /// Overall output brightness scale (0..1).
     pub brightness: f32,
@@ -143,14 +145,11 @@ pub struct EngineSettings {
     /// Colour temperature used by the white path, in Kelvin (1700..6500).
     #[serde(default = "default_white_kelvin")]
     pub white_kelvin: u16,
-    /// Colour of the walls the light bounces off, compensated for so the
-    /// room shows the screen's colours rather than the paint's.
-    #[serde(default = "default_wall")]
-    pub wall: Rgb,
-}
-
-fn default_wall() -> Rgb {
-    Rgb::WHITE
+    /// Older versions' wall colour, now the room's
+    /// ([`crate::geometry::Room::wall`]). Read once (see
+    /// [`crate::config::AppConfig::from_json`]), never written.
+    #[serde(default, rename = "wall", skip_serializing)]
+    pub(crate) legacy_wall: Option<Rgb>,
 }
 
 fn default_white_threshold() -> f32 {
@@ -171,7 +170,7 @@ impl Default for EngineSettings {
             black_threshold: 6,
             white_threshold: default_white_threshold(),
             white_kelvin: default_white_kelvin(),
-            wall: default_wall(),
+            legacy_wall: None,
         }
     }
 }
@@ -209,6 +208,18 @@ fn steadiness(prev: Option<Rgb>, next: Rgb) -> f32 {
     STILL_FACTOR + (1.0 - STILL_FACTOR) * x * x * (3.0 - 2.0 * x)
 }
 
+/// The frame interval, in seconds, that [`EngineSettings::smoothing`] is
+/// tuned for: the default 45 fps.
+pub const REFERENCE_FRAME: f32 = 1.0 / 45.0;
+
+/// The weight that, applied every `dt` seconds, moves a light as fast as
+/// `factor` applied every [`REFERENCE_FRAME`]. Without it the same setting
+/// reads twice as sluggish at half the frame rate.
+fn per_frame(factor: f32, dt: f32) -> f32 {
+    let f = factor.clamp(0.0, 1.0);
+    1.0 - (1.0 - f).powf(dt.max(0.0) / REFERENCE_FRAME)
+}
+
 /// How far a near-grey's leftover tint may move the white, in kelvin per
 /// unit of warmth (red over blue, relative to the peak).
 const TINT_KELVIN: f32 = 3500.0;
@@ -218,7 +229,8 @@ const TINT_DEADBAND: f32 = 0.05;
 /// The white for an achromatic colour: `kelvin`, nudged warmer or cooler by
 /// whatever tint the grey still carries, so a sepia flashback glows warm and
 /// a moonlit night cool rather than every grey becoming the same white.
-/// Rounded to 100 K so a steady scene is not re-sent for invisible changes.
+/// Rounded to [`MIRED_STEP`] so a steady scene is not re-sent for invisible
+/// changes.
 fn tinted_kelvin(color: Rgb, kelvin: u16) -> u16 {
     let peak = color.value();
     if peak == 0 {
@@ -226,9 +238,18 @@ fn tinted_kelvin(color: Rgb, kelvin: u16) -> u16 {
     }
     let warmth = (f32::from(color.r) - f32::from(color.b)) / f32::from(peak);
     let excess = (warmth.abs() - TINT_DEADBAND).max(0.0).copysign(warmth);
-    let k = f32::from(kelvin) - excess * TINT_KELVIN;
-    ((k / 100.0).round() * 100.0).clamp(f32::from(MIN_KELVIN), f32::from(MAX_KELVIN)) as u16
+    if excess == 0.0 {
+        return kelvin;
+    }
+    let k = (f32::from(kelvin) - excess * TINT_KELVIN).max(1.0);
+    let mired = ((1e6 / k / MIRED_STEP).round() * MIRED_STEP).max(MIRED_STEP);
+    (1e6 / mired).clamp(f32::from(MIN_KELVIN), f32::from(MAX_KELVIN)) as u16
 }
+
+/// The white's resolution, in mireds: about the smallest shift the eye can
+/// tell. Even steps in kelvin would not do: 100 K is a jump at 2000 K and
+/// barely anything at 6500 K.
+const MIRED_STEP: f32 = 5.0;
 
 /// Holds per-light smoothing state across frames.
 pub struct Ambilight {
@@ -240,6 +261,8 @@ pub struct Ambilight {
     /// What each light was last given, so a black frame can dim it without
     /// changing its colour.
     shown: Vec<Option<BulbOutput>>,
+    /// Seconds since the previous frame.
+    frame_time: f32,
 }
 
 impl Ambilight {
@@ -249,6 +272,15 @@ impl Ambilight {
             smoothers: vec![ColorSmoother::new(); light_count],
             in_white: vec![false; light_count],
             shown: vec![None; light_count],
+            frame_time: REFERENCE_FRAME,
+        }
+    }
+
+    /// Tell the engine how long it has been since the previous frame, so the
+    /// smoothing keeps the same pace in time whatever the frame rate.
+    pub fn set_frame_time(&mut self, seconds: f32) {
+        if seconds.is_finite() && seconds > 0.0 {
+            self.frame_time = seconds;
         }
     }
 
@@ -287,8 +319,9 @@ impl Ambilight {
         for (i, m) in mappings.iter().take(n).enumerate() {
             let raw = frame.average_zone(&m.zone, self.settings.sample_step);
             let steady = steadiness(self.smoothers[i].current(), raw);
+            let factor = self.settings.smoothing * m.responsiveness * steady;
             // Floor the factor above 0: a zero would freeze the light forever.
-            let smoothing = (self.settings.smoothing * m.responsiveness * steady).clamp(0.01, 1.0);
+            let smoothing = per_frame(factor, self.frame_time).clamp(0.01, 1.0);
             let smoothed = self.smoothers[i].push(raw, smoothing);
             let mut shaped = saturate(smoothed, self.settings.saturation);
             if self.settings.black_threshold > 0 && shaped.value() < self.settings.black_threshold {
@@ -314,7 +347,6 @@ impl Ambilight {
     pub fn process_outputs(&mut self, frame: &Frame, mappings: &[LightMapping]) -> Vec<BulbOutput> {
         let colors = self.process(frame, mappings);
         let brightness = self.settings.brightness;
-        let wall = self.settings.wall;
         let kelvin = self.settings.white_kelvin;
         let enter = self.settings.white_threshold.clamp(0.0, 1.0);
         let leave = (enter * WHITE_HYSTERESIS).min(1.0);
@@ -334,7 +366,7 @@ impl Ambilight {
                             bright: MIN_BRIGHT,
                         },
                         None => BulbOutput::White {
-                            kelvin: compensate_wall_kelvin(kelvin, wall),
+                            kelvin,
                             bright: MIN_BRIGHT,
                         },
                     };
@@ -354,9 +386,7 @@ impl Ambilight {
                     sat < enter
                 };
                 self.in_white[i] = white;
-                let kelvin = compensate_wall_kelvin(tinted_kelvin(color, kelvin), wall);
-                let out =
-                    BulbOutput::build(compensate_wall(color, wall), brightness, white, kelvin);
+                let out = BulbOutput::build(color, brightness, white, tinted_kelvin(color, kelvin));
                 self.shown[i] = Some(out);
                 out
             })
@@ -439,7 +469,7 @@ mod tests {
             black_threshold: 0,
             white_threshold: 0.0,
             white_kelvin: 4000,
-            wall: Rgb::WHITE,
+            legacy_wall: None,
         }
     }
 
@@ -533,7 +563,13 @@ mod tests {
             tinted_kelvin(Rgb::new(66, 74, 90), 4000) > 4500,
             "moonlight is cool"
         );
-        assert_eq!(tinted_kelvin(Rgb::new(90, 80, 66), 4000) % 100, 0);
+        // A one-unit wobble of the tint does not move the white.
+        assert_eq!(
+            tinted_kelvin(Rgb::new(90, 80, 66), 4000),
+            tinted_kelvin(Rgb::new(90, 80, 65), 4000)
+        );
+        // An untinted grey keeps the user's white exactly.
+        assert_eq!(tinted_kelvin(Rgb::new(80, 80, 80), 2700), 2700);
     }
 
     #[test]
@@ -584,6 +620,31 @@ mod tests {
         // A cut is followed at the full factor.
         let cut = split_frame((200, 100, 100), (200, 100, 100));
         assert_eq!(amb.process(&cut, &full())[0].r, 150);
+    }
+
+    #[test]
+    fn smoothing_keeps_its_pace_across_frame_rates() {
+        assert_eq!(per_frame(0.5, REFERENCE_FRAME), 0.5);
+        assert_eq!(per_frame(1.0, REFERENCE_FRAME / 3.0), 1.0);
+        // Two frames at double the rate land where one reference frame does.
+        let half = per_frame(0.5, REFERENCE_FRAME / 2.0);
+        assert!(((1.0 - half) * (1.0 - half) - 0.5).abs() < 1e-5, "{half}");
+
+        let settings = EngineSettings {
+            smoothing: 0.5,
+            ..passthrough()
+        };
+        let black = split_frame((0, 0, 0), (0, 0, 0));
+        let red = split_frame((200, 0, 0), (200, 0, 0));
+        let mut slow = Ambilight::new(1, settings);
+        let mut fast = Ambilight::new(1, settings);
+        fast.set_frame_time(REFERENCE_FRAME / 2.0);
+        slow.process(&black, &full());
+        fast.process(&black, &full());
+        let a = slow.process(&red, &full())[0].r;
+        fast.process(&red, &full());
+        let b = fast.process(&red, &full())[0].r;
+        assert!(a.abs_diff(b) <= 1, "{a} vs {b}");
     }
 
     #[test]

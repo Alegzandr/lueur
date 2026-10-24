@@ -120,24 +120,28 @@ fn validate_addresses(config: &AppConfig) -> AppResult<()> {
 ///
 /// A slider drag saves several times a second, so the disk write runs off
 /// the main thread, and the tray menu is only rebuilt when what it shows
-/// changed.
+/// changed. New wall colours are shown at once on the lights set by hand.
 #[tauri::command]
 pub async fn save_config(app: AppHandle, mut config: AppConfig) -> AppResult<()> {
     blocking(move || {
         let state = app.state::<AppState>();
-        let had_lights = {
+        let (had_lights, repainted) = {
             let mut guard = state.lock_config()?;
             let had_lights = !guard.bindings.is_empty();
+            let repainted = guard.room.wall != config.room.wall;
             config.pairings = guard.pairings.clone();
             config.natural = guard.natural;
             config.modes = guard.modes.clone();
             validate_addresses(&config)?;
             secrets::restore_bindings(&mut config, &guard.bindings);
             *guard = config;
-            had_lights
+            (had_lights, repainted)
         };
         let has_lights = !state.lock_config()?.bindings.is_empty();
         persist_and_go_live(&state)?;
+        if repainted {
+            lights::rewall(&state);
+        }
         if has_lights != had_lights {
             crate::tray::refresh(&app);
         }

@@ -91,14 +91,23 @@ export const SHOWS: { id: ShowKind; preview: string }[] = [
   { id: "music", preview: "linear-gradient(135deg, #ff0050, #7a00ff 55%, #0078ff)" },
   {
     id: "rainbow",
-    preview: "linear-gradient(135deg, #ff0000, #ff6e00, #ffd700, #00ff32, #00e1ff, #0046ff, #8c00ff, #ff00aa)",
+    preview: "linear-gradient(135deg, #ff7800, #ff3c14, #ff005a, #ff00c8, #8c00ff, #0046ff, #00c8ff, #00e6d2)",
   },
   { id: "sunset", preview: "linear-gradient(135deg, #ff8c0a, #ff550a 25%, #ff2d23 50%, #ff1e69 75%, #be1eb4)" },
   { id: "ocean", preview: "linear-gradient(135deg, #1423ff, #0069ff 35%, #00b9eb 70%, #00ebaf)" },
   { id: "candle", preview: "radial-gradient(circle at 50% 70%, #ffc46a, #ff982a 30%, #ff4e04 60%, #5a1c00)" },
 ];
 
-/** Common wall paints. Lueur compensates for the one picked. */
+/** The shows whose pace can be chosen (`has_speed` in show.rs). */
+export const PACED_SHOWS: ShowKind[] = ["rainbow", "sunset", "ocean"];
+
+/** How many times faster than its natural pace a show plays at `speed`
+ *  (`ShowSettings::pace` in show.rs). */
+export function showPace(speed: number): number {
+  return Math.pow(4, (Math.min(100, Math.max(1, speed)) - 50) / 50);
+}
+
+/** Common wall paints. Lueur corrects every light for the one picked. */
 export type WallId = "white" | "cream" | "beige" | "blue" | "green" | "pink";
 
 export const WALLS: { id: WallId; rgb: Rgb }[] = [

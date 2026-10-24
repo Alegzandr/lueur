@@ -34,6 +34,8 @@ export interface Room {
   walls: Vec2[];
   screen: Screen;
   lights: Light[];
+  /** Colour of the walls; every light is corrected for it. */
+  wall: Rgb;
 }
 
 /** Where a Tuya bulb keeps each setting (see lueur-core device/tuya.rs). */
@@ -118,8 +120,6 @@ export interface EngineSettings {
   black_threshold: number;
   white_threshold: number;
   white_kelvin: number;
-  /** Colour of the walls, compensated for. */
-  wall: Rgb;
 }
 
 export type Effect = "smooth" | "sudden";
@@ -155,6 +155,8 @@ export interface ShowSettings {
   kind: ShowKind;
   /** 1..=100 */
   bright: number;
+  /** 1..=100; 50 is each show's natural pace. */
+  speed: number;
 }
 
 export interface Rgb {
@@ -271,6 +273,7 @@ export function defaultConfig(): AppConfig {
       ],
       screen: { center: { x: 500, y: 160 }, width: 300, facing_deg: 0 },
       lights: [],
+      wall: { r: 255, g: 255, b: 255 },
     },
     bindings: [],
     pairings: { hue: [], nanoleaf: [], tuya: [] },
@@ -283,7 +286,6 @@ export function defaultConfig(): AppConfig {
       black_threshold: 6,
       white_threshold: 0.18,
       white_kelvin: 4000,
-      wall: { r: 255, g: 255, b: 255 },
     },
     transition: { effect: "smooth", duration_ms: 80 },
     behavior: {
@@ -294,7 +296,7 @@ export function defaultConfig(): AppConfig {
     },
     interface: { appearance: "system", language: "system", room_arranged: false },
     states: {},
-    show: { kind: "music", bright: 80 },
+    show: { kind: "music", bright: 80, speed: 50 },
     natural: false,
   };
 }

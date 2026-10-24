@@ -233,9 +233,15 @@ impl AppConfig {
     ///
     /// A config that asked older versions to start the ambilight on launch
     /// records it as the mode of every enabled light instead: the launch now
-    /// resumes each light's recorded mode.
+    /// resumes each light's recorded mode. The wall colour older versions
+    /// kept with the ambilight's settings moves to the room.
     pub fn from_json(s: &str) -> serde_json::Result<Self> {
         let mut cfg: AppConfig = serde_json::from_str(s)?;
+        if let Some(wall) = cfg.engine.legacy_wall.take()
+            && cfg.room.wall == crate::color::Rgb::WHITE
+        {
+            cfg.room.wall = wall;
+        }
         if std::mem::take(&mut cfg.behavior.legacy_autostart) && cfg.modes.is_empty() {
             cfg.modes = cfg
                 .room
@@ -380,6 +386,20 @@ mod tests {
         assert_eq!(cfg.modes.get("l1").map(String::as_str), Some("ambilight"));
         // The old setting is not written back.
         assert!(!cfg.to_json().unwrap().contains("autostart_effect"));
+    }
+
+    #[test]
+    fn the_wall_colour_moves_to_the_room() {
+        let json = r#"{ "engine": { "smoothing": 0.5, "brightness": 1, "saturation": 0,
+            "sample_step": 4, "black_threshold": 6, "wall": { "r": 250, "g": 240, "b": 215 } } }"#;
+        let cfg = AppConfig::from_json(json).unwrap();
+        assert_eq!(cfg.room.wall, crate::color::Rgb::new(250, 240, 215));
+        assert_eq!(cfg.engine.legacy_wall, None);
+        let saved = cfg.to_json().unwrap();
+        let back = AppConfig::from_json(&saved).unwrap();
+        assert_eq!(back.room.wall, cfg.room.wall);
+        // Written once, with the room.
+        assert_eq!(saved.matches("\"wall\"").count(), 1);
     }
 
     #[test]

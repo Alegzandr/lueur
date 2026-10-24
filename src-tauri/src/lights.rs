@@ -7,6 +7,7 @@ use crate::devices;
 use crate::error::{AppError, AppResult};
 use crate::runner::{self, Mode};
 use crate::state::AppState;
+use lueur_core::color::Rgb;
 use lueur_core::config::DeviceBinding;
 use lueur_core::device::{Endpoint, common};
 use lueur_core::scene::{self, LightState};
@@ -180,6 +181,7 @@ fn put_back(state: &AppState, ids: &[String], or_default: bool) {
     let Ok(cfg) = state.lock_config() else {
         return;
     };
+    let wall = cfg.room.wall;
     let jobs: Vec<(DeviceBinding, LightState)> = ids
         .iter()
         .filter_map(|id| {
@@ -195,7 +197,7 @@ fn put_back(state: &AppState, ids: &[String], or_default: bool) {
     drop(cfg);
     std::thread::scope(|scope| {
         for (b, wish) in &jobs {
-            scope.spawn(move || apply_one(state, b, *wish));
+            scope.spawn(move || apply_one(state, b, *wish, wall));
         }
     });
 }
@@ -365,12 +367,18 @@ fn binding(state: &AppState, light_id: &str) -> AppResult<DeviceBinding> {
     Ok(binding)
 }
 
-fn apply_one(state: &AppState, binding: &DeviceBinding, wish: LightState) -> AppResult<()> {
+/// Show `wish` on one light, corrected for the room's `wall`.
+fn apply_one(
+    state: &AppState,
+    binding: &DeviceBinding,
+    wish: LightState,
+    wall: Rgb,
+) -> AppResult<()> {
     let ep = binding.endpoint();
     if wish.on {
         state
             .manual
-            .set(&binding.light_id, &ep, wish.output())
+            .set(&binding.light_id, &ep, wish.output().on_wall(wall))
             .map_err(|e| unreachable(&ep.ip, e))
     } else {
         state.manual.release(&binding.light_id);
@@ -381,7 +389,8 @@ fn apply_one(state: &AppState, binding: &DeviceBinding, wish: LightState) -> App
 /// Show `wish` on one light.
 pub fn set_light(state: &AppState, light_id: &str, wish: LightState) -> AppResult<()> {
     let binding = manual_binding(state, light_id)?;
-    apply_one(state, &binding, wish.clamped())
+    let wall = state.lock_config()?.room.wall;
+    apply_one(state, &binding, wish.clamped(), wall)
 }
 
 /// Switch one light on or off, leaving its colour to the bulb. Allowed while
@@ -405,9 +414,10 @@ fn apply_many(
 ) -> AppResult<PowerResult> {
     // Each bulb with the name of the light it drives, which is what the
     // user calls it.
-    let jobs: Vec<(DeviceBinding, String, LightState)> = {
+    let (wall, jobs): (Rgb, Vec<(DeviceBinding, String, LightState)>) = {
         let cfg = state.lock_config()?;
-        cfg.bindings
+        let jobs = cfg
+            .bindings
             .iter()
             .filter_map(|b| {
                 let name = cfg
@@ -419,7 +429,8 @@ fn apply_many(
                     .unwrap_or_else(|| b.ip.clone());
                 Some((b.clone(), name, wish(b)?))
             })
-            .collect()
+            .collect();
+        (cfg.room.wall, jobs)
     };
     if jobs.is_empty() {
         return Err(AppError::new("no_bindings"));
@@ -436,7 +447,7 @@ fn apply_many(
                         state.manual.release(&b.light_id);
                         power_one(&b.endpoint(), w.on)
                     } else {
-                        apply_one(state, b, *w)
+                        apply_one(state, b, *w, wall)
                     }
                 })
             })
@@ -546,6 +557,23 @@ pub fn follow_natural(state: &AppState, wish: LightState) -> AppResult<bool> {
         false,
     )?;
     Ok(true)
+}
+
+/// The walls were repainted: show again, corrected for the new colour, what
+/// every light that is on and free was set to. Effects pick it up on their
+/// own (see [`runner::LiveSettings`]).
+pub fn rewall(state: &AppState) {
+    let driven = state.effects.driven_ids();
+    let ids: Vec<String> = match state.lock_config() {
+        Ok(cfg) => cfg
+            .states
+            .iter()
+            .filter(|(id, s)| s.on && !driven.contains(id))
+            .map(|(id, _)| id.clone())
+            .collect(),
+        Err(_) => return,
+    };
+    put_back(state, &ids, false);
 }
 
 /// Record what lights were set to, and persist it.

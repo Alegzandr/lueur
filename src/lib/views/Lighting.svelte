@@ -18,7 +18,7 @@
     toggleEffect,
     toggleLightPower,
   } from "../state.svelte";
-  import { t, pct } from "../i18n";
+  import { t, pct, times } from "../i18n";
   import { describe, mapLight } from "../geometry";
   import { applyFeel, currentFeel, FEEL_ORDER, type Feel } from "../presets";
   import {
@@ -28,17 +28,18 @@
     NATURAL,
     PALETTE,
     PALETTE_NAMES,
+    PACED_SHOWS,
     SHOWS,
-    WALLS,
     hexOf,
     kelvinRgb,
     rgbCss,
     rgbOfHex,
     sameRgb,
+    showPace,
     tintCss,
     type RgbTuple,
   } from "../scenes";
-  import { defaultConfig, type LightState, type Mode, type Rgb } from "../types";
+  import { defaultConfig, type LightState, type Mode } from "../types";
   import { DETECTS_FULLSCREEN } from "../platform";
   import Icon from "../ui/Icon.svelte";
   import Slider from "../ui/Slider.svelte";
@@ -54,6 +55,7 @@
   const setupDone = $derived(bound > 0 && arranged);
   const live = $derived(app.status.running);
   const showPlaying = $derived(app.status.groups.some((g) => g.mode !== "ambilight"));
+  const pacedPlaying = $derived(app.status.groups.some((g) => (PACED_SHOWS as Mode[]).includes(g.mode)));
 
   const feelOptions = $derived(
     FEEL_ORDER.map((f) => ({ value: f, label: t(`feel_${f}`), title: t(`feel_${f}_tip`) })),
@@ -165,30 +167,6 @@
         ? t("sleep_fading")
         : t("sleep_left", { n: Math.ceil(sleepLeft / 60) }),
   );
-
-  const sameWall = (a: Rgb, b: Rgb) => a.r === b.r && a.g === b.g && a.b === b.b;
-  const wallIndex = $derived(Math.max(0, WALLS.findIndex((w) => sameWall(app.config.engine.wall, w.rgb))));
-
-  /** The wall swatches are a radio group: the arrows move the choice. */
-  function onWallKey(e: KeyboardEvent & { currentTarget: HTMLElement }) {
-    const last = WALLS.length - 1;
-    const i = wallIndex;
-    const to =
-      e.key === "ArrowRight" || e.key === "ArrowDown"
-        ? (i === last ? 0 : i + 1)
-        : e.key === "ArrowLeft" || e.key === "ArrowUp"
-          ? (i === 0 ? last : i - 1)
-          : e.key === "Home"
-            ? 0
-            : e.key === "End"
-              ? last
-              : -1;
-    if (to < 0) return;
-    e.preventDefault();
-    const w = WALLS[to];
-    edit((c) => (c.engine.wall = { ...w.rgb }));
-    e.currentTarget.querySelectorAll<HTMLButtonElement>("button")[to]?.focus();
-  }
 </script>
 
 <div class="page">
@@ -292,24 +270,6 @@
               onchange={(f: Feel) => edit((c) => applyFeel(c, f))}
             />
           </Row>
-          <Row label={t("walls")} tip={t("walls_tip")}>
-            <div class="walls" role="radiogroup" aria-label={t("walls")} tabindex="-1" onkeydown={onWallKey}>
-              {#each WALLS as w, i (w.id)}
-                {@const picked = sameWall(app.config.engine.wall, w.rgb)}
-                <button
-                  class="wall"
-                  class:picked
-                  role="radio"
-                  aria-checked={picked}
-                  tabindex={i === wallIndex ? 0 : -1}
-                  title={t(`wall_${w.id}`)}
-                  aria-label={t(`wall_${w.id}`)}
-                  style="--c:{rgbCss([w.rgb.r, w.rgb.g, w.rgb.b])}"
-                  onclick={() => edit((c) => (c.engine.wall = { ...w.rgb }))}
-                ></button>
-              {/each}
-            </div>
-          </Row>
         </div>
       {/if}
       {#if showPlaying}
@@ -326,6 +286,21 @@
               onchange={(v) => edit((c) => (c.show.bright = v))}
             />
           </Row>
+          {#if pacedPlaying}
+            <Row label={t("speed")}>
+              <Slider
+                label={t("speed")}
+                value={app.config.show.speed}
+                min={1}
+                max={100}
+                step={1}
+                def={DEF.show.speed}
+                format={(v) => times(showPace(v))}
+                ends={[t("speed_slow"), t("speed_fast")]}
+                onchange={(v) => edit((c) => (c.show.speed = v))}
+              />
+            </Row>
+          {/if}
         </div>
       {/if}
     </section>
@@ -722,28 +697,6 @@
   .tune {
     margin-top: var(--s-3);
   }
-  .walls {
-    display: flex;
-    gap: var(--s-2);
-  }
-  .wall {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    background: var(--c);
-    box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.18);
-    transition: transform var(--dur) var(--spring);
-  }
-  .wall:hover {
-    transform: scale(1.08);
-  }
-  .wall.picked {
-    box-shadow:
-      inset 0 0 0 1px oklch(0 0 0 / 0.18),
-      0 0 0 2px var(--surface),
-      0 0 0 3.5px var(--text);
-  }
-
   /* --- Moods --- */
   .moods {
     display: grid;

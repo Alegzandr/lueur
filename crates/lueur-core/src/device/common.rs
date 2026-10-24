@@ -19,6 +19,11 @@ use std::time::{Duration, Instant};
 /// bulb. A 1-point error is imperceptible; a command storm is not.
 pub const BRIGHT_DEADBAND: u8 = 2;
 
+/// Below this brightness every point is sent. Down there a point is a large
+/// share of the light (3% is three times 1%), so skipping one is a visible
+/// step in a dark scene, not an invisible error.
+pub const LOW_BRIGHT: u8 = 20;
+
 /// Whether a brightness change is worth sending.
 pub fn bright_needs_update(last: Option<u8>, next: u8) -> bool {
     match last {
@@ -29,6 +34,7 @@ pub fn bright_needs_update(last: Option<u8>, next: u8) -> bool {
             next != prev
                 && (next == MIN_BRIGHT
                     || next == MAX_BRIGHT
+                    || prev.min(next) < LOW_BRIGHT
                     || prev.abs_diff(next) >= BRIGHT_DEADBAND)
         }
     }
@@ -404,6 +410,13 @@ mod tests {
         assert!(!bright_needs_update(Some(50), 50));
         assert!(!bright_needs_update(Some(50), 51));
         assert!(!bright_needs_update(Some(50), 49));
+    }
+
+    #[test]
+    fn dark_scenes_move_point_by_point() {
+        assert!(bright_needs_update(Some(3), 4));
+        assert!(bright_needs_update(Some(20), 19));
+        assert!(!bright_needs_update(Some(20), 21));
     }
 
     #[test]

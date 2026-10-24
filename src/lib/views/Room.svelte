@@ -25,7 +25,8 @@
   } from "../geometry";
   import { t, pct } from "../i18n";
   import { MOD_KEY } from "../platform";
-  import { defaultConfig, type Vec2 } from "../types";
+  import { WALLS, rgbCss, rgbOfHex } from "../scenes";
+  import { defaultConfig, type Rgb, type Vec2 } from "../types";
   import Icon from "../ui/Icon.svelte";
   import Slider from "../ui/Slider.svelte";
   import Switch from "../ui/Switch.svelte";
@@ -42,6 +43,38 @@
   const SCREEN_MAX = 520;
 
   let svgEl = $state<SVGSVGElement>();
+
+  const sameWall = (a: Rgb, b: Rgb) => a.r === b.r && a.g === b.g && a.b === b.b;
+  /** The paint picked, or -1 for one of the user's own. */
+  const wallIndex = $derived(WALLS.findIndex((w) => sameWall(app.config.room.wall, w.rgb)));
+  const wallHex = $derived.by(() => {
+    const { r, g, b } = app.config.room.wall;
+    return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+  });
+
+  function setWall(rgb: Rgb) {
+    edit((c) => (c.room.wall = { ...rgb }));
+  }
+
+  /** The wall swatches are a radio group: the arrows move the choice. */
+  function onWallKey(e: KeyboardEvent & { currentTarget: HTMLElement }) {
+    const last = WALLS.length - 1;
+    const i = Math.max(0, wallIndex);
+    const to =
+      e.key === "ArrowRight" || e.key === "ArrowDown"
+        ? (i === last ? 0 : i + 1)
+        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+          ? (i === 0 ? last : i - 1)
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? last
+              : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    setWall(WALLS[to].rgb);
+    e.currentTarget.querySelectorAll<HTMLButtonElement>("button")[to]?.focus();
+  }
 
   // Selection: a light lives in shared state (other views link to it); the
   // screen and corners are only selectable here.
@@ -680,6 +713,43 @@
         <p class="empty">{t("no_lights")}</p>
       {/if}
 
+      <div class="paint">
+        <h2 class="side-title" id="walls-title">{t("walls")}</h2>
+        <div class="walls" role="radiogroup" aria-labelledby="walls-title" tabindex="-1" onkeydown={onWallKey}>
+          {#each WALLS as w, i (w.id)}
+            {@const picked = i === wallIndex}
+            <button
+              class="wall"
+              class:picked
+              role="radio"
+              aria-checked={picked}
+              tabindex={i === Math.max(0, wallIndex) ? 0 : -1}
+              title={t(`wall_${w.id}`)}
+              aria-label={t(`wall_${w.id}`)}
+              style="--c:{rgbCss([w.rgb.r, w.rgb.g, w.rgb.b])}"
+              onclick={() => setWall(w.rgb)}
+            ></button>
+          {/each}
+          <label
+            class="wall any"
+            class:picked={wallIndex < 0}
+            title={t("wall_custom")}
+            style={wallIndex < 0 ? `--c:${wallHex}` : undefined}
+          >
+            <input
+              type="color"
+              value={wallHex}
+              aria-label={t("wall_custom")}
+              oninput={(e) => {
+                const c = rgbOfHex(e.currentTarget.value);
+                if (c) setWall({ r: c[0], g: c[1], b: c[2] });
+              }}
+            />
+          </label>
+        </div>
+        <p class="paint-tip">{t("walls_tip")}</p>
+      </div>
+
       <div class="legend">
         {#each EDGES as edge}
           <span><i style="background:{EDGE_COLOR[edge]}"></i>{t(EDGE_KIND[edge])}</span>
@@ -1112,6 +1182,58 @@
     font-size: var(--t-sm);
     color: var(--text-3);
     margin: var(--s-2) 2px;
+  }
+  .paint {
+    margin-top: var(--s-5);
+    padding-top: var(--s-4);
+    border-top: 1px solid var(--line);
+  }
+  .walls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    padding: 2px;
+  }
+  .wall {
+    position: relative;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--c);
+    box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.18);
+    transition: transform var(--dur) var(--spring);
+  }
+  .wall:hover {
+    transform: scale(1.08);
+  }
+  .wall.picked {
+    box-shadow:
+      inset 0 0 0 1px oklch(0 0 0 / 0.18),
+      0 0 0 2px var(--surface),
+      0 0 0 3.5px var(--text);
+  }
+  /* The user's own paint: a spectrum until one is picked, then that paint. */
+  .wall.any {
+    background: var(--c, conic-gradient(red, yellow, lime, cyan, blue, magenta, red));
+    cursor: pointer;
+  }
+  .wall.any input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .wall.any:has(input:focus-visible) {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  .paint-tip {
+    font-size: var(--t-xs);
+    color: var(--text-3);
+    margin: var(--s-2) 2px 0;
+    line-height: 1.4;
   }
   .legend {
     display: flex;

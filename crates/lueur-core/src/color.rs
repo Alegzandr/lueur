@@ -251,8 +251,8 @@ const MIN_REFLECTANCE: f32 = 0.35;
 
 /// Undo the tint a coloured wall gives the light it bounces.
 ///
-/// Ambilight light reaches the eye off the wall behind the screen, which
-/// multiplies it by the wall's colour: a cream wall turns blue to grey-green.
+/// Light reaches the eye off the room's walls, which multiply it by their
+/// colour: a cream wall turns blue to grey-green.
 /// Dividing by the wall's (normalised) reflectance first, then scaling back to
 /// the original peak, lands the bounce on the colour the screen showed. White
 /// walls change nothing.
@@ -343,6 +343,21 @@ impl BulbOutput {
             }
         }
     }
+
+    /// What to ask the bulb for so that, bounced off `wall`, the room shows
+    /// this output (see [`compensate_wall`]). White walls change nothing.
+    pub fn on_wall(self, wall: Rgb) -> Self {
+        match self {
+            BulbOutput::Color { rgb, bright } => BulbOutput::Color {
+                rgb: compensate_wall(rgb, wall),
+                bright,
+            },
+            BulbOutput::White { kelvin, bright } => BulbOutput::White {
+                kelvin: compensate_wall_kelvin(kelvin, wall),
+                bright,
+            },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -372,6 +387,30 @@ mod tests {
         let red = Rgb::new(255, 0, 0);
         let out = compensate_wall(Rgb::new(200, 200, 200), red);
         assert!(out.r > 0 && out.g == 200, "{out:?}");
+    }
+
+    #[test]
+    fn outputs_are_corrected_for_the_wall() {
+        let cream = Rgb::new(250, 235, 200);
+        let white = BulbOutput::White {
+            kelvin: 4000,
+            bright: 50,
+        };
+        assert_eq!(white.on_wall(Rgb::WHITE), white);
+        match white.on_wall(cream) {
+            BulbOutput::White { kelvin, bright } => assert!(kelvin > 4000 && bright == 50),
+            other => panic!("{other:?}"),
+        }
+        let blue = BulbOutput::Color {
+            rgb: Rgb::new(0, 120, 255),
+            bright: 70,
+        };
+        match blue.on_wall(cream) {
+            BulbOutput::Color { rgb, bright } => {
+                assert!(rgb.r == 0 && rgb.b == 255 && bright == 70)
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

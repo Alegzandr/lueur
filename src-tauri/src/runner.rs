@@ -16,7 +16,7 @@ use crate::audio::AudioTap;
 use crate::capture::{FrameSource, ScreenSource, check_monitor_index};
 use crate::devices;
 use crate::error::{AppError, AppResult};
-use lueur_core::color::BulbOutput;
+use lueur_core::color::{BulbOutput, Rgb};
 use lueur_core::config::AppConfig;
 use lueur_core::device::LightStream;
 use lueur_core::engine::{Ambilight, EngineSettings};
@@ -36,6 +36,8 @@ pub struct LiveSettings {
     pub effect: Effect,
     pub duration_ms: u32,
     pub show: ShowSettings,
+    /// The room's wall colour, which every output is corrected for.
+    pub wall: Rgb,
 }
 
 impl LiveSettings {
@@ -45,6 +47,7 @@ impl LiveSettings {
             effect: config.transition.effect,
             duration_ms: config.transition.duration_ms,
             show: config.show,
+            wall: config.room.wall,
         }
     }
 }
@@ -406,11 +409,13 @@ impl Effects {
     }
 }
 
-/// Push one frame to every light still answering. False once none is.
+/// Push one frame to every light still answering, corrected for the walls.
+/// False once none is.
 fn push_all(
     lights: &mut [ConnectedLight],
     alive: &mut [bool],
     outputs: &[BulbOutput],
+    wall: Rgb,
     effect: Effect,
     duration_ms: u32,
 ) -> bool {
@@ -419,7 +424,12 @@ fn push_all(
             continue;
         };
         // A bulb that drops is retired rather than killing the whole effect.
-        if alive[i] && light.conn.push(output, effect, duration_ms).is_err() {
+        if alive[i]
+            && light
+                .conn
+                .push(output.on_wall(wall), effect, duration_ms)
+                .is_err()
+        {
             alive[i] = false;
         }
     }
@@ -474,7 +484,7 @@ fn run_show(
         // the show.
         let dt = last.elapsed().as_secs_f32().min(0.25);
         last = Instant::now();
-        let Ok(settings) = live.lock().map(|g| g.show) else {
+        let Ok((settings, wall)) = live.lock().map(|g| (g.show, g.wall)) else {
             break;
         };
         let levels = match &tap {
@@ -490,7 +500,7 @@ fn run_show(
         } else {
             glide
         };
-        if !push_all(lights, &mut alive, &outputs, effect, duration_ms) {
+        if !push_all(lights, &mut alive, &outputs, wall, effect, duration_ms) {
             break;
         }
     }
@@ -500,21 +510,23 @@ fn run_show(
 ///
 /// The user's transition setting is an upper bound on *smoothness*, not a
 /// promise the bulb can keep: at 60 fps there are only ~17 ms between commands.
-/// Anything longer is cut short by the next write, so we shorten it ourselves —
-/// and when even Yeelight's 30 ms floor doesn't fit, we drop to `Sudden`. The
-/// engine's own temporal smoothing is what makes the result look gradual;
-/// asking the bulb to also interpolate just makes the two fight.
+/// Anything longer is cut short by the next write and leaves the bulb chasing
+/// a target it never reaches, so we shorten it ourselves.
+///
+/// It is never shortened to nothing, though. A fade about as long as the gap
+/// between two commands is what turns a stream of steps into a continuous
+/// glide, so a budget below Yeelight's 30 ms floor gets the floor (overlapping
+/// the next frame by a few ms is harmless), and families that pace themselves
+/// further stretch it to their own interval (see `Throttle::glide`).
 fn pace(effect: Effect, duration_ms: u32, frame_budget: Duration) -> (Effect, u32) {
     if effect == Effect::Sudden {
         return (Effect::Sudden, 0);
     }
     let budget = frame_budget.as_millis().min(u32::MAX as u128) as u32;
-    let fitted = duration_ms.min(budget);
-    if fitted < lueur_core::yeelight::MIN_SMOOTH_DURATION_MS {
-        (Effect::Sudden, 0)
-    } else {
-        (Effect::Smooth, fitted)
-    }
+    let fitted = duration_ms
+        .min(budget)
+        .max(lueur_core::yeelight::MIN_SMOOTH_DURATION_MS);
+    (Effect::Smooth, fitted)
 }
 
 /// `sample_step` is tuned for a 1080p-wide capture. A wider frame takes a
@@ -538,6 +550,7 @@ fn run_ambilight(
     let mappings: Vec<LightMapping> = lights.iter().map(|l| l.mapping).collect();
     let mut alive = vec![true; lights.len()];
     let mut last_tick: Option<Instant> = None;
+    let mut last_frame: Option<Instant> = None;
 
     while !stop.load(Ordering::SeqCst) {
         // Cap bulb updates at the target rate. Whatever the screen presents
@@ -562,12 +575,19 @@ fn run_ambilight(
 
         match source.grab(frame_budget) {
             Ok(frame) => {
-                engine.set_settings(EngineSettings {
-                    sample_step: scaled_step(settings.engine.sample_step, frame.width),
-                    ..settings.engine
-                });
+                // The real gap, not the budget: a still screen delivers frames
+                // late, and the smoothing should catch up by the time that
+                // passed. Capped so a long stall is not one giant step.
+                let now = Instant::now();
+                let dt = last_frame.map_or(frame_budget, |t| now - t);
+                last_frame = Some(now);
+                engine.set_frame_time(dt.as_secs_f32().min(0.25));
+                let mut tuned = settings.engine;
+                tuned.sample_step = scaled_step(tuned.sample_step, frame.width);
+                engine.set_settings(tuned);
                 let outputs = engine.process_outputs(frame, &mappings);
-                if !push_all(lights, &mut alive, &outputs, effect, duration_ms) {
+                let wall = settings.wall;
+                if !push_all(lights, &mut alive, &outputs, wall, effect, duration_ms) {
                     break; // every bulb is gone; nothing left to do
                 }
             }
@@ -604,10 +624,17 @@ mod tests {
 
     #[test]
     fn transition_is_cut_to_the_frame_interval() {
-        // The reported bug: 300 ms fades issued every ~17 ms at 60 fps.
-        assert_eq!(pace(Effect::Smooth, 300, fps(60)), (Effect::Sudden, 0));
-        // 30 fps leaves 33 ms, which clears Yeelight's 30 ms floor.
+        // The reported bug: 300 ms fades re-issued every frame. At 30 fps
+        // each one gets the 33 ms until the next.
         assert_eq!(pace(Effect::Smooth, 300, fps(30)), (Effect::Smooth, 33));
+    }
+
+    #[test]
+    fn a_fast_frame_rate_still_glides() {
+        // Dropping to Sudden here is what made every family step at the
+        // default 45 fps: the fade they should stretch never reached them.
+        assert_eq!(pace(Effect::Smooth, 300, fps(60)), (Effect::Smooth, 30));
+        assert_eq!(pace(Effect::Smooth, 80, fps(45)), (Effect::Smooth, 30));
     }
 
     #[test]
@@ -620,12 +647,11 @@ mod tests {
     fn never_emits_a_smooth_below_the_protocol_floor() {
         for f in [15u64, 24, 30, 45, 60, 90, 120] {
             let (effect, ms) = pace(Effect::Smooth, 300, fps(f));
-            if effect == Effect::Smooth {
-                assert!(
-                    ms >= lueur_core::yeelight::MIN_SMOOTH_DURATION_MS,
-                    "{f} fps produced a {ms} ms smooth"
-                );
-            }
+            assert_eq!(effect, Effect::Smooth, "{f} fps");
+            assert!(
+                ms >= lueur_core::yeelight::MIN_SMOOTH_DURATION_MS,
+                "{f} fps produced a {ms} ms smooth"
+            );
         }
     }
 }

@@ -37,6 +37,9 @@ const en = {
   feel_balanced_tip: "Quick, without flicker.",
   feel_calm_tip: "Slow, soft changes. For films.",
   brightness: "Brightness",
+  speed: "Speed",
+  speed_slow: "Slow",
+  speed_fast: "Fast",
   intensity: "Colour",
   intensity_tip: "How far colours are pushed beyond the screen's.",
   lights: "Lights",
@@ -92,7 +95,8 @@ const en = {
   sleep_fading: "Fading out…",
   click_to_stop: "Click again to stop",
   walls: "Wall colour",
-  walls_tip: "Lueur corrects for it, so the light keeps the screen's colours.",
+  walls_tip: "Lueur corrects every light for it, so the room shows the colours asked for, not the paint's.",
+  wall_custom: "Other paint",
   wall_white: "White",
   wall_cream: "Cream",
   wall_beige: "Beige",
@@ -299,6 +303,9 @@ const fr: Record<Key, string> = {
   feel_balanced_tip: "Rapide, sans scintillement.",
   feel_calm_tip: "Changements lents et doux. Pour les films.",
   brightness: "Luminosité",
+  speed: "Vitesse",
+  speed_slow: "Lente",
+  speed_fast: "Rapide",
   intensity: "Couleur",
   intensity_tip: "À quel point les couleurs sont renforcées par rapport à l'écran.",
   lights: "Lumières",
@@ -354,7 +361,8 @@ const fr: Record<Key, string> = {
   sleep_fading: "Extinction en cours…",
   click_to_stop: "Cliquez à nouveau pour arrêter",
   walls: "Couleur des murs",
-  walls_tip: "Lueur la compense pour que la lumière garde les couleurs de l'écran.",
+  walls_tip: "Lueur en tient compte sur chaque lumière, pour que la pièce montre les couleurs voulues et non celle de la peinture.",
+  wall_custom: "Autre peinture",
   wall_white: "Blanc",
   wall_cream: "Crème",
   wall_beige: "Beige",
@@ -574,6 +582,12 @@ export function tn(key: CountKey, n: number): string {
 export function pct(v: number): string {
   const n = Math.round(v * 100);
   return lang() === "fr" ? `${n}${NB}%` : `${n}%`;
+}
+
+/** A multiplier: "×0,5" in French, "×0.5" in English, with no trailing zero. */
+export function times(v: number): string {
+  const n = String(Math.round(v * (v < 1 ? 100 : 10)) / (v < 1 ? 100 : 10));
+  return `×${lang() === "fr" ? n.replace(".", ",") : n}`;
 }
 
 /** An error from the backend: a code from src-tauri/src/error.rs. */

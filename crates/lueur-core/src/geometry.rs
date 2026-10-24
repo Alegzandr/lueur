@@ -24,6 +24,7 @@
 //! far lamps are dimmed and smoothed harder, because indirect light that snaps
 //! at 60 Hz from across the room reads as a bug, not as atmosphere.
 
+use crate::color::Rgb;
 use serde::{Deserialize, Serialize};
 
 /// A 2D point/vector in room coordinates. Units are arbitrary (the editor works
@@ -191,6 +192,15 @@ pub struct Room {
     pub screen: Screen,
     #[serde(default)]
     pub lights: Vec<Light>,
+    /// Colour of the walls the light bounces off. Every output is corrected
+    /// for it (see [`crate::color::BulbOutput::on_wall`]), so the room shows
+    /// the colour asked for rather than the paint's.
+    #[serde(default = "white")]
+    pub wall: Rgb,
+}
+
+fn white() -> Rgb {
+    Rgb::WHITE
 }
 
 impl Default for Room {
@@ -204,6 +214,7 @@ impl Default for Room {
             ],
             screen: Screen::default(),
             lights: Vec::new(),
+            wall: Rgb::WHITE,
         }
     }
 }

@@ -16,8 +16,8 @@ use crate::color::{BulbOutput, MAX_BRIGHT, MIN_BRIGHT, Rgb, full_chroma};
 use serde::{Deserialize, Serialize};
 use std::f32::consts::TAU;
 
-/// The light shows. Each is a finished recipe: picking one is the only
-/// decision, so there is nothing to tune and nothing to get wrong.
+/// The light shows. Each is a finished recipe: beyond how bright it plays,
+/// the only thing to tune is how fast the colour shows travel.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ShowKind {
@@ -66,15 +66,24 @@ impl ShowKind {
             _ => 40,
         }
     }
+
+    /// Whether the show's pace can be chosen. Music keeps time with the
+    /// track and a candle with a real flame; the others are free to drift.
+    pub fn has_speed(self) -> bool {
+        matches!(self, ShowKind::Rainbow | ShowKind::Sunset | ShowKind::Ocean)
+    }
 }
 
-/// The show the window and the tray start, and how bright it plays.
+/// The show the window and the tray start, how bright it plays, and how fast
+/// the colour shows move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ShowSettings {
     pub kind: ShowKind,
     /// 1..=100.
     pub bright: u8,
+    /// 1..=100; 50 is each show's natural pace.
+    pub speed: u8,
 }
 
 impl Default for ShowSettings {
@@ -82,6 +91,7 @@ impl Default for ShowSettings {
         ShowSettings {
             kind: ShowKind::default(),
             bright: 80,
+            speed: 50,
         }
     }
 }
@@ -90,20 +100,76 @@ impl ShowSettings {
     fn bright(&self) -> f32 {
         f32::from(self.bright.clamp(MIN_BRIGHT, MAX_BRIGHT)) / 100.0
     }
+
+    /// How many times faster than its natural pace a show plays: a quarter
+    /// at the slowest, four times at the fastest. Even steps along the
+    /// slider feel even, since the eye judges pace by ratio.
+    pub fn pace(&self) -> f32 {
+        let s = f32::from(self.speed.clamp(1, 100));
+        4f32.powf((s - 50.0) / 50.0)
+    }
 }
 
-/// Eight hues at even steps for the eye rather than for the maths: plain
-/// HSV races through red, orange and yellow and lingers in green.
-const RAINBOW: &[Rgb] = &[
-    Rgb::new(255, 0, 0),
-    Rgb::new(255, 110, 0),
-    Rgb::new(255, 215, 0),
-    Rgb::new(0, 255, 50),
-    Rgb::new(0, 225, 255),
-    Rgb::new(0, 70, 255),
-    Rgb::new(140, 0, 255),
-    Rgb::new(255, 0, 170),
+/// The rainbow's harmonies, from the warmest to the coolest: each one three
+/// colours that look good together, whether a single light plays the first
+/// or the room shares all three.
+///
+/// A light keeps its column from one harmony to the next, and no column ever
+/// moves far round the wheel, so the room glides from one association to the
+/// next without a muddy colour in between. The yellow-greens are left out on
+/// purpose: chartreuse and lime turn sickly on a bulb, so the journey turns
+/// back at the aurora rather than closing the wheel through them.
+const HARMONIES: &[[Rgb; 3]] = &[
+    // Embers: amber, red, gold.
+    [
+        Rgb::new(255, 120, 0),
+        Rgb::new(255, 15, 10),
+        Rgb::new(255, 185, 0),
+    ],
+    // Dusk: coral, raspberry, amber.
+    [
+        Rgb::new(255, 60, 20),
+        Rgb::new(255, 0, 100),
+        Rgb::new(255, 120, 0),
+    ],
+    // Peony: rose, fuchsia, coral.
+    [
+        Rgb::new(255, 0, 90),
+        Rgb::new(220, 0, 255),
+        Rgb::new(255, 50, 40),
+    ],
+    // Orchid: magenta, violet, rose.
+    [
+        Rgb::new(255, 0, 200),
+        Rgb::new(120, 0, 255),
+        Rgb::new(255, 0, 110),
+    ],
+    // Night: violet, deep blue, magenta.
+    [
+        Rgb::new(140, 0, 255),
+        Rgb::new(20, 50, 255),
+        Rgb::new(230, 0, 255),
+    ],
+    // Lagoon: blue, cyan, violet.
+    [
+        Rgb::new(0, 70, 255),
+        Rgb::new(0, 200, 255),
+        Rgb::new(110, 0, 255),
+    ],
+    // Aurora: turquoise, emerald, blue.
+    [
+        Rgb::new(0, 230, 210),
+        Rgb::new(0, 255, 120),
+        Rgb::new(0, 100, 255),
+    ],
 ];
+
+/// Which colour of a harmony light `i` plays. Two lights side by side never
+/// share one, and the first and last of a harmony, the furthest apart, are
+/// never neighbours.
+fn column(i: usize) -> usize {
+    [0, 1, 2, 1][i % 4]
+}
 
 /// From a low amber sun to the last rose and plum of the sky, and back.
 const SUNSET: &[Rgb] = &[
@@ -123,14 +189,44 @@ const OCEAN: &[Rgb] = &[
     Rgb::new(0, 235, 175),
 ];
 
-/// Hot, contrasting colours, ordered so each beat lands somewhere new.
-const PARTY: &[Rgb] = &[
-    Rgb::new(255, 0, 80),
-    Rgb::new(0, 120, 255),
-    Rgb::new(255, 150, 0),
-    Rgb::new(170, 0, 255),
-    Rgb::new(0, 220, 160),
+/// The music's harmonies: bolder than the rainbow's, three colours each that
+/// still sit well side by side. Every way round a harmony steers clear of the
+/// yellow-greens, so even its drift between beats stays clean.
+const PARTY: &[[Rgb; 3]] = &[
+    // Neon: hot pink, violet, cyan.
+    [
+        Rgb::new(255, 0, 110),
+        Rgb::new(130, 0, 255),
+        Rgb::new(0, 190, 255),
+    ],
+    // Fire: red, orange, magenta.
+    [
+        Rgb::new(255, 10, 0),
+        Rgb::new(255, 110, 0),
+        Rgb::new(255, 0, 160),
+    ],
+    // Synthwave: magenta, blue, orange.
+    [
+        Rgb::new(255, 0, 200),
+        Rgb::new(30, 40, 255),
+        Rgb::new(255, 90, 0),
+    ],
+    // Deep sea: blue, turquoise, violet.
+    [
+        Rgb::new(0, 60, 255),
+        Rgb::new(0, 230, 190),
+        Rgb::new(150, 0, 255),
+    ],
+    // Aurora: emerald, azure, violet.
+    [
+        Rgb::new(0, 255, 120),
+        Rgb::new(0, 170, 255),
+        Rgb::new(120, 0, 255),
+    ],
 ];
+
+/// How many beats the music stays on one harmony: two bars of four.
+const BEATS_PER_HARMONY: u32 = 8;
 
 /// A candle at its dimmest (reddest) and brightest (yellowest).
 const EMBER: Rgb = Rgb::new(255, 78, 4);
@@ -278,12 +374,23 @@ fn seed(light: usize, channel: u32) -> u32 {
     (light as u32).wrapping_mul(0x2c1b_3c6d) ^ channel.wrapping_mul(0x297a_2d39)
 }
 
-/// The rainbow: the wheel turning at an even pace, a full turn every 32 s.
-/// The room covers half the wheel at once, so neighbouring lights blend on
-/// the walls into a gradient instead of cancelling out.
-fn rainbow(t: f32, i: usize, n: usize, bright: f32) -> BulbOutput {
-    let pos = t / 4.0 + spread(i, n, RAINBOW.len() as f32 * 0.5);
-    let rgb = palette_at(RAINBOW, pos);
+/// The rainbow: the room travels from harmony to harmony, warm to cool and
+/// back, six seconds each. It lingers a little on every harmony, where its
+/// colours sit best together, but never stops, so nothing seems to stall.
+/// Neighbouring colours stay close enough on the wheel that their light still
+/// blends on the walls instead of cancelling out.
+fn rainbow(t: f32, i: usize, bright: f32) -> BulbOutput {
+    // Below 1, so the journey slows on each harmony without halting there.
+    const LINGER: f32 = 0.6;
+    let x = t / 6.0;
+    let x = x - LINGER * (TAU * x).sin() / TAU;
+    // There and back again, without passing through the yellow-greens.
+    let last = (HARMONIES.len() - 1) as f32;
+    let pos = x.rem_euclid(2.0 * last);
+    let pos = if pos > last { 2.0 * last - pos } else { pos };
+    let k = (pos.floor() as usize).min(HARMONIES.len() - 2);
+    let c = column(i);
+    let rgb = blend(HARMONIES[k][c], HARMONIES[k + 1][c], pos - k as f32);
     output(rgb, bright * even(rgb))
 }
 
@@ -538,15 +645,22 @@ impl Analyzer {
 /// Lights that dance: a beat flashes them and moves them on to the next
 /// colour, loudness sets how bright they burn in between.
 ///
+/// The colours always come from one harmony at a time: each beat passes them
+/// round its three colours, from light to light, and every two bars the room
+/// moves on to the next harmony. A beat changes colour outright rather than
+/// gliding, since it is sent sharp anyway and a glide would flash the colours
+/// in between.
+///
 /// Between beats the level stays well short of full, so even a loud,
 /// compressed track keeps a visible pulse. When nothing marks a beat (a
-/// quiet passage, speech, silence) the colours drift on their own so the
-/// room never freezes.
+/// quiet passage, speech, silence) the colours drift round their harmony on
+/// their own so the room never freezes.
 #[derive(Debug, Clone, Default)]
 pub struct Dance {
-    /// Palette position the lights are gliding towards.
+    /// Beats so far: they choose the harmony.
+    beats: u32,
+    /// Where the lights are round their harmony: a whole number on the beat.
     step: f32,
-    shown: f32,
     flash: f32,
     level: f32,
     /// Seconds since the last beat.
@@ -566,17 +680,16 @@ impl Dance {
         self.flash *= (-dt / 0.16).exp();
         self.accent = levels.beat;
         if levels.beat {
-            self.step = self.step.round() + 1.0;
+            self.beats = self.beats.wrapping_add(1);
+            self.step = (self.step.floor() + 1.0).rem_euclid(3.0);
             self.flash = self.flash.max(levels.strength.clamp(0.0, 1.0));
             self.quiet = 0.0;
         } else {
             self.quiet += dt;
             if self.quiet > 1.5 {
-                self.step += dt * 0.12;
+                self.step = (self.step + dt * 0.12).rem_euclid(3.0);
             }
         }
-        // Colour glides to the new step quickly.
-        self.shown += (self.step - self.shown) * (1.0 - (-dt / 0.07).exp());
         let tau = if levels.energy > self.level {
             0.04
         } else {
@@ -587,10 +700,11 @@ impl Dance {
         // Silence keeps a low glow rather than going dark.
         let base = 0.14 + 0.5 * self.level.clamp(0.0, 1.0).powf(1.6);
         let level = (base + (1.0 - base) * self.flash) * settings.bright();
+        let harmony = &PARTY[(self.beats / BEATS_PER_HARMONY) as usize % PARTY.len()];
         (0..n)
             .map(|i| {
-                let pos = self.shown + spread(i, n, PARTY.len() as f32).round();
-                output(palette_at(PARTY, pos), level)
+                let rgb = palette_at(harmony, self.step + column(i) as f32);
+                output(rgb, level * even(rgb))
             })
             .collect()
     }
@@ -624,13 +738,19 @@ impl Show {
 
     /// Advance by `dt` seconds. `levels` is what the music show listens to;
     /// the others ignore it.
+    ///
+    /// The colour shows run on their own clock, ticking at the chosen pace,
+    /// so turning the speed up or down mid-show changes how fast the colours
+    /// move from where they are rather than making them leap.
     pub fn frame(&mut self, settings: &ShowSettings, dt: f32, levels: Levels) -> Vec<BulbOutput> {
-        self.t += dt;
+        if self.kind.has_speed() {
+            self.t += dt * settings.pace();
+        }
         let (t, n, bright) = (self.t, self.lights, settings.bright());
         match self.kind {
             ShowKind::Music => self.dance.frame(settings, levels, dt, n),
             ShowKind::Candle => self.candle.frame(settings, dt),
-            ShowKind::Rainbow => (0..n).map(|i| rainbow(t, i, n, bright)).collect(),
+            ShowKind::Rainbow => (0..n).map(|i| rainbow(t, i, bright)).collect(),
             ShowKind::Sunset => (0..n).map(|i| sunset(t, i, n, bright)).collect(),
             ShowKind::Ocean => (0..n).map(|i| ocean(t, i, n, bright)).collect(),
         }
@@ -654,12 +774,20 @@ mod tests {
     }
 
     fn settings(kind: ShowKind) -> ShowSettings {
-        ShowSettings { kind, bright: 80 }
+        ShowSettings {
+            kind,
+            bright: 80,
+            speed: 50,
+        }
     }
 
     /// Play `kind` on `n` lights for `secs`, frame by frame.
     fn play(kind: ShowKind, n: usize, secs: f32) -> Vec<Vec<BulbOutput>> {
-        let s = settings(kind);
+        play_at(settings(kind), n, secs)
+    }
+
+    fn play_at(s: ShowSettings, n: usize, secs: f32) -> Vec<Vec<BulbOutput>> {
+        let kind = s.kind;
         let mut show = Show::new(kind, n);
         let dt = kind.frame_ms() as f32 / 1000.0;
         (0..(secs / dt) as usize)
@@ -732,13 +860,152 @@ mod tests {
     }
 
     #[test]
-    fn the_rainbow_spreads_the_room_over_half_the_wheel() {
+    fn the_pace_runs_from_a_quarter_to_four_times() {
+        let at = |speed| {
+            ShowSettings {
+                speed,
+                ..settings(ShowKind::Rainbow)
+            }
+            .pace()
+        };
+        assert!((at(50) - 1.0).abs() < 1e-6);
+        assert!((at(100) - 4.0).abs() < 1e-4);
+        assert!(at(1) > 0.24 && at(1) < 0.26);
+        assert_eq!(at(0), at(1));
+    }
+
+    #[test]
+    fn a_faster_show_covers_more_ground() {
+        // At double pace, the rainbow is where it would be twice as late.
+        let fast = ShowSettings {
+            speed: 75,
+            ..settings(ShowKind::Rainbow)
+        };
+        let quick = play_at(fast, 1, 5.0);
+        let slow = play(ShowKind::Rainbow, 1, 10.0);
+        let (a, _, _) = hsv(rgb(quick[quick.len() - 1][0]));
+        let (b, _, _) = hsv(rgb(slow[slow.len() - 1][0]));
+        assert!((a - b).abs() < 3.0, "{a}° vs {b}°");
+    }
+
+    #[test]
+    fn the_fastest_shows_still_flow() {
+        for kind in [ShowKind::Rainbow, ShowKind::Sunset, ShowKind::Ocean] {
+            let s = ShowSettings {
+                speed: 100,
+                ..settings(kind)
+            };
+            for w in play_at(s, 3, 60.0).windows(2) {
+                for (a, b) in w[0].iter().zip(&w[1]) {
+                    assert!(
+                        jump(rgb(*a), rgb(*b)) <= 40,
+                        "{kind:?} jumps: {a:?} -> {b:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// How far apart two colours are round the wheel, in degrees.
+    fn gap(a: Rgb, b: Rgb) -> f32 {
+        let ((a, _, _), (b, _, _)) = (hsv(a), hsv(b));
+        (a - b).abs().min(360.0 - (a - b).abs())
+    }
+
+    /// Chartreuse and lime: the hues that look sickly on a bulb.
+    fn sickly(c: Rgb) -> bool {
+        (65.0..=125.0).contains(&hsv(c).0)
+    }
+
+    #[test]
+    fn the_rainbow_pairs_colours_that_go_together() {
         // Distinct colours, never opposite ones that would cancel on the wall.
-        for frame in play(ShowKind::Rainbow, 2, 32.0) {
-            let (a, _, _) = hsv(rgb(frame[0]));
-            let (b, _, _) = hsv(rgb(frame[1]));
-            let gap = (a - b).abs().min(360.0 - (a - b).abs());
-            assert!((40.0..=150.0).contains(&gap), "lights {gap}° apart");
+        for frame in play(ShowKind::Rainbow, 3, 150.0) {
+            for w in frame.windows(2) {
+                let g = gap(rgb(w[0]), rgb(w[1]));
+                assert!((20.0..=150.0).contains(&g), "lights {g}° apart");
+            }
+            for o in frame {
+                assert!(!sickly(rgb(o)), "a sickly colour: {:?}", rgb(o));
+            }
+        }
+    }
+
+    #[test]
+    fn the_rainbow_goes_from_warm_to_cool_and_back() {
+        let frames = play(ShowKind::Rainbow, 1, 80.0);
+        let hue = |k: usize| hsv(rgb(frames[k][0])).0;
+        let warm = |h: f32| !(60.0..=330.0).contains(&h);
+        assert!(warm(hue(0)), "starts at {}°", hue(0));
+        assert!(
+            frames
+                .iter()
+                .any(|f| (150.0..=230.0).contains(&hsv(rgb(f[0])).0))
+        );
+        assert!(
+            warm(hue(frames.len() - 1)),
+            "ends at {}°",
+            hue(frames.len() - 1)
+        );
+    }
+
+    #[test]
+    fn harmonies_never_lurch_across_the_wheel() {
+        // A light's column only ever travels a short way to the next harmony.
+        for w in HARMONIES.windows(2) {
+            for (a, b) in w[0].iter().zip(&w[1]) {
+                let g = gap(*a, *b);
+                assert!(g <= 60.0, "{a:?} -> {b:?}: {g}°");
+            }
+        }
+    }
+
+    #[test]
+    fn the_music_stays_in_one_harmony() {
+        let s = ShowSettings::default();
+        let mut d = Dance::default();
+        let beat = Levels {
+            energy: 0.8,
+            beat: true,
+            strength: 1.0,
+        };
+        let mut seen = Vec::new();
+        for k in 0..(BEATS_PER_HARMONY * PARTY.len() as u32 * 2) {
+            let frame = d.frame(&s, beat, 0.025, 3);
+            let harmony = &PARTY[((k + 1) / BEATS_PER_HARMONY) as usize % PARTY.len()];
+            let colours: Vec<Rgb> = frame.iter().map(|o| rgb(*o)).collect();
+            for c in &colours {
+                let ok = harmony.iter().any(|h| full_chroma(*h) == *c);
+                assert!(ok, "{c:?} is not in {harmony:?}");
+            }
+            // Three lights, the three colours of the harmony.
+            assert!(
+                colours[0] != colours[1] && colours[1] != colours[2] && colours[0] != colours[2]
+            );
+            seen.push(colours[0]);
+        }
+        // A single light still walks round all of them.
+        assert!(
+            PARTY
+                .iter()
+                .flatten()
+                .all(|c| seen.contains(&full_chroma(*c)))
+        );
+    }
+
+    #[test]
+    fn the_music_drifts_cleanly_between_beats() {
+        let s = ShowSettings::default();
+        for (h, harmony) in PARTY.iter().enumerate() {
+            let mut d = Dance {
+                beats: h as u32 * BEATS_PER_HARMONY,
+                ..Dance::default()
+            };
+            for _ in 0..1200 {
+                for o in d.frame(&s, Levels::default(), 0.025, 2) {
+                    assert!(!sickly(rgb(o)), "{harmony:?} drifts through {:?}", rgb(o));
+                }
+            }
         }
     }
 
@@ -891,7 +1158,8 @@ mod tests {
             strength: 1.0,
         };
         let flash = d.frame(&s, hit, 0.025, 1)[0].bright();
-        assert_eq!(flash, s.bright);
+        // Full, give or take the evening of the colour.
+        assert!(flash >= s.bright - 5 && flash <= s.bright, "{flash}");
         assert!(flash - between >= 20, "{between} -> {flash}");
         assert!(d.accent());
     }

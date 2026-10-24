@@ -97,12 +97,12 @@ export function endpointOfDevice(d: DiscoveredDevice): Endpoint {
 
 /**
  * The parts of the config a running effect only reads at start: the room,
- * which bulb drives which light, and the capture setup. Everything else is
- * pushed live.
+ * which bulb drives which light, and the capture setup. Everything else,
+ * the wall colour included, is pushed live.
  */
 function topology(): string {
   const c = app.config;
-  return JSON.stringify([c.room, c.bindings, c.capture]);
+  return JSON.stringify([{ ...c.room, wall: undefined }, c.bindings, c.capture]);
 }
 
 /** True when the running effect is out of date with the room as drawn. */
@@ -175,7 +175,7 @@ function normalized(cfg: AppConfig): AppConfig {
   const def = defaultConfig();
   cfg.interface = { ...def.interface, ...cfg.interface };
   cfg.states ??= {};
-  cfg.show ??= def.show;
+  cfg.show = { ...def.show, ...cfg.show };
   return cfg;
 }
 
