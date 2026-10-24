@@ -23,9 +23,10 @@ around you follows what's on screen.
   lights where they actually are. Lueur works out which part of the screen each
   light should mirror, and how tightly — a lamp behind the panel tracks a slice,
   one across the room glows with the whole scene.
-- 🖥️ **Exclusive fullscreen friendly.** Uses each platform's native capture API
-  (Windows Graphics Capture / ScreenCaptureKit / X11·PipeWire), which captures
-  fullscreen games.
+- 🖥️ **Exclusive fullscreen friendly.** On Windows the desktop is read through
+  DXGI Desktop Duplication and shrunk on the GPU, so a frame costs well under a
+  millisecond and fullscreen games are captured. macOS and Linux use their
+  native APIs (ScreenCaptureKit / X11·PipeWire).
 - 🪶 **Lightweight & portable.** Built on Tauri (system webview, ~10 MB) rather
   than Electron. Settings live in a `lueur-data` folder next to the executable —
   run it from a USB stick and leave no trace.
@@ -92,7 +93,8 @@ lueur/
 │   ├─ yeelight/          LAN protocol, SSDP discovery, music-mode sockets
 │   └─ config.rs          Persisted settings + portable data-dir resolution
 ├─ src-tauri/             Desktop shell (Tauri v2)
-│   ├─ capture.rs         xcap screen capture behind a FrameSource trait
+│   ├─ capture.rs         Screen capture behind a FrameSource trait
+│   │  └─ dxgi.rs        Windows: Desktop Duplication, GPU-downscaled
 │   ├─ runner.rs          The live capture→compute→push loop
 │   ├─ commands.rs        Validated IPC surface
 │   ├─ tray.rs            Tray menu: start/stop, open, quit

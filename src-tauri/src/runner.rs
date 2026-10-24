@@ -7,9 +7,8 @@
 //! effect instantly without a restart; changing the *topology* (which lights,
 //! where) requires a stop/start, which the UI does for you.
 
-use crate::capture::{FrameSource, XcapSource, check_monitor_index};
+use crate::capture::{FrameSource, ScreenSource, check_monitor_index};
 use crate::error::{AppError, AppResult};
-use lueur_core::color::BulbOutput;
 use lueur_core::config::AppConfig;
 use lueur_core::engine::{Ambilight, EngineSettings};
 use lueur_core::geometry::{LightMapping, map_light};
@@ -67,9 +66,6 @@ impl Drop for Handle {
 struct ConnectedLight {
     mapping: LightMapping,
     conn: MusicConnection,
-    /// What we last pushed, so brightness and colour temperature are only re-sent
-    /// when they actually move.
-    last: Option<BulbOutput>,
 }
 
 /// Start the ambilight effect from `config`.
@@ -107,11 +103,7 @@ pub fn start(config: &AppConfig) -> AppResult<Handle> {
     let mut details: Vec<String> = Vec::new();
     for (mapping, binding, name) in targets {
         match MusicConnection::establish(&binding.ip, binding.port, handshake) {
-            Ok(conn) => connected.push(ConnectedLight {
-                mapping,
-                conn,
-                last: None,
-            }),
+            Ok(conn) => connected.push(ConnectedLight { mapping, conn }),
             Err(e) => {
                 failed.push(name.to_string());
                 details.push(format!("{} ({}): {e}", name, binding.ip));
@@ -144,7 +136,7 @@ pub fn start(config: &AppConfig) -> AppResult<Handle> {
             .spawn(move || {
                 // Opened here, not in `start`: the capture handle stays on this
                 // thread for its whole life.
-                let source = match XcapSource::for_index(monitor_index) {
+                let source = match ScreenSource::for_index(monitor_index) {
                     Ok(s) => s,
                     Err(e) => {
                         eprintln!("lueur: capture unavailable: {e}");
@@ -186,8 +178,15 @@ fn pace(effect: Effect, duration_ms: u32, frame_budget: Duration) -> (Effect, u3
     }
 }
 
+/// `sample_step` is tuned for a 1080p-wide capture. A wider frame takes a
+/// proportionally longer stride (same cost, same detail), and one the GPU has
+/// already shrunk is read in full.
+fn scaled_step(step: u32, width: u32) -> u32 {
+    (u64::from(step) * u64::from(width) / 1920).max(1) as u32
+}
+
 fn run_loop(
-    mut source: XcapSource,
+    mut source: ScreenSource,
     mut lights: Vec<ConnectedLight>,
     live: Arc<Mutex<LiveSettings>>,
     stop: Arc<AtomicBool>,
@@ -199,16 +198,27 @@ fn run_loop(
         duration_ms: 80,
     });
     let mut engine = Ambilight::new(lights.len(), initial.engine);
+    let mappings: Vec<LightMapping> = lights.iter().map(|l| l.mapping).collect();
 
     // Track which lights are still healthy; a socket error retires a light
     // rather than killing the whole effect.
     let mut alive = vec![true; lights.len()];
+    let mut last_tick: Option<Instant> = None;
 
     while !stop.load(Ordering::SeqCst) {
-        let frame_start = Instant::now();
+        // Cap bulb updates at the target rate. Whatever the screen presents
+        // meanwhile piles up in the capture source, so the grab below returns
+        // it at once; on a still screen it waits for the next present instead
+        // of re-reading an unchanged desktop.
+        if let Some(tick) = last_tick {
+            let elapsed = tick.elapsed();
+            if elapsed < frame_budget {
+                std::thread::sleep(frame_budget - elapsed);
+            }
+        }
+        last_tick = Some(Instant::now());
 
         let settings = live.lock().map(|g| *g).unwrap_or(initial);
-        engine.set_settings(settings.engine);
 
         // A bulb transition must finish before the next command replaces it.
         // Left unclamped, a 300 ms fade issued every 17 ms is overwritten 18
@@ -216,10 +226,13 @@ fn run_loop(
         // reaches — which reads as fast, erratic colour swings.
         let (effect, duration_ms) = pace(settings.effect, settings.duration_ms, frame_budget);
 
-        match source.grab() {
+        match source.grab(frame_budget) {
             Ok(frame) => {
-                let mappings: Vec<LightMapping> = lights.iter().map(|l| l.mapping).collect();
-                let outputs = engine.process_outputs(&frame, &mappings);
+                engine.set_settings(EngineSettings {
+                    sample_step: scaled_step(settings.engine.sample_step, frame.width),
+                    ..settings.engine
+                });
+                let outputs = engine.process_outputs(frame, &mappings);
                 for (i, light) in lights.iter_mut().enumerate() {
                     if !alive[i] {
                         continue;
@@ -227,19 +240,9 @@ fn run_loop(
                     let Some(&output) = outputs.get(i) else {
                         continue;
                     };
-                    // Chromaticity and brightness must both be pushed: `set_rgb`
-                    // alone only carries hue, so a dark scene would otherwise
-                    // stay at whatever brightness the bulb happened to have.
-                    if light
-                        .conn
-                        .push(output, light.last, effect, duration_ms)
-                        .is_err()
-                    {
+                    if light.conn.push(output, effect, duration_ms).is_err() {
                         // Bulb dropped; stop trying to write to it.
                         alive[i] = false;
-                        light.last = None;
-                    } else {
-                        light.last = Some(output);
                     }
                 }
                 if alive.iter().all(|&a| !a) {
@@ -251,12 +254,6 @@ fn run_loop(
                 // briefly and try again rather than tearing everything down.
                 std::thread::sleep(Duration::from_millis(50));
             }
-        }
-
-        // Frame pacing: sleep only the remaining budget.
-        let elapsed = frame_start.elapsed();
-        if elapsed < frame_budget {
-            std::thread::sleep(frame_budget - elapsed);
         }
     }
 
@@ -276,6 +273,15 @@ mod tests {
 
     fn fps(n: u64) -> Duration {
         Duration::from_secs_f64(1.0 / n as f64)
+    }
+
+    #[test]
+    fn sample_step_follows_capture_width() {
+        assert_eq!(scaled_step(4, 1920), 4);
+        assert_eq!(scaled_step(4, 3840), 8);
+        // A GPU-shrunk frame is read pixel by pixel.
+        assert_eq!(scaled_step(4, 480), 1);
+        assert_eq!(scaled_step(1, 0), 1);
     }
 
     #[test]

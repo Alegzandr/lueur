@@ -81,6 +81,46 @@ pub struct MusicConnection {
     stream: TcpStream,
     ip: String,
     port: u16,
+    sent: Sent,
+}
+
+/// What the bulb was last told on each channel, so [`MusicConnection::push`]
+/// only sends what moved.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Sent {
+    bright: Option<u8>,
+    /// The colour, while the bulb is in colour mode.
+    rgb: Option<Rgb>,
+    /// The temperature, while the bulb is in white mode.
+    kelvin: Option<u16>,
+}
+
+impl Sent {
+    /// The commands needed to take the bulb from this state to `output`, in
+    /// the order they must be sent, and the state they leave it in.
+    fn plan(self, output: BulbOutput) -> (Option<u8>, Option<BulbOutput>, Sent) {
+        let mut next = self;
+        let bright = bright_needs_update(self.bright, output.bright()).then(|| output.bright());
+        if let Some(b) = bright {
+            next.bright = Some(b);
+        }
+        let mode = match output {
+            BulbOutput::Color { rgb, .. } if self.rgb != Some(rgb) => {
+                next.rgb = Some(rgb);
+                next.kelvin = None;
+                Some(output)
+            }
+            // Re-sending the same temperature every frame would be pure noise;
+            // the bulb holds it until we change modes.
+            BulbOutput::White { kelvin, .. } if self.kelvin != Some(kelvin) => {
+                next.kelvin = Some(kelvin);
+                next.rgb = None;
+                Some(output)
+            }
+            _ => None,
+        };
+        (bright, mode, next)
+    }
 }
 
 impl MusicConnection {
@@ -131,6 +171,7 @@ impl MusicConnection {
             stream,
             ip: ip.to_string(),
             port,
+            sent: Sent::default(),
         })
     }
 
@@ -146,8 +187,8 @@ impl MusicConnection {
     /// limited, so it can be called every frame.
     pub fn set_rgb(&mut self, color: Rgb, effect: Effect, duration_ms: u32) -> io::Result<()> {
         let line = protocol::set_rgb(next_id(), color, effect, duration_ms);
-        self.stream.write_all(line.as_bytes())?;
-        self.stream.flush()
+        self.sent = Sent::default();
+        self.stream.write_all(line.as_bytes())
     }
 
     /// Set brightness on the music channel.
@@ -158,48 +199,48 @@ impl MusicConnection {
         duration_ms: u32,
     ) -> io::Result<()> {
         let line = protocol::set_bright(next_id(), brightness, effect, duration_ms);
-        self.stream.write_all(line.as_bytes())?;
-        self.stream.flush()
+        self.sent = Sent::default();
+        self.stream.write_all(line.as_bytes())
     }
 
     /// Set a white colour temperature (Kelvin) on the music channel.
     pub fn set_ct(&mut self, kelvin: u16, effect: Effect, duration_ms: u32) -> io::Result<()> {
         let line = protocol::set_ct_abx(next_id(), kelvin, effect, duration_ms);
-        self.stream.write_all(line.as_bytes())?;
-        self.stream.flush()
+        self.sent = Sent::default();
+        self.stream.write_all(line.as_bytes())
     }
 
     /// Push one [`BulbOutput`] — the correct pairing of chromaticity and
     /// brightness for this bulb.
     ///
-    /// `last` is the previously-sent output for this bulb (if any) and is used to
-    /// skip redundant commands: brightness and colour temperature only move when
-    /// they actually change, so a steady scene costs one `set_rgb` per frame
-    /// rather than three commands.
-    ///
-    /// Returns whether anything was actually sent, so a caller can tell a quiet
-    /// frame from a busy one.
-    pub fn push(
-        &mut self,
-        output: BulbOutput,
-        last: Option<BulbOutput>,
-        effect: Effect,
-        duration_ms: u32,
-    ) -> io::Result<()> {
-        if bright_needs_update(last.map(BulbOutput::bright), output.bright()) {
-            self.set_bright(output.bright(), effect, duration_ms)?;
+    /// Only what changed since the last push goes out, and it goes out as one
+    /// write: a steady scene costs nothing, a moving one a single packet. Every
+    /// command queued here is one the bulb has to work through before it gets
+    /// to the next frame, so silence is the lowest-latency command there is.
+    pub fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
+        let (bright, mode, next) = self.sent.plan(output);
+        let mut batch = String::new();
+        if let Some(b) = bright {
+            batch.push_str(&protocol::set_bright(next_id(), b, effect, duration_ms));
         }
-        match output {
-            BulbOutput::Color { rgb, .. } => self.set_rgb(rgb, effect, duration_ms),
-            BulbOutput::White { kelvin, .. } => {
-                // Re-sending the same temperature every frame would be pure
-                // noise; the bulb holds it until we change modes.
-                match last {
-                    Some(BulbOutput::White { kelvin: k, .. }) if k == kelvin => Ok(()),
-                    _ => self.set_ct(kelvin, effect, duration_ms),
-                }
+        match mode {
+            Some(BulbOutput::Color { rgb, .. }) => {
+                batch.push_str(&protocol::set_rgb(next_id(), rgb, effect, duration_ms))
             }
+            Some(BulbOutput::White { kelvin, .. }) => batch.push_str(&protocol::set_ct_abx(
+                next_id(),
+                kelvin,
+                effect,
+                duration_ms,
+            )),
+            None => {}
         }
+        if batch.is_empty() {
+            return Ok(());
+        }
+        self.stream.write_all(batch.as_bytes())?;
+        self.sent = next;
+        Ok(())
     }
 }
 
@@ -240,6 +281,54 @@ fn local_ip_toward(peer_ip: &str, peer_port: u16) -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const RED: Rgb = Rgb::new(255, 0, 0);
+
+    fn color(rgb: Rgb, bright: u8) -> BulbOutput {
+        BulbOutput::Color { rgb, bright }
+    }
+
+    #[test]
+    fn first_push_sends_everything() {
+        let (bright, mode, _) = Sent::default().plan(color(RED, 50));
+        assert_eq!(bright, Some(50));
+        assert_eq!(mode, Some(color(RED, 50)));
+    }
+
+    #[test]
+    fn a_steady_scene_sends_nothing() {
+        let (_, _, sent) = Sent::default().plan(color(RED, 50));
+        assert_eq!(sent.plan(color(RED, 50)), (None, None, sent));
+    }
+
+    #[test]
+    fn a_slow_fade_still_reaches_the_bulb() {
+        // The deadband is measured from what the bulb last *received*. Measured
+        // from the previous frame instead, a fade of one point per frame never
+        // clears it and the bulb sits at its old brightness indefinitely.
+        let (_, _, mut sent) = Sent::default().plan(color(RED, 50));
+        let mut delivered = Vec::new();
+        for b in 51..=54 {
+            let (bright, _, next) = sent.plan(color(RED, b));
+            delivered.extend(bright);
+            sent = next;
+        }
+        assert_eq!(delivered, [52, 54]);
+    }
+
+    #[test]
+    fn leaving_white_resends_the_colour() {
+        let (_, _, sent) = Sent::default().plan(color(RED, 50));
+        let white = BulbOutput::White {
+            kelvin: 4000,
+            bright: 50,
+        };
+        let (_, mode, sent) = sent.plan(white);
+        assert_eq!(mode, Some(white));
+        // Same colour as before white, but the bulb is in CT mode now.
+        let (_, mode, _) = sent.plan(color(RED, 50));
+        assert_eq!(mode, Some(color(RED, 50)));
+    }
 
     #[test]
     fn first_brightness_always_sends() {

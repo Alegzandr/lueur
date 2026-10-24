@@ -1,18 +1,24 @@
 //! Screen capture, abstracted behind [`FrameSource`] so the backend can evolve.
 //!
-//! The default backend is [`xcap`], which uses the best native API on each
-//! platform (Windows Graphics Capture / ScreenCaptureKit / X11 or PipeWire on
-//! Linux). Capture is the one piece that must know about the OS, so it is kept
-//! deliberately small: everything downstream consumes plain [`Frame`]s.
+//! On Windows the loop reads the desktop through DXGI Desktop Duplication,
+//! shrunk on the GPU (see [`dxgi`]). Everywhere else, and on Windows setups
+//! duplication refuses (a rotated display, a remote session), it falls back to
+//! [`xcap`]'s one-shot capture. Capture is the one piece that must know about
+//! the OS, so it is kept deliberately small: everything downstream consumes
+//! plain [`Frame`]s.
 //!
 //! ## Exclusive fullscreen
-//! `xcap` uses Windows Graphics Capture, which captures borderless *and*
-//! exclusive-fullscreen games on Windows 10/11. If a title still refuses to be
-//! captured (a handful of anti-cheat setups block it), switching that game to
-//! borderless-windowed always works.
+//! Desktop Duplication sees borderless *and* exclusive-fullscreen games on
+//! Windows 10/11. If a title still refuses to be captured (a handful of
+//! anti-cheat setups block it), switching that game to borderless-windowed
+//! always works.
+
+#[cfg(windows)]
+mod dxgi;
 
 use crate::error::{AppError, AppResult};
 use lueur_core::engine::{Frame, PixelFormat};
+use std::time::Duration;
 use xcap::Monitor;
 
 /// Something the ambilight loop can pull frames from.
@@ -21,8 +27,10 @@ use xcap::Monitor;
 /// macOS display ref) are raw pointers and stay on the thread that opened them.
 /// The loop builds its source inside the capture thread — see [`XcapSource`].
 pub trait FrameSource {
-    /// Grab the current screen contents as an RGBA frame.
-    fn grab(&mut self) -> Result<Frame, String>;
+    /// Grab the current screen contents. A source that is told when the screen
+    /// changes waits up to `timeout` for the next update and otherwise returns
+    /// the previous image, which is still what is on screen.
+    fn grab(&mut self, timeout: Duration) -> Result<&Frame, String>;
 }
 
 /// Lightweight description of a monitor for the UI's monitor picker.
@@ -72,31 +80,64 @@ fn all_monitors() -> AppResult<Vec<Monitor>> {
     Monitor::all().map_err(|e| AppError::new("monitors_unavailable").detail(e))
 }
 
-/// A [`FrameSource`] backed by one `xcap` monitor.
+/// The best [`FrameSource`] available for one monitor.
 ///
 /// Build this on the thread that will pull frames from it — the underlying
-/// handle is not thread-safe.
-pub struct XcapSource {
-    monitor: Monitor,
+/// handles are not thread-safe.
+pub enum ScreenSource {
+    #[cfg(windows)]
+    Duplication(dxgi::DxgiSource),
+    Xcap(XcapSource),
 }
 
-impl XcapSource {
-    /// Build a source for the monitor at `index` (falling back to the first).
+impl ScreenSource {
+    /// Build a source for the monitor at `index`.
     pub fn for_index(index: usize) -> AppResult<Self> {
-        let monitors = all_monitors()?;
-        if monitors.is_empty() {
-            return Err(AppError::new("no_monitors"));
+        let monitor = monitor_at(index)?;
+        #[cfg(windows)]
+        if let Ok(id) = monitor.id() {
+            match dxgi::DxgiSource::open(id) {
+                Ok(source) => return Ok(ScreenSource::Duplication(source)),
+                Err(e) => eprintln!("lueur: desktop duplication unavailable, using GDI: {e}"),
+            }
         }
-        let monitor = monitors
-            .into_iter()
-            .nth(index)
-            .ok_or_else(|| AppError::new("monitor_missing").subject((index + 1).to_string()))?;
-        Ok(Self { monitor })
+        Ok(ScreenSource::Xcap(XcapSource {
+            monitor,
+            frame: None,
+        }))
     }
 }
 
+impl FrameSource for ScreenSource {
+    fn grab(&mut self, timeout: Duration) -> Result<&Frame, String> {
+        match self {
+            #[cfg(windows)]
+            ScreenSource::Duplication(s) => s.grab(timeout),
+            ScreenSource::Xcap(s) => s.grab(timeout),
+        }
+    }
+}
+
+fn monitor_at(index: usize) -> AppResult<Monitor> {
+    let monitors = all_monitors()?;
+    if monitors.is_empty() {
+        return Err(AppError::new("no_monitors"));
+    }
+    monitors
+        .into_iter()
+        .nth(index)
+        .ok_or_else(|| AppError::new("monitor_missing").subject((index + 1).to_string()))
+}
+
+/// A [`FrameSource`] backed by one `xcap` monitor: a fresh full-resolution
+/// capture on every call.
+pub struct XcapSource {
+    monitor: Monitor,
+    frame: Option<Frame>,
+}
+
 impl FrameSource for XcapSource {
-    fn grab(&mut self) -> Result<Frame, String> {
+    fn grab(&mut self, _timeout: Duration) -> Result<&Frame, String> {
         // `capture_image` returns an RGBA image (top-left origin, tightly packed).
         let img = self
             .monitor
@@ -104,6 +145,45 @@ impl FrameSource for XcapSource {
             .map_err(|e| format!("capture failed: {e}"))?;
         let width = img.width();
         let height = img.height();
-        Ok(Frame::new(width, height, PixelFormat::Rgba, img.into_raw()))
+        Ok(self
+            .frame
+            .insert(Frame::new(width, height, PixelFormat::Rgba, img.into_raw())))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    /// Time `xcap`'s one-shot capture on the real primary display. Needs a
+    /// desktop session, so it only runs on request:
+    /// `cargo test -p lueur capture_cost -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn xcap_capture_cost() {
+        let mut source = XcapSource {
+            monitor: monitor_at(0).expect("monitor"),
+            frame: None,
+        };
+        let runs = 30;
+        let started = Instant::now();
+        let mut size = (0, 0);
+        for _ in 0..runs {
+            let frame = source.grab(Duration::ZERO).expect("grab");
+            size = (frame.width, frame.height);
+        }
+        let whole = lueur_core::geometry::SampleZone::new(0.0, 0.0, 1.0, 1.0);
+        let average = source
+            .grab(Duration::ZERO)
+            .expect("grab")
+            .average_zone(&whole, 2);
+        println!("xcap: screen average {average:?}");
+        println!(
+            "xcap: {}x{} frame, {:.2} ms per capture",
+            size.0,
+            size.1,
+            started.elapsed().as_secs_f64() * 1000.0 / runs as f64
+        );
     }
 }
