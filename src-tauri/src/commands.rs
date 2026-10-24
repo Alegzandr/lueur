@@ -16,13 +16,14 @@ use crate::capture::{self, MonitorInfo};
 use crate::devices;
 use crate::error::{AppError, AppResult};
 use crate::lights::{self, PowerResult, poisoned, power_one, unreachable, validate_ip};
-use crate::runner::LiveSettings;
+use crate::runner::{LiveSettings, Mode};
 use crate::state::AppState;
 use crate::tuya_cloud::{self, CloudError};
 use lueur_core::color::Rgb;
 use lueur_core::config::AppConfig;
 use lueur_core::device::{self, DeviceKind, DiscoveredDevice, Endpoint, hue, nanoleaf};
 use lueur_core::scene::LightState;
+use lueur_core::show::ShowKind;
 use std::io;
 use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
@@ -33,6 +34,24 @@ use tauri_plugin_dialog::DialogExt;
 pub struct EffectStatus {
     pub running: bool,
     pub connected_lights: usize,
+    /// `ambilight` or a show's id, while running.
+    pub mode: Option<&'static str>,
+    /// The room lights the running effect drives.
+    pub light_ids: Vec<String>,
+}
+
+fn status(state: &AppState) -> EffectStatus {
+    let guard = state.effect.lock().ok();
+    let handle = guard
+        .as_ref()
+        .and_then(|g| g.as_ref())
+        .filter(|h| h.is_running());
+    EffectStatus {
+        running: handle.is_some(),
+        connected_lights: handle.map_or(0, |h| h.connected_lights),
+        mode: handle.map(|h| h.mode.id()),
+        light_ids: handle.map(|h| h.light_ids.clone()).unwrap_or_default(),
+    }
 }
 
 /// Return the current configuration.
@@ -61,7 +80,7 @@ pub fn save_config(app: AppHandle, state: State<AppState>, mut config: AppConfig
     }
     state.persist()?;
     push_live(&state)?;
-    // Scenes may have been saved, renamed or removed.
+    // The tray greys out what needs a bulb.
     crate::tray::refresh(&app);
     Ok(())
 }
@@ -73,11 +92,7 @@ fn push_live(state: &AppState) -> AppResult<()> {
     if let Ok(guard) = state.effect.lock()
         && let Some(handle) = guard.as_ref()
     {
-        handle.update_live(LiveSettings {
-            engine: cfg.engine,
-            effect: cfg.transition.effect,
-            duration_ms: cfg.transition.duration_ms,
-        });
+        handle.update_live(LiveSettings::of(&cfg));
     }
     Ok(())
 }
@@ -391,7 +406,7 @@ pub async fn set_all_power(app: AppHandle, on: bool) -> AppResult<PowerResult> {
     result
 }
 
-/// Apply a built-in mood or a saved scene to every light. Stops the effect.
+/// Apply a built-in mood to every light. Stops the effect.
 #[tauri::command]
 pub async fn apply_scene(app: AppHandle, id: String) -> AppResult<PowerResult> {
     let handle = app.clone();
@@ -400,22 +415,25 @@ pub async fn apply_scene(app: AppHandle, id: String) -> AppResult<PowerResult> {
     result
 }
 
-/// Start the ambilight effect from the saved config.
+/// Start the ambilight, or the show named by `mode` (see `Mode::id`),
+/// replacing whatever runs.
 #[tauri::command]
-pub async fn start_effect(app: AppHandle) -> AppResult<EffectStatus> {
+pub async fn start_effect(app: AppHandle, mode: Option<String>) -> AppResult<EffectStatus> {
+    let mode = match mode.as_deref() {
+        None | Some("ambilight") => Mode::Ambilight,
+        Some(id) => Mode::Show(ShowKind::from_id(id).ok_or_else(|| AppError::new("unknown_mode"))?),
+    };
     // Opening the bulbs blocks (music-mode handshake); keep it off the UI thread.
     let handle = app.clone();
     let result = blocking(move || {
         let state = handle.state::<AppState>();
         crate::auto::user_took_over(&state);
-        lights::start_effect(&state)
+        lights::start(&state, mode)
     })
     .await;
     crate::tray::refresh(&app);
-    Ok(EffectStatus {
-        running: true,
-        connected_lights: result?,
-    })
+    result?;
+    Ok(status(&app.state::<AppState>()))
 }
 
 /// Stop the effect if running.
@@ -449,17 +467,7 @@ pub fn set_ui_language(app: AppHandle, state: State<AppState>, lang: String) -> 
 /// Report whether the effect is running.
 #[tauri::command]
 pub fn effect_status(state: State<AppState>) -> AppResult<EffectStatus> {
-    let running = state.is_running();
-    let connected = state
-        .effect
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().map(|h| h.connected_lights))
-        .unwrap_or(0);
-    Ok(EffectStatus {
-        running,
-        connected_lights: connected,
-    })
+    Ok(status(&state))
 }
 
 /// Enable or disable launch-on-login via the autostart plugin, and persist the

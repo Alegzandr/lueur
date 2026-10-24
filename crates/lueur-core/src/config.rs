@@ -6,7 +6,8 @@
 use crate::device::{DeviceKind, Endpoint, Pairings};
 use crate::engine::EngineSettings;
 use crate::geometry::Room;
-use crate::scene::{LightState, Scene};
+use crate::scene::LightState;
+use crate::show::ShowSettings;
 use crate::yeelight::Effect;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -181,9 +182,9 @@ pub struct AppConfig {
     /// the controls show it and switching a light back on restores it.
     #[serde(default)]
     pub states: BTreeMap<String, LightState>,
-    /// Scenes the user saved, in the order they are shown.
+    /// How the light shows (fade, candle, music) play.
     #[serde(default)]
-    pub scenes: Vec<Scene>,
+    pub show: ShowSettings,
 }
 
 fn default_version() -> u32 {
@@ -203,7 +204,7 @@ impl Default for AppConfig {
             behavior: BehaviorSettings::default(),
             interface: InterfaceSettings::default(),
             states: BTreeMap::new(),
-            scenes: Vec::new(),
+            show: ShowSettings::default(),
         }
     }
 }

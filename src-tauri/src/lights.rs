@@ -5,7 +5,7 @@
 
 use crate::devices;
 use crate::error::{AppError, AppResult};
-use crate::runner;
+use crate::runner::{self, Mode};
 use crate::state::AppState;
 use lueur_core::config::DeviceBinding;
 use lueur_core::device::Endpoint;
@@ -45,13 +45,31 @@ pub fn power_one(ep: &Endpoint, on: bool) -> AppResult<()> {
     devices::set_power(ep, on).map_err(|e| unreachable(&ep.ip, e))
 }
 
-/// Start the ambilight from the saved config, replacing any running effect.
-/// Lights held by hand are let go first: the effect needs their streams.
+/// Start the ambilight, replacing whatever runs.
 pub fn start_effect(state: &AppState) -> AppResult<usize> {
+    start(state, Mode::Ambilight)
+}
+
+/// Start the ambilight or a show from the saved config, replacing whatever
+/// runs. Lights held by hand are let go first: the effect needs their
+/// streams. A show started this way becomes the one the tray offers.
+pub fn start(state: &AppState, mode: Mode) -> AppResult<usize> {
     stop_effect(state, false);
     state.manual.release_all();
-    let config = state.config.lock().map_err(|_| poisoned())?.clone();
-    let handle = runner::start(&config)?;
+    let config = {
+        let mut cfg = state.config.lock().map_err(|_| poisoned())?;
+        if let Mode::Show(kind) = mode {
+            cfg.show.kind = kind;
+        }
+        cfg.clone()
+    };
+    if matches!(mode, Mode::Show(_)) {
+        state.persist()?;
+    }
+    let handle = match mode {
+        Mode::Ambilight => runner::start(&config)?,
+        Mode::Show(kind) => runner::start_show(&config, kind)?,
+    };
     let connected = handle.connected_lights;
     *state.effect.lock().map_err(|_| poisoned())? = Some(handle);
     Ok(connected)
@@ -232,23 +250,13 @@ pub fn set_all_power(state: &AppState, on: bool) -> AppResult<PowerResult> {
     )
 }
 
-/// Apply a built-in mood (by its id) or a saved scene (by its id). A scene is
-/// a decision about the whole room, so the ambilight stops first.
+/// Apply a built-in mood (by its id) to every light. A mood is a decision
+/// about the whole room, so whatever effect runs stops first.
 pub fn apply_scene(state: &AppState, id: &str) -> AppResult<PowerResult> {
+    let mood = scene::mood(id).ok_or_else(|| AppError::new("scene_missing"))?;
     crate::auto::user_took_over(state);
     stop_effect(state, false);
-    if let Some(mood) = scene::mood(id) {
-        return apply_many(state, |_| Some(mood.state()), false);
-    }
-    let saved = {
-        let cfg = state.config.lock().map_err(|_| poisoned())?;
-        cfg.scenes
-            .iter()
-            .find(|s| s.id == id)
-            .map(|s| s.lights.clone())
-            .ok_or_else(|| AppError::new("scene_missing"))?
-    };
-    apply_many(state, |b| saved.get(&b.light_id).copied(), false)
+    apply_many(state, |_| Some(mood.state()), false)
 }
 
 /// Record what lights were set to, and persist it.

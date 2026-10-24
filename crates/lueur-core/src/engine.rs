@@ -5,7 +5,10 @@
 //! and network I/O live in the desktop shell. Keeping it pure means the
 //! colour-critical path is fully deterministic and unit-tested.
 
-use crate::color::{BulbOutput, ColorAccumulator, ColorSmoother, Rgb, saturate, saturation};
+use crate::color::{
+    BulbOutput, ColorAccumulator, ColorSmoother, Rgb, compensate_wall, compensate_wall_kelvin,
+    saturate, saturation,
+};
 use crate::geometry::{LightMapping, SampleZone};
 use serde::{Deserialize, Serialize};
 
@@ -140,6 +143,14 @@ pub struct EngineSettings {
     /// Colour temperature used by the white path, in Kelvin (1700..6500).
     #[serde(default = "default_white_kelvin")]
     pub white_kelvin: u16,
+    /// Colour of the walls the light bounces off, compensated for so the
+    /// room shows the screen's colours rather than the paint's.
+    #[serde(default = "default_wall")]
+    pub wall: Rgb,
+}
+
+fn default_wall() -> Rgb {
+    Rgb::WHITE
 }
 
 fn default_white_threshold() -> f32 {
@@ -160,6 +171,7 @@ impl Default for EngineSettings {
             black_threshold: 6,
             white_threshold: default_white_threshold(),
             white_kelvin: default_white_kelvin(),
+            wall: default_wall(),
         }
     }
 }
@@ -244,7 +256,8 @@ impl Ambilight {
     pub fn process_outputs(&mut self, frame: &Frame, mappings: &[LightMapping]) -> Vec<BulbOutput> {
         let colors = self.process(frame, mappings);
         let brightness = self.settings.brightness;
-        let kelvin = self.settings.white_kelvin;
+        let wall = self.settings.wall;
+        let kelvin = compensate_wall_kelvin(self.settings.white_kelvin, wall);
         let enter = self.settings.white_threshold.clamp(0.0, 1.0);
         let leave = (enter * WHITE_HYSTERESIS).min(1.0);
 
@@ -265,7 +278,7 @@ impl Ambilight {
                     sat < enter
                 };
                 self.in_white[i] = white;
-                BulbOutput::build(color, brightness, white, kelvin)
+                BulbOutput::build(compensate_wall(color, wall), brightness, white, kelvin)
             })
             .collect()
     }
@@ -345,6 +358,7 @@ mod tests {
             black_threshold: 0,
             white_threshold: 0.0,
             white_kelvin: 4000,
+            wall: Rgb::WHITE,
         }
     }
 

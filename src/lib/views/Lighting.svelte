@@ -5,25 +5,25 @@
     adjustLight,
     applyScene,
     bindingFor,
+    chooseMode,
     identifyLight,
     isDriven,
     isOn,
     lightState,
-    removeScene,
-    saveScene,
     setAllPower,
-    setLightEnabled,
     toggleEffect,
     toggleLightPower,
   } from "../state.svelte";
   import { t, pct } from "../i18n";
-  import { describe, mapLight, EDGE_COLOR } from "../geometry";
+  import { describe, mapLight } from "../geometry";
   import { applyFeel, currentFeel, FEEL_ORDER, type Feel } from "../presets";
   import {
     MAX_KELVIN,
     MIN_KELVIN,
     MOODS,
     PALETTE,
+    SHOWS,
+    WALLS,
     hexOf,
     kelvinRgb,
     rgbCss,
@@ -31,9 +31,8 @@
     sameRgb,
     tintCss,
   } from "../scenes";
-  import { defaultConfig, type LightState } from "../types";
+  import { defaultConfig, type LightState, type Mode, type Rgb } from "../types";
   import Icon from "../ui/Icon.svelte";
-  import Switch from "../ui/Switch.svelte";
   import Slider from "../ui/Slider.svelte";
   import Segmented from "../ui/Segmented.svelte";
   import Row from "../ui/Row.svelte";
@@ -41,14 +40,14 @@
 
   const DEF = defaultConfig();
   // Fullscreen can only be detected on Windows (see src-tauri/src/auto.rs).
-  const AUTO_SUPPORTED = typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent);
+  const AUTO = typeof navigator !== "undefined" && /windows/i.test(navigator.userAgent);
 
   const lights = $derived(app.config.room.lights);
   const bound = $derived(app.config.bindings.length);
   const arranged = $derived(app.config.interface.room_arranged);
   const setupDone = $derived(bound > 0 && arranged);
-  const feel = $derived(currentFeel(app.config));
   const live = $derived(app.status.running);
+  const mode = $derived(live ? app.status.mode : null);
 
   const feelOptions = $derived(
     FEEL_ORDER.map((f) => ({ value: f, label: t(`feel_${f}`), title: t(`feel_${f}_tip`) })),
@@ -65,6 +64,10 @@
   ]);
   const next = $derived(steps.findIndex((s) => !s.done));
 
+  const modeName = (m: Mode) => t(`mode_${m}`);
+
+  // --- Lights by hand ---
+
   /** The light whose white and colour controls are showing. */
   let open = $state<string | null>(null);
 
@@ -73,12 +76,12 @@
   const lastKelvin: Record<string, number> = {};
   const lastColour: Record<string, [number, number, number]> = {};
 
-  function setMode(id: string, mode: "white" | "color") {
+  function setTintMode(id: string, to: "white" | "color") {
     const tint = lightState(id).tint;
-    if (tint.mode === mode) return;
+    if (tint.mode === to) return;
     if (tint.mode === "white") lastKelvin[id] = tint.kelvin;
     else lastColour[id] = [tint.r, tint.g, tint.b];
-    if (mode === "white") {
+    if (to === "white") {
       adjustLight(id, { tint: { mode: "white", kelvin: lastKelvin[id] ?? 2700 } });
     } else {
       const [r, g, b] = lastColour[id] ?? PALETTE[1];
@@ -95,38 +98,27 @@
     app.view = "room";
   }
 
-  // --- Scenes ---
+  // --- Moods ---
 
   const same = (a: LightState | undefined, b: LightState) =>
     !!a && a.on === b.on && a.bright === b.bright && JSON.stringify(a.tint) === JSON.stringify(b.tint);
 
-  /** Whether every light with a bulb shows what `wish` says. */
-  function showing(wish: (lightId: string) => LightState | undefined): boolean {
-    if (live || bound === 0) return false;
-    return app.config.bindings.every((b) => {
-      const w = wish(b.light_id);
-      return !w || same(app.config.states[b.light_id], w);
-    });
-  }
+  /** The mood every light with a bulb shows now, if any. */
+  const currentMood = $derived(
+    live
+      ? null
+      : (MOODS.find((m) =>
+          app.config.bindings.every((b) =>
+            same(app.config.states[b.light_id], {
+              on: true,
+              bright: m.bright,
+              tint: { mode: "white", kelvin: m.kelvin },
+            }),
+          ),
+        )?.id ?? null),
+  );
 
-  let naming = $state(false);
-  let sceneName = $state("");
-
-  function startNaming() {
-    sceneName = t("scene_n", { n: app.config.scenes.length + 1 });
-    naming = true;
-  }
-
-  function commitScene(e: SubmitEvent) {
-    e.preventDefault();
-    saveScene(sceneName);
-    naming = false;
-  }
-
-  function focusSelect(node: HTMLInputElement) {
-    node.focus();
-    node.select();
-  }
+  const sameWall = (a: Rgb, b: Rgb) => a.r === b.r && a.g === b.g && a.b === b.b;
 </script>
 
 <div class="page">
@@ -167,106 +159,147 @@
 
   {#if bound > 0}
     <section class="group">
-      <div class="group-head">
-        <h2 class="group-title">
-          {t("scenes")}
-          {#if live}
-            <span class="tip" title={t("scenes_tip")} aria-label={t("scenes_tip")} role="img">
-              <Icon name="info" size={12} />
+      <div class="group-head"><h2 class="group-title">{t("effects")}</h2></div>
+      <div class="modes">
+        <button
+          class="tile screen"
+          class:active={mode === "ambilight"}
+          class:pending={app.pending === "ambilight"}
+          aria-pressed={mode === "ambilight"}
+          title={mode === "ambilight" ? t("click_to_stop") : undefined}
+          disabled={app.busy && app.pending !== "ambilight"}
+          onclick={() => chooseMode("ambilight")}
+        >
+          <span class="preview" aria-hidden="true">
+            <span class="monitor"></span>
+          </span>
+          <span class="tile-text">
+            <span class="tile-name">{t("mode_ambilight")}</span>
+            <span class="tile-sub">
+              {AUTO && app.config.behavior.auto_fullscreen ? t("mode_ambilight_auto") : t("mode_ambilight_sub")}
             </span>
-          {/if}
-        </h2>
-      </div>
-      <div class="scenes">
-        {#each MOODS as m (m.id)}
-          {@const active = showing(() => ({ on: true, bright: m.bright, tint: { mode: "white", kelvin: m.kelvin } }))}
+          </span>
+          {#if mode === "ambilight"}<span class="on-dot" aria-hidden="true"></span>{/if}
+        </button>
+        {#each SHOWS as s (s.id)}
           <button
-            class="chip"
-            class:active
-            aria-pressed={active}
-            disabled={app.sceneBusy !== null}
-            class:pending={app.sceneBusy === m.id}
+            class="tile"
+            class:active={mode === s.id}
+            class:pending={app.pending === s.id}
+            aria-pressed={mode === s.id}
+            title={mode === s.id ? t("click_to_stop") : undefined}
+            disabled={app.busy && app.pending !== s.id}
+            onclick={() => chooseMode(s.id)}
+          >
+            <span class="preview" style="--p:{s.preview}" aria-hidden="true"></span>
+            <span class="tile-text">
+              <span class="tile-name">{modeName(s.id)}</span>
+            </span>
+            {#if mode === s.id}<span class="on-dot" aria-hidden="true"></span>{/if}
+          </button>
+        {/each}
+      </div>
+
+      {#if mode === "ambilight"}
+        <div class="card rows tune">
+          <Row label={t("brightness")}>
+            <Slider
+              label={t("brightness")}
+              value={app.config.engine.brightness}
+              min={0.05}
+              max={1}
+              step={0.01}
+              def={DEF.engine.brightness}
+              format={pct}
+              onchange={(v) => edit((c) => (c.engine.brightness = v))}
+            />
+          </Row>
+          <Row label={t("response")}>
+            <Segmented
+              label={t("response")}
+              value={currentFeel(app.config)}
+              options={feelOptions}
+              onchange={(f: Feel) => edit((c) => applyFeel(c, f))}
+            />
+          </Row>
+          <Row label={t("walls")} tip={t("walls_tip")}>
+            <div class="walls" role="radiogroup" aria-label={t("walls")}>
+              {#each WALLS as w (w.id)}
+                {@const picked = sameWall(app.config.engine.wall, w.rgb)}
+                <button
+                  class="wall"
+                  class:picked
+                  role="radio"
+                  aria-checked={picked}
+                  title={t(`wall_${w.id}`)}
+                  aria-label={t(`wall_${w.id}`)}
+                  style="--c:{rgbCss([w.rgb.r, w.rgb.g, w.rgb.b])}"
+                  onclick={() => edit((c) => (c.engine.wall = { ...w.rgb }))}
+                ></button>
+              {/each}
+            </div>
+          </Row>
+        </div>
+      {:else if mode}
+        <div class="card rows tune">
+          <Row label={t("brightness")}>
+            <Slider
+              label={t("brightness")}
+              value={app.config.show.bright}
+              min={5}
+              max={100}
+              step={1}
+              def={DEF.show.bright}
+              format={(v) => pct(v / 100)}
+              onchange={(v) => edit((c) => (c.show.bright = v))}
+            />
+          </Row>
+        </div>
+      {/if}
+    </section>
+
+    <section class="group">
+      <div class="group-head"><h2 class="group-title">{t("moods")}</h2></div>
+      <div class="moods">
+        {#each MOODS as m (m.id)}
+          <button
+            class="mood"
+            class:active={currentMood === m.id}
+            class:pending={app.pending === m.id}
+            aria-pressed={currentMood === m.id}
+            disabled={app.pending !== null}
             onclick={() => applyScene(m.id)}
           >
             <span
-              class="chip-dot"
-              style="--c:{rgbCss(kelvinRgb(m.kelvin))};--a:{0.35 + (0.65 * m.bright) / 100}"
+              class="mood-dot"
+              style="--c:{rgbCss(kelvinRgb(m.kelvin))};--a:{0.4 + (0.6 * m.bright) / 100}"
               aria-hidden="true"
             ></span>
             {t(`mood_${m.id}`)}
           </button>
         {/each}
-        {#each app.config.scenes as s (s.id)}
-          {@const active = showing((id) => s.lights[id])}
-          <span class="chip-wrap">
-            <button
-              class="chip user"
-              class:active
-              aria-pressed={active}
-              disabled={app.sceneBusy !== null}
-              class:pending={app.sceneBusy === s.id}
-              onclick={() => applyScene(s.id)}
-            >
-              <span class="chip-dots" aria-hidden="true">
-                {#each Object.values(s.lights).filter((l) => l.on).slice(0, 3) as l}
-                  <span class="chip-dot" style="--c:{tintCss(l.tint)};--a:1"></span>
-                {/each}
-              </span>
-              {s.name}
-            </button>
-            <button
-              class="chip-x"
-              title={t("remove_scene", { name: s.name })}
-              aria-label={t("remove_scene", { name: s.name })}
-              onclick={() => removeScene(s.id)}
-            >
-              <Icon name="close" size={11} />
-            </button>
-          </span>
-        {/each}
-        {#if naming}
-          <form class="name-form" onsubmit={commitScene}>
-            <input
-              class="input sm"
-              aria-label={t("scene_name")}
-              maxlength="40"
-              bind:value={sceneName}
-              use:focusSelect
-              onkeydown={(e) => e.key === "Escape" && (naming = false)}
-              onblur={() => (naming = false)}
-            />
-            <button class="btn sm primary" type="submit" onmousedown={(e) => e.preventDefault()}>{t("save")}</button>
-          </form>
-        {:else}
-          <button class="chip add" title={t("save_scene_tip")} onclick={startNaming}>
-            <Icon name="plus" size={12} />
-            {t("save_scene")}
-          </button>
-        {/if}
       </div>
     </section>
   {/if}
 
   {#if lights.length > 0}
     <section class="group">
-      <div class="group-head">
-        <h2 class="group-title">{t("lights")}</h2>
-        <span class="group-title">{t("follows")}</span>
-      </div>
+      <div class="group-head"><h2 class="group-title">{t("lights")}</h2></div>
       <div class="card rows">
         {#each lights as l (l.id)}
           {@const m = mapLight(app.config.room.screen, l)}
           {@const b = bindingFor(l.id)}
           {@const s = lightState(l.id)}
           {@const driven = isDriven(l.id)}
-          {@const expanded = open === l.id}
-          <div class="light" class:excluded={!l.enabled && !b} class:expanded>
+          {@const expanded = open === l.id && !!b}
+          <div class="light" class:expanded>
             <div class="light-row">
               <span
                 class="swatch"
                 class:lit={b && isOn(l.id)}
                 class:off={b && !isOn(l.id)}
-                style="--c:{driven ? EDGE_COLOR[m.edge] : b ? tintCss(s.tint) : 'var(--line-strong)'}"
+                class:live={driven}
+                style="--c:{b && !driven ? tintCss(s.tint) : 'var(--line-strong)'}"
                 aria-hidden="true"
               ></span>
               <button
@@ -276,20 +309,19 @@
                 onclick={() => (b ? (open = expanded ? null : l.id) : showOnPlan(l.id))}
               >
                 <span class="light-name">{l.name}</span>
-                <span class="light-sub">
-                  {#if !b}{t("no_bulb")}{:else if l.enabled}{t(describe(m))}{/if}
-                </span>
-                {#if b}
+                {#if !b}
+                  <span class="light-sub">{t("no_bulb")}</span>
+                {:else}
                   <span class="chev" aria-hidden="true"><Icon name="chevron" size={12} /></span>
                 {/if}
               </button>
 
               {#if !b}
                 <button class="btn sm" onclick={() => (app.view = "bulbs")}>{t("assign")}</button>
-              {:else if driven}
+              {:else if driven && mode}
                 <span class="live-tag">
                   <span class="live-dot" aria-hidden="true"></span>
-                  {t("follows")}
+                  {modeName(mode)}{#if mode === "ambilight"}<span class="where">· {t(describe(m))}</span>{/if}
                 </span>
               {:else}
                 <div class="bright" class:dim={!s.on}>
@@ -320,20 +352,19 @@
                   <Icon name="power" size={14} />
                 </button>
               {/if}
-              <Switch checked={l.enabled} label="{l.name}: {t('follows')}" onchange={(v) => setLightEnabled(l.id, v)} />
             </div>
 
-            {#if expanded && b}
+            {#if expanded}
               <div class="panel">
                 {#if driven}
                   <p class="hint">{t("driven_hint")}</p>
                 {:else}
-                  <div class="mode">
+                  <div class="tint-mode">
                     <Segmented
                       label="{l.name}: {t('white')} / {t('tint_colour')}"
                       value={s.tint.mode}
                       options={tintOptions}
-                      onchange={(v) => setMode(l.id, v)}
+                      onchange={(v) => setTintMode(l.id, v)}
                     />
                   </div>
                   {#if s.tint.mode === "white"}
@@ -352,7 +383,6 @@
                       />
                       <div class="ends">
                         <span>{t("warmth_warm")}</span>
-                        <span class="num">{s.tint.kelvin} K</span>
                         <span>{t("warmth_cool")}</span>
                       </div>
                     </div>
@@ -400,55 +430,6 @@
             {/if}
           </div>
         {/each}
-      </div>
-    </section>
-  {/if}
-
-  {#if setupDone}
-    <section class="group">
-      <div class="group-head"><h2 class="group-title">{t("ambilight")}</h2></div>
-      <div class="card rows">
-        {#if AUTO_SUPPORTED}
-          <Row label={t("auto_mode")} tip={t("auto_mode_tip")}>
-            <Switch
-              checked={app.config.behavior.auto_fullscreen}
-              label={t("auto_mode")}
-              onchange={(v) => edit((c) => (c.behavior.auto_fullscreen = v))}
-            />
-          </Row>
-        {/if}
-        <Row label={t("response")}>
-          <Segmented
-            label={t("response")}
-            value={feel}
-            options={feelOptions}
-            onchange={(f: Feel) => edit((c) => applyFeel(c, f))}
-          />
-        </Row>
-        <Row label={t("brightness")}>
-          <Slider
-            label={t("brightness")}
-            value={app.config.engine.brightness}
-            min={0.05}
-            max={1}
-            step={0.01}
-            def={DEF.engine.brightness}
-            format={pct}
-            onchange={(v) => edit((c) => (c.engine.brightness = v))}
-          />
-        </Row>
-        <Row label={t("intensity")} tip={t("intensity_tip")}>
-          <Slider
-            label={t("intensity")}
-            value={app.config.engine.saturation}
-            min={0}
-            max={1}
-            step={0.01}
-            def={DEF.engine.saturation}
-            format={pct}
-            onchange={(v) => edit((c) => (c.engine.saturation = v))}
-          />
-        </Row>
       </div>
     </section>
   {/if}
@@ -504,121 +485,196 @@
     text-decoration-color: var(--line-strong);
   }
 
-  .tip {
-    display: inline-grid;
-    vertical-align: -2px;
-    margin-left: 4px;
-    opacity: 0.7;
-  }
-
-  /* --- Scenes --- */
-  .scenes {
-    display: flex;
-    flex-wrap: wrap;
+  /* --- Effects --- */
+  .modes {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: var(--s-2);
   }
-  .chip {
+  .tile {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s-2);
+    padding: var(--s-2);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: var(--card-edge);
+    text-align: left;
+    transition:
+      box-shadow 200ms var(--ease),
+      transform 200ms var(--spring);
+  }
+  .tile:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+  .tile:disabled:not(.pending) {
+    opacity: 0.55;
+  }
+  /* The flagship gets the whole first row. */
+  .tile.screen {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--s-4);
+  }
+  .screen .tile-text {
+    flex: 1;
+  }
+  .tile.active {
+    box-shadow:
+      inset 0 0 0 2px var(--glow),
+      0 6px 22px -8px var(--glow);
+  }
+  .preview {
+    flex: 1;
+    min-height: 54px;
+    border-radius: var(--r-md);
+    background: var(--p);
+    box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.12);
+  }
+  .active .preview {
+    animation: drift 6s linear infinite alternate;
+    background-size: 160% 160%;
+  }
+  @keyframes drift {
+    from {
+      background-position: 0% 50%;
+    }
+    to {
+      background-position: 100% 50%;
+    }
+  }
+  .pending .preview {
+    animation: breathe 800ms var(--ease) infinite alternate;
+  }
+  @keyframes breathe {
+    to {
+      opacity: 0.45;
+    }
+  }
+  /* The screen tile: a monitor whose glow spills onto the wall behind. */
+  .screen .preview {
+    position: relative;
+    flex: none;
+    width: 200px;
+    display: grid;
+    place-items: center;
+    min-height: 96px;
+    background:
+      radial-gradient(60% 70% at 30% 50%, oklch(0.7 0.18 30 / 0.55), transparent 70%),
+      radial-gradient(60% 70% at 70% 50%, oklch(0.65 0.15 250 / 0.55), transparent 70%),
+      var(--sunken);
+  }
+  .screen:not(.active) .preview {
+    filter: saturate(0.5);
+  }
+  .monitor {
+    width: 46%;
+    aspect-ratio: 16 / 9;
+    border-radius: 4px;
+    background: linear-gradient(90deg, oklch(0.62 0.2 30), oklch(0.45 0.12 300), oklch(0.6 0.16 250));
+    box-shadow:
+      0 0 0 3px oklch(0.2 0 0),
+      0 10px 18px -6px oklch(0 0 0 / 0.5);
+  }
+  .tile-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 0 2px 2px;
+  }
+  .tile-name {
+    font-weight: 600;
+  }
+  .screen .tile-name {
+    font-size: var(--t-lg);
+  }
+  .tile-sub {
+    font-size: var(--t-sm);
+    color: var(--text-3);
+  }
+  .on-dot {
+    position: absolute;
+    top: calc(var(--s-2) + 7px);
+    right: calc(var(--s-2) + 7px);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--glow);
+    box-shadow:
+      0 0 0 2px oklch(1 0 0 / 0.85),
+      0 0 8px var(--glow);
+  }
+  .tune {
+    margin-top: var(--s-3);
+  }
+  .walls {
+    display: flex;
+    gap: var(--s-2);
+  }
+  .wall {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--c);
+    box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.18);
+    transition: transform var(--dur) var(--spring);
+  }
+  .wall:hover {
+    transform: scale(1.08);
+  }
+  .wall.picked {
+    box-shadow:
+      inset 0 0 0 1px oklch(0 0 0 / 0.18),
+      0 0 0 2px var(--surface),
+      0 0 0 3.5px var(--text);
+  }
+
+  /* --- Moods --- */
+  .moods {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--s-2);
+  }
+  .mood {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    height: 30px;
-    padding: 0 var(--s-3) 0 10px;
-    border-radius: var(--r-full);
+    gap: var(--s-2);
+    height: 38px;
+    padding: 0 var(--s-3);
+    border-radius: var(--r-lg);
     background: var(--surface);
     box-shadow: var(--card-edge);
     font-weight: 500;
     white-space: nowrap;
-    transition:
-      background var(--dur) var(--ease),
-      box-shadow var(--dur) var(--ease);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: box-shadow 200ms var(--ease);
   }
-  .chip:hover:not(:disabled) {
+  .mood:hover:not(:disabled) {
     background: var(--surface-hover);
   }
-  .chip:disabled:not(.pending) {
+  .mood:disabled:not(.pending) {
     opacity: 0.6;
   }
-  .chip.active {
-    box-shadow:
-      inset 0 0 0 1.5px var(--glow),
-      var(--card-edge);
+  .mood.active {
+    box-shadow: inset 0 0 0 2px var(--glow);
   }
-  .chip.pending .chip-dot {
-    animation: breathe 900ms var(--ease) infinite alternate;
+  .mood.pending .mood-dot {
+    animation: breathe 800ms var(--ease) infinite alternate;
   }
-  @keyframes breathe {
-    to {
-      opacity: 0.3;
-    }
-  }
-  .chip-dot {
-    width: 12px;
-    height: 12px;
+  .mood-dot {
+    width: 14px;
+    height: 14px;
     flex: none;
     border-radius: 50%;
     background: var(--c);
     opacity: var(--a);
     box-shadow:
       inset 0 0 0 0.5px oklch(0 0 0 / 0.15),
-      0 0 6px color-mix(in oklab, var(--c) 60%, transparent);
-  }
-  .chip-dots {
-    display: inline-flex;
-  }
-  .chip-dots .chip-dot + .chip-dot {
-    margin-left: -5px;
-  }
-  .chip-wrap {
-    position: relative;
-    display: inline-flex;
-  }
-  .chip.user {
-    padding-right: 26px;
-  }
-  .chip-x {
-    position: absolute;
-    right: 5px;
-    top: 50%;
-    width: 18px;
-    height: 18px;
-    margin-top: -9px;
-    display: grid;
-    place-items: center;
-    border-radius: 50%;
-    color: var(--text-3);
-    opacity: 0;
-    transition: opacity var(--dur) var(--ease);
-  }
-  .chip-wrap:hover .chip-x,
-  .chip-x:focus-visible {
-    opacity: 1;
-  }
-  .chip-x:hover {
-    background: var(--surface-hover);
-    color: var(--text);
-  }
-  .chip.add {
-    background: transparent;
-    box-shadow: inset 0 0 0 1px var(--line-strong);
-    color: var(--text-2);
-  }
-  .chip.add:hover {
-    color: var(--text);
-  }
-  .name-form {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--s-1);
-  }
-  .name-form input {
-    height: 28px;
-    width: 180px;
-    padding: 0 var(--s-2);
-    border-radius: var(--r-md);
-    background: var(--surface);
-    box-shadow: var(--control-edge);
-    color: var(--text);
-    font: inherit;
+      0 0 8px color-mix(in oklab, var(--c) 70%, transparent);
   }
 
   /* --- Lights --- */
@@ -626,7 +682,7 @@
     display: flex;
     align-items: center;
     gap: var(--s-3);
-    padding: 0 var(--s-4);
+    padding: 0 var(--s-2) 0 var(--s-4);
     min-height: 52px;
   }
   .swatch {
@@ -648,11 +704,20 @@
     background: transparent;
     box-shadow: inset 0 0 0 1.5px var(--line-strong);
   }
+  .swatch.live {
+    background: conic-gradient(#ff3b30, #ffb800, #34c759, #0a84ff, #bf5af2, #ff3b30);
+    animation: spin 4s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
   .light-text {
     flex: 1;
     min-width: 0;
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: var(--s-2);
     text-align: left;
   }
@@ -667,19 +732,13 @@
     text-decoration-color: var(--line-strong);
     text-underline-offset: 3px;
   }
-  .excluded .light-name {
-    color: var(--text-3);
-  }
   .light-sub {
     font-size: var(--t-sm);
     color: var(--text-3);
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
   .chev {
     display: inline-grid;
-    align-self: center;
     color: var(--text-3);
     transform: rotate(90deg);
     transition: transform 200ms var(--ease);
@@ -687,9 +746,8 @@
   .expanded .chev {
     transform: rotate(-90deg);
   }
-
   .bright {
-    width: 190px;
+    width: 200px;
     flex: none;
     display: flex;
     align-items: center;
@@ -710,17 +768,27 @@
     color: var(--text-2);
   }
   .live-tag {
-    width: 190px;
+    width: 200px;
     flex: none;
     display: inline-flex;
     align-items: center;
     gap: 6px;
     font-size: var(--t-sm);
+    font-weight: 500;
     color: var(--glow-text);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .where {
+    font-weight: 400;
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .live-dot {
     width: 6px;
     height: 6px;
+    flex: none;
     border-radius: 50%;
     background: var(--glow);
     box-shadow: 0 0 6px var(--glow);
@@ -750,7 +818,7 @@
     font-size: var(--t-sm);
     color: var(--text-2);
   }
-  .mode {
+  .tint-mode {
     width: 220px;
   }
   .warmth {

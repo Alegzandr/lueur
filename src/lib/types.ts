@@ -118,6 +118,8 @@ export interface EngineSettings {
   black_threshold: number;
   white_threshold: number;
   white_kelvin: number;
+  /** Colour of the walls, compensated for. */
+  wall: Rgb;
 }
 
 export type Effect = "smooth" | "sudden";
@@ -147,11 +149,19 @@ export interface LightState {
   tint: Tint;
 }
 
-export interface Scene {
-  id: string;
-  name: string;
-  /** By room light id. */
-  lights: Record<string, LightState>;
+/** The light shows (see lueur-core show.rs). */
+export type ShowKind = "music" | "rainbow" | "sunset" | "ocean" | "candle";
+
+export interface ShowSettings {
+  kind: ShowKind;
+  /** 1..=100 */
+  bright: number;
+}
+
+export interface Rgb {
+  r: number;
+  g: number;
+  b: number;
 }
 
 export type Appearance = "system" | "light" | "dark";
@@ -177,7 +187,7 @@ export interface AppConfig {
   interface: InterfaceSettings;
   /** What each light was last set to by hand, by room light id. */
   states: Record<string, LightState>;
-  scenes: Scene[];
+  show: ShowSettings;
 }
 
 export interface DiscoveredDevice {
@@ -208,9 +218,15 @@ export interface MonitorInfo {
   is_primary: boolean;
 }
 
+/** `ambilight` or a show. */
+export type Mode = "ambilight" | ShowKind;
+
 export interface EffectStatus {
   running: boolean;
   connected_lights: number;
+  mode: Mode | null;
+  /** The room lights the running effect drives. */
+  light_ids: string[];
 }
 
 export interface PowerResult {
@@ -245,6 +261,7 @@ export function defaultConfig(): AppConfig {
       black_threshold: 6,
       white_threshold: 0.18,
       white_kelvin: 4000,
+      wall: { r: 255, g: 255, b: 255 },
     },
     transition: { effect: "smooth", duration_ms: 80 },
     behavior: {
@@ -256,6 +273,6 @@ export function defaultConfig(): AppConfig {
     },
     interface: { appearance: "system", language: "system", room_arranged: false },
     states: {},
-    scenes: [],
+    show: { kind: "music", bright: 80 },
   };
 }

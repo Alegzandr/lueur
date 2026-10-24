@@ -8,6 +8,7 @@
 // The anti-cheat bans in `clippy.toml` are hard errors, not suggestions.
 #![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
+mod audio;
 mod auto;
 mod capture;
 mod commands;

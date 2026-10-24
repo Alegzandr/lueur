@@ -1,12 +1,10 @@
-//! Lights held steady by hand: what one light shows, the built-in moods, and
-//! the scenes the user saves.
+//! Lights held steady by hand: what one light shows, and the built-in moods.
 //!
 //! The ambilight decides colours frame by frame; everything here is the other
 //! way of using the bulbs — pick a white or a colour and leave it there.
 
 use crate::color::{BulbOutput, MAX_BRIGHT, MAX_KELVIN, MIN_BRIGHT, MIN_KELVIN, Rgb, full_chroma};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// The hue of a steady light: a colour temperature, or a colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,17 +118,6 @@ pub const MOODS: [Mood; 4] = [
 
 pub fn mood(id: &str) -> Option<Mood> {
     MOODS.iter().copied().find(|m| m.id == id)
-}
-
-/// A snapshot of the lights the user saved under a name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Scene {
-    pub id: String,
-    pub name: String,
-    /// Keyed by room light id. Lights added since the scene was saved are
-    /// left as they are when it is applied.
-    #[serde(default)]
-    pub lights: BTreeMap<String, LightState>,
 }
 
 #[cfg(test)]

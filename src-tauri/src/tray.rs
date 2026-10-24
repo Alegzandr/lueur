@@ -1,15 +1,17 @@
 //! System-tray icon and menu.
 //!
 //! The tray is how Lueur is used mid-game, and how the lights are switched
-//! without opening the window: the menu starts and stops the effect, turns
-//! every light on or off and applies the moods and the saved scenes. Its
+//! without opening the window: the menu starts and stops the ambilight and
+//! the effects, applies the moods and turns every light on or off. Its
 //! labels follow the interface language the frontend reports.
 
 use crate::error::AppResult;
 use crate::lights;
+use crate::runner::Mode;
 use crate::state::AppState;
 use lueur_core::scene::MOODS;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use lueur_core::show::{SHOWS, ShowKind};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
@@ -22,13 +24,16 @@ pub const LIGHTS_CHANGED: &str = "lights-changed";
 
 const TRAY_ID: &str = "lueur-tray";
 const SCENE_PREFIX: &str = "scene:";
+const SHOW_PREFIX: &str = "show:";
 
 struct Labels {
     start: &'static str,
     stop: &'static str,
+    stop_show: &'static str,
+    shows: &'static str,
+    scenes: &'static str,
     all_on: &'static str,
     all_off: &'static str,
-    scenes: &'static str,
     open: &'static str,
     quit: &'static str,
     on: &'static str,
@@ -40,39 +45,54 @@ fn labels(lang: &str) -> Labels {
         "fr" => Labels {
             start: "Démarrer l'ambilight",
             stop: "Arrêter l'ambilight",
+            stop_show: "Arrêter l'effet",
+            shows: "Effets",
+            scenes: "Ambiances",
             all_on: "Tout allumer",
             all_off: "Tout éteindre",
-            scenes: "Ambiances",
             open: "Ouvrir Lueur",
             quit: "Quitter",
-            on: "Lueur : ambilight allumé",
-            off: "Lueur : ambilight éteint",
+            on: "Lueur : allumé",
+            off: "Lueur : éteint",
         },
         _ => Labels {
             start: "Start ambilight",
             stop: "Stop ambilight",
+            stop_show: "Stop effect",
+            shows: "Effects",
+            scenes: "Moods",
             all_on: "All on",
             all_off: "All off",
-            scenes: "Scenes",
             open: "Open Lueur",
             quit: "Quit",
-            on: "Lueur: ambilight on",
-            off: "Lueur: ambilight off",
+            on: "Lueur: on",
+            off: "Lueur: off",
         },
     }
 }
 
-/// What the built-in moods are called (see `lueur_core::scene::MOODS`).
-fn mood_label(lang: &str, id: &str) -> &'static str {
+/// What the built-in moods and the shows are called (see
+/// `lueur_core::scene::MOODS` and `lueur_core::show::SHOWS`).
+fn name(lang: &str, id: &str) -> &'static str {
     match (lang, id) {
         ("fr", "daylight") => "Lumière du jour",
         ("fr", "reading") => "Lecture",
         ("fr", "relax") => "Détente",
         ("fr", "night") => "Veilleuse",
+        ("fr", "music") => "Musique",
+        ("fr", "rainbow") => "Arc-en-ciel",
+        ("fr", "sunset") => "Coucher de soleil",
+        ("fr", "ocean") => "Océan",
+        ("fr", "candle") => "Bougie",
         (_, "daylight") => "Daylight",
         (_, "reading") => "Reading",
         (_, "relax") => "Relax",
         (_, "night") => "Night light",
+        (_, "music") => "Music",
+        (_, "rainbow") => "Rainbow",
+        (_, "sunset") => "Sunset",
+        (_, "ocean") => "Ocean",
+        (_, "candle") => "Candle",
         _ => "",
     }
 }
@@ -85,68 +105,72 @@ fn language(state: &AppState) -> String {
         .unwrap_or_default()
 }
 
-/// Build the menu for the current state, language and scenes.
+/// What runs now, if anything.
+fn running_mode(state: &AppState) -> Option<Mode> {
+    let guard = state.effect.lock().ok()?;
+    guard.as_ref().filter(|h| h.is_running()).map(|h| h.mode)
+}
+
+/// Build the menu for the current state and language.
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let state = app.state::<AppState>();
     let lang = language(&state);
     let l = labels(&lang);
-    let running = state.is_running();
-    let (has_lights, scenes) = state
+    let running = running_mode(&state);
+    let has_lights = state
         .config
         .lock()
-        .map(|c| {
-            let scenes: Vec<(String, String)> = c
-                .scenes
-                .iter()
-                .map(|s| (s.id.clone(), s.name.clone()))
-                .collect();
-            (!c.bindings.is_empty(), scenes)
-        })
-        .unwrap_or_default();
+        .map(|c| !c.bindings.is_empty())
+        .unwrap_or(false);
 
+    let toggle_label = match running {
+        None => l.start,
+        Some(Mode::Ambilight) => l.stop,
+        Some(Mode::Show(_)) => l.stop_show,
+    };
     let toggle = MenuItem::with_id(
         app,
         "toggle",
-        if running { l.stop } else { l.start },
-        has_lights || running,
+        toggle_label,
+        has_lights || running.is_some(),
         None::<&str>,
     )?;
-    let all_on = MenuItem::with_id(app, "all_on", l.all_on, has_lights, None::<&str>)?;
-    let all_off = MenuItem::with_id(app, "all_off", l.all_off, has_lights, None::<&str>)?;
 
-    let scene_menu = Submenu::with_id(app, "scenes", l.scenes, has_lights)?;
+    let shows = Submenu::with_id(app, "shows", l.shows, has_lights)?;
+    for kind in SHOWS {
+        shows.append(&CheckMenuItem::with_id(
+            app,
+            format!("{SHOW_PREFIX}{}", kind.id()),
+            name(&lang, kind.id()),
+            true,
+            running == Some(Mode::Show(kind)),
+            None::<&str>,
+        )?)?;
+    }
+    let scenes = Submenu::with_id(app, "scenes", l.scenes, has_lights)?;
     for m in MOODS {
-        scene_menu.append(&MenuItem::with_id(
+        scenes.append(&MenuItem::with_id(
             app,
             format!("{SCENE_PREFIX}{}", m.id),
-            mood_label(&lang, m.id),
+            name(&lang, m.id),
             true,
             None::<&str>,
         )?)?;
     }
-    if !scenes.is_empty() {
-        scene_menu.append(&PredefinedMenuItem::separator(app)?)?;
-        for (id, name) in scenes {
-            scene_menu.append(&MenuItem::with_id(
-                app,
-                format!("{SCENE_PREFIX}{id}"),
-                name,
-                true,
-                None::<&str>,
-            )?)?;
-        }
-    }
 
+    let all_on = MenuItem::with_id(app, "all_on", l.all_on, has_lights, None::<&str>)?;
+    let all_off = MenuItem::with_id(app, "all_off", l.all_off, has_lights, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", l.open, true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", l.quit, true, None::<&str>)?;
     Menu::with_items(
         app,
         &[
             &toggle,
+            &shows,
+            &scenes,
             &PredefinedMenuItem::separator(app)?,
             &all_on,
             &all_off,
-            &scene_menu,
             &PredefinedMenuItem::separator(app)?,
             &open,
             &quit,
@@ -186,6 +210,18 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     in_background(app, move |state| {
                         lights::apply_scene(state, &scene).map(drop)
                     });
+                } else if let Some(kind) = id.strip_prefix(SHOW_PREFIX).and_then(ShowKind::from_id)
+                {
+                    in_background(app, move |state| {
+                        crate::auto::user_took_over(state);
+                        // Picking the show that plays stops it, like its tick.
+                        if running_mode(state) == Some(Mode::Show(kind)) {
+                            lights::stop_effect(state, true);
+                            Ok(())
+                        } else {
+                            lights::start(state, Mode::Show(kind)).map(drop)
+                        }
+                    });
                 }
             }
         })
@@ -202,8 +238,8 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Bring the menu and tooltip in line with the effect state, the language
-/// and the saved scenes.
+/// Bring the menu and tooltip in line with the effect state and the
+/// language.
 pub fn refresh(app: &AppHandle) {
     let (Some(tray), Some(state)) = (app.tray_by_id(TRAY_ID), app.try_state::<AppState>()) else {
         return;

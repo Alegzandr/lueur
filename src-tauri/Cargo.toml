@@ -52,6 +52,7 @@ qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 # Cross-platform screen capture (Windows/macOS/Linux). Version pinned by
 # `cargo generate-lockfile`; see README for the capture-backend notes.
 xcap = "0.9"
+cpal = "0.16"
 
 # Desktop Duplication capture (see src/capture/dxgi.rs) and the per-user
 # install (src/install.rs). Same `windows` version xcap already pulls in, so it

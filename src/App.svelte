@@ -122,7 +122,9 @@
         <div class="state" role="status">
           <span class="dot" aria-hidden="true"></span>
           <div>
-            <div class="state-title">{app.status.running ? t("state_on") : t("state_off")}</div>
+            <div class="state-title">
+              {app.status.running ? t(`mode_${app.status.mode ?? "ambilight"}`) : t("state_off")}
+            </div>
             <div class="state-sub">
               {#if app.status.running}
                 {app.status.connected_lights === 0
@@ -305,6 +307,7 @@
     flex: 1;
     min-width: 0;
     overflow: auto;
+    scrollbar-gutter: stable;
   }
   .view {
     height: 100%;

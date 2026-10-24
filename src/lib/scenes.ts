@@ -1,7 +1,7 @@
 // Lights set by hand: the built-in moods, the colour palette, and how a
 // light's state is drawn on screen.
 
-import type { LightState, Tint } from "./types";
+import type { LightState, Rgb, ShowKind, Tint } from "./types";
 
 export type MoodId = "daylight" | "reading" | "relax" | "night";
 
@@ -66,3 +66,27 @@ export function rgbOfHex(hex: string): [number, number, number] | null {
   const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
   return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : null;
 }
+
+/** The shows, in the order they are offered, with a preview of each. */
+export const SHOWS: { id: ShowKind; preview: string }[] = [
+  { id: "music", preview: "linear-gradient(135deg, #ff0050, #7a00ff 55%, #0078ff)" },
+  {
+    id: "rainbow",
+    preview: "linear-gradient(135deg, #ff3b30, #ffa000, #c8ff00, #00ff78, #008cff, #9600ff)",
+  },
+  { id: "sunset", preview: "linear-gradient(135deg, #ff461e, #ff8c00 40%, #ff2878 70%, #a028dc)" },
+  { id: "ocean", preview: "linear-gradient(135deg, #005aff, #00c8d2 55%, #00e696)" },
+  { id: "candle", preview: "radial-gradient(circle at 50% 70%, #ffd27a, #ff8a1e 45%, #7a2a00)" },
+];
+
+/** Common wall paints. Lueur compensates for the one picked. */
+export type WallId = "white" | "cream" | "beige" | "blue" | "green" | "pink";
+
+export const WALLS: { id: WallId; rgb: Rgb }[] = [
+  { id: "white", rgb: { r: 255, g: 255, b: 255 } },
+  { id: "cream", rgb: { r: 250, g: 240, b: 215 } },
+  { id: "beige", rgb: { r: 235, g: 215, b: 180 } },
+  { id: "blue", rgb: { r: 190, g: 210, b: 235 } },
+  { id: "green", rgb: { r: 195, g: 220, b: 195 } },
+  { id: "pink", rgb: { r: 240, g: 205, b: 205 } },
+];

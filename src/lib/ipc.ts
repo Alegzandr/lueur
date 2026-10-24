@@ -11,6 +11,7 @@ import {
   type EffectStatus,
   type Endpoint,
   type LightState,
+  type Mode,
   type MonitorInfo,
   type PowerResult,
   type TuyaLogin,
@@ -157,7 +158,7 @@ export async function setLightState(lightId: string, state: LightState): Promise
   return invoke<void>("set_light_state", { lightId, state });
 }
 
-/** Apply a built-in mood or a saved scene to every light. Stops the effect. */
+/** Apply a built-in mood to every light. Stops whatever effect runs. */
 export async function applyScene(id: string): Promise<PowerResult> {
   if (!inTauri()) {
     previewRunning = false;
@@ -183,18 +184,26 @@ export async function setAllPower(on: boolean): Promise<PowerResult> {
 }
 
 // The browser preview pretends to run, so the UI can be exercised end to end.
+let previewMode: Mode | null = null;
 let previewRunning = false;
-const previewStatus = (): EffectStatus => ({
-  running: previewRunning,
-  connected_lights: previewRunning && (demo() || preview("fresh")) ? 3 : 0,
-});
+const previewStatus = (): EffectStatus => {
+  const lit = previewRunning && (demo() || preview("fresh"));
+  return {
+    running: previewRunning,
+    connected_lights: lit ? 3 : 0,
+    mode: previewRunning ? (previewMode ?? "ambilight") : null,
+    light_ids: lit ? ["demo-0", "demo-1", "demo-2"] : [],
+  };
+};
 
-export async function startEffect(): Promise<EffectStatus> {
+/** Start the ambilight, or a show, replacing whatever runs. */
+export async function startEffect(mode: Mode = "ambilight"): Promise<EffectStatus> {
   if (!inTauri()) {
     previewRunning = true;
+    previewMode = mode;
     return previewStatus();
   }
-  return invoke<EffectStatus>("start_effect");
+  return invoke<EffectStatus>("start_effect", { mode });
 }
 
 export async function stopEffect(): Promise<void> {

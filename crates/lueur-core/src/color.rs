@@ -15,6 +15,11 @@ pub struct Rgb {
 
 impl Rgb {
     pub const BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
+    pub const WHITE: Rgb = Rgb {
+        r: 255,
+        g: 255,
+        b: 255,
+    };
 
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Rgb { r, g, b }
@@ -225,6 +230,41 @@ pub fn full_chroma(color: Rgb) -> Rgb {
     }
 }
 
+/// The least a wall is assumed to reflect of any channel. A deeply coloured
+/// wall would otherwise ask for an impossible boost of the others.
+const MIN_REFLECTANCE: f32 = 0.35;
+
+/// Undo the tint a coloured wall gives the light it bounces.
+///
+/// Ambilight light reaches the eye off the wall behind the screen, which
+/// multiplies it by the wall's colour: a cream wall turns blue to grey-green.
+/// Dividing by the wall's (normalised) reflectance first, then scaling back to
+/// the original peak, lands the bounce on the colour the screen showed. White
+/// walls change nothing.
+pub fn compensate_wall(color: Rgb, wall: Rgb) -> Rgb {
+    let peak = wall.r.max(wall.g).max(wall.b);
+    if peak == 0 || color == Rgb::BLACK {
+        return color;
+    }
+    let reflect = |w: u8| (f32::from(w) / f32::from(peak)).max(MIN_REFLECTANCE);
+    let r = f32::from(color.r) / reflect(wall.r);
+    let g = f32::from(color.g) / reflect(wall.g);
+    let b = f32::from(color.b) / reflect(wall.b);
+    let before = f32::from(color.r.max(color.g).max(color.b));
+    let scale = before / r.max(g).max(b);
+    let to = |v: f32| (v * scale).round().clamp(0.0, 255.0) as u8;
+    Rgb::new(to(r), to(g), to(b))
+}
+
+/// The white to ask for so that, bounced off `wall`, it reads as `kelvin`:
+/// a warm wall gets a cooler white, a cool one a warmer white.
+pub fn compensate_wall_kelvin(kelvin: u16, wall: Rgb) -> u16 {
+    let peak = f32::from(wall.r.max(wall.g).max(wall.b).max(1));
+    let warmth = (f32::from(wall.r) - f32::from(wall.b)) / peak;
+    let shifted = f32::from(kelvin) + warmth * 2500.0;
+    (shifted.round() as i32).clamp(i32::from(MIN_KELVIN), i32::from(MAX_KELVIN)) as u16
+}
+
 /// Yeelight's `bright` range.
 pub const MIN_BRIGHT: u8 = 1;
 pub const MAX_BRIGHT: u8 = 100;
@@ -288,6 +328,31 @@ impl BulbOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn white_walls_change_nothing() {
+        let c = Rgb::new(30, 120, 240);
+        assert_eq!(compensate_wall(c, Rgb::WHITE), c);
+        assert_eq!(compensate_wall_kelvin(4000, Rgb::WHITE), 4000);
+    }
+
+    #[test]
+    fn a_cream_wall_gets_more_blue() {
+        let cream = Rgb::new(250, 235, 200);
+        let c = Rgb::new(100, 100, 100);
+        let out = compensate_wall(c, cream);
+        assert!(out.b > out.r, "{out:?}");
+        // Same peak: the wall shifts the hue, not the brightness.
+        assert_eq!(out.r.max(out.g).max(out.b), 100);
+        assert!(compensate_wall_kelvin(4000, cream) > 4000);
+    }
+
+    #[test]
+    fn a_strong_wall_colour_is_bounded() {
+        let red = Rgb::new(255, 0, 0);
+        let out = compensate_wall(Rgb::new(200, 200, 200), red);
+        assert!(out.r > 0 && out.g == 200, "{out:?}");
+    }
 
     #[test]
     fn to_u32_packs_channels() {

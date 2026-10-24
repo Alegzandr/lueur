@@ -38,10 +38,13 @@ around you follows what's on screen.
   what it showed before. Fullscreen is read from the shell's notification
   state (what Windows uses to hold notifications during a game): no window
   or process is ever inspected.
+- 🎵 **Effects.** Music (colours change on the beat, brightness follows the
+  loudness: on Windows Lueur listens to the computer's own sound, elsewhere
+  the microphone), Rainbow, Sunset, Ocean and Candle. One click, nothing to
+  tune.
 - 💡 **Everyday lighting too.** Brightness, warm-to-cool white and colour for
-  each light, four built-in moods (Daylight, Reading, Relax, Night light) and
-  your own saved scenes, from the window or the tray menu, so the phone app
-  can stay in your pocket.
+  each light, and four moods (Daylight, Reading, Relax, Night light), from
+  the window or the tray menu, so the phone app can stay in your pocket.
 - 🔌 **Tray, autostart, start-minimised.** Close to tray, launch at login, and
   optionally auto-start the effect.
 - 🔒 **Minimal attack surface.** Network traffic is LAN bulb control and
@@ -84,7 +87,7 @@ to leave a game.
 
 | Lighting | Room | Bulbs | Settings |
 |---|---|---|---|
-| Moods and saved scenes; every light with its power, brightness, white or colour and "follows the screen" switch; the ambilight's automatic mode, response preset (Instant, Balanced, Calm), brightness and colour intensity | A floor plan you draw on: drag lights, corners and the screen, drag *You* to turn the screen | Network search, *Add all*, assign a bulb to an existing light, rename | Capture, colour, transitions, language, appearance and startup |
+| The screen ambilight (brightness, response, wall colour), the effects and moods, and every light with its power, brightness and white or colour | A floor plan you draw on: drag lights, corners and the screen, drag *You* to turn the screen | Network search, *Add all*, assign a bulb to an existing light, rename | Ambilight in fullscreen, display, language, appearance and startup |
 
 The first launch walks you through three steps (add bulbs, place them, start).
 New bulbs land in a row behind the screen, the usual setup. Bulbs that get a

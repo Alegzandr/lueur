@@ -14,6 +14,7 @@ import {
   type Endpoint,
   type Light,
   type LightState,
+  type Mode,
   type TuyaLogin,
   type Vec2,
 } from "./types";
@@ -32,7 +33,7 @@ export interface Toast {
 class AppState {
   view = $state<View>("lighting");
   config = $state<AppConfig>(defaultConfig());
-  status = $state<EffectStatus>({ running: false, connected_lights: 0 });
+  status = $state<EffectStatus>({ running: false, connected_lights: 0, mode: null, light_ids: [] });
   /** True while the effect is being started or stopped. */
   busy = $state(false);
   /** True once the backend config has arrived, so the UI does not flash the
@@ -50,8 +51,8 @@ class AppState {
   tuya = $state<{ step: "code" | "starting" | "qr"; login?: TuyaLogin } | null>(null);
 
   powerBusy = $state<Record<string, boolean>>({});
-  /** The scene being applied, if any. */
-  sceneBusy = $state<string | null>(null);
+  /** The mood or mode being switched to, while it starts. */
+  pending = $state<string | null>(null);
 
   /** The light selected on the plan, shared so other views can deep-link. */
   selectedLight = $state<string | null>(null);
@@ -112,9 +113,9 @@ export function isOn(lightId: string): boolean {
   return lightState(lightId).on;
 }
 
-/** True while the running ambilight sets this light's colour. */
+/** True while the running ambilight or show sets this light's colour. */
 export function isDriven(lightId: string): boolean {
-  return app.status.running && !!lightById(lightId)?.enabled && !!bindingFor(lightId);
+  return app.status.running && app.status.light_ids.includes(lightId);
 }
 
 /** Record a state the backend has already applied and persisted. */
@@ -158,7 +159,7 @@ export async function bootstrap(): Promise<void> {
     // Older configs predate some interface fields.
     cfg.interface = { ...defaultConfig().interface, ...cfg.interface };
     cfg.states ??= {};
-    cfg.scenes ??= [];
+    cfg.show ??= defaultConfig().show;
     // Someone upgrading with a furnished room has arranged it already.
     if (cfg.room.lights.length > 0 && cfg.bindings.length > 0 && !cfg.interface.room_arranged) {
       cfg.interface.room_arranged = true;
@@ -196,7 +197,8 @@ export async function toggleEffect(): Promise<void> {
     await persistNow();
     if (app.status.running) {
       await ipc.stopEffect();
-      app.status = { running: false, connected_lights: 0 };
+      await reloadStates();
+      app.status = { running: false, connected_lights: 0, mode: null, light_ids: [] };
       app.startedWith = null;
     } else {
       app.status = await ipc.startEffect();
@@ -216,8 +218,9 @@ export async function restartEffect(): Promise<void> {
   app.busy = true;
   try {
     await persistNow();
+    const mode = app.status.mode ?? "ambilight";
     await ipc.stopEffect();
-    app.status = await ipc.startEffect();
+    app.status = await ipc.startEffect(mode);
     app.startedWith = topology();
   } catch (e) {
     await refreshStatus();
@@ -320,10 +323,10 @@ export async function reloadStates(): Promise<void> {
   }
 }
 
-/** Apply a built-in mood or a saved scene. Stops the ambilight. */
+/** Apply a built-in mood to every light. Stops whatever effect runs. */
 export async function applyScene(id: string): Promise<void> {
-  if (app.sceneBusy) return;
-  app.sceneBusy = id;
+  if (app.pending) return;
+  app.pending = id;
   try {
     await persistNow();
     const res = await ipc.applyScene(id);
@@ -333,36 +336,31 @@ export async function applyScene(id: string): Promise<void> {
   } catch (e) {
     fail(e);
   } finally {
-    app.sceneBusy = null;
+    app.pending = null;
   }
 }
 
-/** Keep what every light with a bulb shows now as a named scene. */
-export function saveScene(name: string): void {
-  const lights: Record<string, LightState> = {};
-  for (const b of app.config.bindings) lights[b.light_id] = $state.snapshot(lightState(b.light_id));
-  const scene = { id: crypto.randomUUID(), name: name.trim() || t("scene_n", { n: app.config.scenes.length + 1 }), lights };
-  edit((c) => {
-    c.scenes = [...c.scenes, scene];
-  });
-  notify("info", t("scene_saved", { name: scene.name }));
-}
-
-/** Remove a saved scene, with an undo in the toast. */
-export function removeScene(id: string): void {
-  const index = app.config.scenes.findIndex((s) => s.id === id);
-  if (index < 0) return;
-  const scene = $state.snapshot(app.config.scenes[index]);
-  edit((c) => {
-    c.scenes = c.scenes.filter((s) => s.id !== id);
-  });
-  notify("info", t("removed", { name: scene.name }), {
-    label: t("undo"),
-    run: () =>
-      edit((c) => {
-        c.scenes.splice(Math.min(index, c.scenes.length), 0, scene);
-      }),
-  });
+/** Start the ambilight or a show; picking the one that runs stops it. */
+export async function chooseMode(mode: Mode): Promise<void> {
+  if (app.busy || app.pending) return;
+  if (app.status.running && app.status.mode === mode) {
+    await toggleEffect();
+    return;
+  }
+  app.pending = mode;
+  app.busy = true;
+  try {
+    await persistNow();
+    app.status = await ipc.startEffect(mode);
+    app.startedWith = topology();
+    if (app.status.connected_lights === 0) notify("error", t("started_silent"));
+  } catch (e) {
+    await refreshStatus();
+    fail(e);
+  } finally {
+    app.busy = false;
+    app.pending = null;
+  }
 }
 
 // Warm white: an identify flash should read as "this one", never as a colour
@@ -413,7 +411,7 @@ export async function importConfig(): Promise<void> {
     if (!cfg) return;
     cfg.interface = { ...defaultConfig().interface, ...cfg.interface };
     cfg.states ??= {};
-    cfg.scenes ??= [];
+    cfg.show ??= defaultConfig().show;
     app.config = cfg;
     notify("info", t("imported"));
     if (cfg.bindings.length > 0) void scan(3000, true);
