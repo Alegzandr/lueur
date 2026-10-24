@@ -12,6 +12,12 @@
 //! Windows 10/11. If a title still refuses to be captured (a handful of
 //! anti-cheat setups block it), switching that game to borderless-windowed
 //! always works.
+//!
+//! ## Anti-cheat
+//! Only whole monitors are captured, through the same OS APIs as OBS or
+//! Discord screen share: the game process is never opened, read, hooked or
+//! drawn over. `xcap::Window` is banned in `clippy.toml` because it opens the
+//! owning process of every window it lists.
 
 #[cfg(windows)]
 mod dxgi;

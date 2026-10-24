@@ -1,0 +1,20 @@
+# Anti-cheat safety: Lueur only ever reads the composed desktop through the
+# OS capture APIs. It never opens, inspects or hooks another process, never
+# injects input and never draws over a game. These bans keep it that way; see
+# "Competitive games and anti-cheat" in the README before lifting one.
+
+disallowed-types = [
+    # Window capture opens the owning process to name it, which means opening
+    # a handle on the game itself.
+    { path = "xcap::Window", reason = "anti-cheat: capture monitors, never windows (opens the game process)" },
+]
+
+disallowed-methods = [
+    { path = "windows::Win32::System::Threading::OpenProcess", reason = "anti-cheat: never open another process" },
+    { path = "windows::Win32::System::Diagnostics::Debug::ReadProcessMemory", reason = "anti-cheat: never read another process" },
+    { path = "windows::Win32::System::Diagnostics::Debug::WriteProcessMemory", reason = "anti-cheat: never write another process" },
+    { path = "windows::Win32::UI::WindowsAndMessaging::SetWindowsHookExW", reason = "anti-cheat: no global hooks" },
+    { path = "windows::Win32::UI::WindowsAndMessaging::SetWindowsHookExA", reason = "anti-cheat: no global hooks" },
+    { path = "windows::Win32::UI::Input::KeyboardAndMouse::SendInput", reason = "anti-cheat: screen reading plus synthetic input is what pixel bots do" },
+    { path = "windows::Win32::UI::Input::KeyboardAndMouse::RegisterHotKey", reason = "anti-cheat: no global hotkeys; use the tray instead" },
+]

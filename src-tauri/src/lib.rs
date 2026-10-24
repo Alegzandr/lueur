@@ -4,6 +4,9 @@
 //! network and a Tauri webview, and adds the OS niceties gamers expect:
 //! system-tray minimise, launch-on-startup and single-instance behaviour.
 
+// The anti-cheat bans in `clippy.toml` are hard errors, not suggestions.
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
+
 mod capture;
 mod commands;
 mod error;

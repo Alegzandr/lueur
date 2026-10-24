@@ -34,6 +34,8 @@ around you follows what's on screen.
   optionally auto-start the effect.
 - 🔒 **Minimal attack surface.** The only network traffic is LAN bulb control and
   SSDP discovery; strict Content-Security-Policy; every IPC input is validated.
+- 🛡️ **Anti-cheat safe.** Lueur reads the screen the way OBS or Discord screen
+  share do, and nothing else. See [Competitive games and anti-cheat](#competitive-games-and-anti-cheat).
 
 > **Supported bulbs today:** Yeelight Color (v2). More models will be added as
 > they can be tested — the device layer is a small trait, so new bulbs slot in
@@ -81,6 +83,28 @@ gradually when something bright crosses between them.
 Colours are averaged in linear light (so reds and blues stay vivid, not muddy),
 smoothed over time (a slider trades latency for calm), then shaped for
 brightness/saturation before being pushed to the bulb.
+
+## Competitive games and anti-cheat
+
+Lueur is built to run next to Vanguard, Easy Anti-Cheat, BattlEye, FACEIT and
+the like without looking like a cheat:
+
+- **Desktop capture only.** It reads whole monitors through DXGI Desktop
+  Duplication (or GDI as a fallback), the same OS APIs OBS and Discord use. It
+  never captures a game window directly.
+- **Hands off the game.** No handle on the game process, no memory reads, no
+  DLL injection, no hooks, no driver.
+- **Output only.** No synthetic keyboard or mouse input and no global hotkeys:
+  screen reading plus input is what pixel bots do. The only output is colour
+  sent to bulbs on your LAN.
+- **No overlay.** Nothing is ever drawn over the game.
+
+These rules are enforced at build time: `clippy.toml` bans the APIs that would
+break them, and the app crate denies those lints.
+
+If a game hides itself from capture, the bulbs simply see a black screen;
+switching the game to borderless-windowed usually fixes it. Lueur never tries
+to get around that.
 
 ## Architecture
 
