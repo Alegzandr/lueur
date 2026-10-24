@@ -275,9 +275,7 @@ impl Ambilight {
         for s in &mut self.smoothers {
             s.reset();
         }
-        for w in &mut self.in_white {
-            *w = false;
-        }
+        self.in_white.fill(false);
     }
 }
 
