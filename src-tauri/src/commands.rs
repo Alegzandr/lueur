@@ -115,7 +115,8 @@ fn validate_addresses(config: &AppConfig) -> AppResult<()> {
 /// bridge paired, a Smart Life import), so the copy sent here is ignored, and
 /// bindings take their credentials from them (the interface never has any).
 /// So is whether the natural light runs: moods and lights set by hand switch
-/// it.
+/// it. So are the modes recorded for each light: starting and stopping
+/// effects records them.
 ///
 /// A slider drag saves several times a second, so the disk write runs off
 /// the main thread, and the tray menu is only rebuilt when what it shows
@@ -129,6 +130,7 @@ pub async fn save_config(app: AppHandle, mut config: AppConfig) -> AppResult<()>
             let had_lights = !guard.bindings.is_empty();
             config.pairings = guard.pairings.clone();
             config.natural = guard.natural;
+            config.modes = guard.modes.clone();
             validate_addresses(&config)?;
             secrets::restore_bindings(&mut config, &guard.bindings);
             *guard = config;

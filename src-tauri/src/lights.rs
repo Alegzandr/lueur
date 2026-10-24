@@ -42,16 +42,30 @@ pub fn power_one(ep: &Endpoint, on: bool) -> AppResult<()> {
     devices::set_power(ep, on).map_err(|e| unreachable(&ep.ip, e))
 }
 
-/// Start the ambilight on the whole room, replacing whatever runs.
+/// Start the ambilight on the whole room for the app itself (at launch, or
+/// for a fullscreen game), replacing whatever runs. The modes the user chose
+/// stay recorded, so they come back at the next launch.
 pub fn start_effect(state: &AppState) -> AppResult<usize> {
-    start(state, Mode::Ambilight)
+    start_room(state, Mode::Ambilight)
 }
 
-/// Start the ambilight or a show on every enabled light, from the saved
-/// config, replacing whatever runs. Lights held by hand are let go first: the
-/// effect needs their streams. A show started this way becomes the one the
-/// tray offers.
+/// Start the ambilight or a show on every enabled light, as the user asked,
+/// replacing whatever runs, and record it for the next launch.
 pub fn start(state: &AppState, mode: Mode) -> AppResult<usize> {
+    let connected = start_room(state, mode)?;
+    record_modes(state, |modes, cfg| {
+        *modes = runner::enabled_ids(cfg)
+            .into_iter()
+            .map(|id| (id, mode.id().to_string()))
+            .collect();
+    })?;
+    Ok(connected)
+}
+
+/// Start `mode` on every enabled light, from the saved config, replacing
+/// whatever runs. Lights held by hand are let go first: the effect needs
+/// their streams. A show started this way becomes the one the tray offers.
+fn start_room(state: &AppState, mode: Mode) -> AppResult<usize> {
     let _change = state.effects.change();
     stop_taken(state, state.effects.take(|_| true), false);
     state.manual.release_all();
@@ -72,18 +86,79 @@ pub fn start(state: &AppState, mode: Mode) -> AppResult<usize> {
     Ok(connected)
 }
 
-/// Stop every effect. Their bulbs settle on a warm glow; with `restore`,
-/// those that had been set by hand go back to that instead, so the room is
-/// as it was before the effects took over.
+/// Stop every effect, as the user asked: the next launch starts none. Their
+/// bulbs settle on a warm glow; with `restore`, those that had been set by
+/// hand go back to that instead, so the room is as it was before the effects
+/// took over.
 pub fn stop_effect(state: &AppState, restore: bool) {
+    suspend(state, restore);
+    let _ = record_modes(state, |modes, _| modes.clear());
+}
+
+/// Stop every effect for the app itself (quitting, updating, a fullscreen
+/// game that ended), leaving the modes the user chose recorded.
+pub fn suspend(state: &AppState, restore: bool) {
     let _change = state.effects.change();
     stop_taken(state, state.effects.take(|_| true), restore);
 }
 
 /// Stop the effect playing `mode`, leaving the others to play on.
 pub fn stop_mode(state: &AppState, mode: Mode, restore: bool) {
+    {
+        let _change = state.effects.change();
+        stop_taken(state, state.effects.take(|h| h.mode == mode), restore);
+    }
+    let _ = record_modes(state, |modes, _| modes.retain(|_, m| m != mode.id()));
+}
+
+/// Change what is recorded of each light's mode, and persist it.
+fn record_modes(
+    state: &AppState,
+    f: impl FnOnce(&mut BTreeMap<String, String>, &lueur_core::config::AppConfig),
+) -> AppResult<()> {
+    {
+        let mut cfg = state.lock_config()?;
+        let mut modes = std::mem::take(&mut cfg.modes);
+        f(&mut modes, &cfg);
+        cfg.modes = modes;
+    }
+    state.persist()
+}
+
+/// Play again what each light played when the user last chose, as recorded
+/// in the config: at launch, the room picks up where it was left. Lights
+/// that are gone or whose bulb does not answer are skipped, but stay
+/// recorded. `Ok(0)` when nothing is recorded.
+pub fn resume(state: &AppState) -> AppResult<usize> {
     let _change = state.effects.change();
-    stop_taken(state, state.effects.take(|h| h.mode == mode), restore);
+    let config = state.lock_config()?.clone();
+    let mut plan: Vec<(Mode, Vec<String>)> = Vec::new();
+    for light in &config.room.lights {
+        let Some(mode) = config.modes.get(&light.id).and_then(|m| Mode::from_id(m)) else {
+            continue;
+        };
+        if config.binding_for(&light.id).is_none() {
+            continue;
+        }
+        match plan.iter_mut().find(|(m, _)| *m == mode) {
+            Some((_, ids)) => ids.push(light.id.clone()),
+            None => plan.push((mode, vec![light.id.clone()])),
+        }
+    }
+    if plan.is_empty() {
+        return Ok(0);
+    }
+    stop_taken(state, state.effects.take(|_| true), false);
+    for (_, ids) in &plan {
+        for id in ids {
+            state.manual.release(id);
+        }
+    }
+    let (_, errors) = launch(state, &config, &plan);
+    match errors.into_iter().next() {
+        Some((_, e)) if !state.effects.is_running() => Err(e),
+        _ => Ok(state.effects.groups().iter().map(|g| g.2).sum()),
+    }
 }
 
 fn stop_taken(state: &AppState, mut handles: Vec<runner::Handle>, restore: bool) {
@@ -168,7 +243,14 @@ pub fn set_light_mode(state: &AppState, light_id: &str, mode: Option<Mode>) -> A
     }
     put_back(state, &idle, true);
     if state.effects.mode_of(light_id) == mode {
-        return Ok(());
+        return record_modes(state, |modes, _| match mode {
+            Some(m) => {
+                modes.insert(light_id.to_string(), m.id().to_string());
+            }
+            None => {
+                modes.remove(light_id);
+            }
+        });
     }
     // The light did not take its new mode: say why.
     Err(errors

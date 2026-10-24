@@ -46,7 +46,7 @@ around you follows what's on screen.
   each light, and four moods (Daylight, Reading, Relax, Night light), from
   the window or the tray menu, so the phone app can stay in your pocket.
 - 🔌 **Tray, autostart, start-minimised.** Close to tray, launch at login, and
-  optionally auto-start the effect.
+  each light picks up the effect it was left playing.
 - 🔒 **Minimal attack surface.** Network traffic is LAN bulb control and
   discovery, the update check against GitHub (whose downloads are
   signature-checked) and, only while you import Smart Life bulbs, Tuya's

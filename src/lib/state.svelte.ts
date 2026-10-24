@@ -193,7 +193,7 @@ export async function bootstrap(): Promise<void> {
     app.config = cfg;
     app.status = await ipc.effectStatus();
     sleepChanged(await ipc.sleepTimer());
-    // Running already (autostart): it was started from the saved config.
+    // Running already (resumed at launch): it was started from the saved config.
     if (app.status.running) app.startedWith = topology();
   } catch (e) {
     fail(e, "err_load");

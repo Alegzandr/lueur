@@ -133,7 +133,6 @@ export interface BehaviorSettings {
   run_on_startup: boolean;
   minimize_to_tray: boolean;
   start_minimized: boolean;
-  autostart_effect: boolean;
   /** Start the ambilight when something goes fullscreen (Windows). */
   auto_fullscreen: boolean;
 }
@@ -191,6 +190,9 @@ export interface AppConfig {
   /** The lights follow the time of day. The backend switches it (moods,
    *  lights set by hand) and ignores the copy the interface saves. */
   natural?: boolean;
+  /** What each light plays, by room light id, as last chosen; the backend
+   *  owns it. */
+  modes?: Record<string, Mode>;
 }
 
 /** A running sleep timer. */
@@ -288,7 +290,6 @@ export function defaultConfig(): AppConfig {
       run_on_startup: false,
       minimize_to_tray: true,
       start_minimized: false,
-      autostart_effect: false,
       auto_fullscreen: true,
     },
     interface: { appearance: "system", language: "system", room_arranged: false },

@@ -82,7 +82,7 @@ fn watch(app: &AppHandle) {
         if !in_session {
             last_seen = None;
             if owner == Owner::Auto && state.is_running() {
-                lights::stop_effect(&state, true);
+                lights::suspend(&state, true);
                 changed(app);
             }
             set_owner(&state, Owner::Nobody);

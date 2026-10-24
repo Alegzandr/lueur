@@ -228,7 +228,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     lights::stop_effect(state, true);
                     Ok(())
                 } else {
-                    lights::start_effect(state).map(drop)
+                    lights::start(state, Mode::Ambilight).map(drop)
                 }
             }),
             "all_on" => in_background(app, |state| lights::set_all_power(state, true).map(drop)),
@@ -239,7 +239,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             "open" => focus_main(app),
             "quit" => {
                 if let Some(state) = app.try_state::<AppState>() {
-                    lights::stop_effect(&state, false);
+                    lights::suspend(&state, false);
                 }
                 app.exit(0);
             }

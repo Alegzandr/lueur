@@ -84,7 +84,7 @@ pub fn update_ready(state: State<'_, UpdateState>) -> Option<String> {
 pub fn restart_app(app: AppHandle) {
     // The bulbs are in music mode while the effect runs: hand them back.
     if let Some(state) = app.try_state::<AppState>() {
-        crate::lights::stop_effect(&state, false);
+        crate::lights::suspend(&state, false);
     }
     // Goes through RunEvent::Exit so the single-instance lock is released
     // before the new process starts; `restart()` would skip it.

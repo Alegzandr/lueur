@@ -78,14 +78,16 @@ pub(crate) fn start(app: &AppHandle) {
         tray::focus_main(app);
     }
 
-    // Optionally fire up the effect right away.
-    if behavior.autostart_effect {
-        let handle = app.clone();
-        std::thread::spawn(move || {
-            let _ = lights::start_effect(&handle.state::<AppState>());
-            tray::refresh(&handle);
-        });
-    }
+    // Each light picks up the mode it was left playing.
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        use tauri::Emitter;
+        let _ = lights::resume(&handle.state::<AppState>());
+        // The window may have read the state before the bulbs answered.
+        let _ = handle.emit(tray::EFFECT_CHANGED, None::<error::AppError>);
+        let _ = handle.emit(tray::LIGHTS_CHANGED, ());
+        tray::refresh(&handle);
+    });
 }
 
 /// Build and run the application.

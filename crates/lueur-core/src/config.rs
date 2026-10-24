@@ -99,8 +99,10 @@ pub struct BehaviorSettings {
     pub minimize_to_tray: bool,
     /// Start hidden in the tray (pairs well with `run_on_startup`).
     pub start_minimized: bool,
-    /// Automatically start the ambilight effect when the app launches.
-    pub autostart_effect: bool,
+    /// Older versions' "start the ambilight on launch". Read once and turned
+    /// into recorded modes (see [`AppConfig::from_json`]), never written.
+    #[serde(default, rename = "autostart_effect", skip_serializing)]
+    legacy_autostart: bool,
     /// Start the ambilight when a game or video goes fullscreen, and stop it
     /// when that ends (Windows).
     #[serde(default = "crate::default_true")]
@@ -113,7 +115,7 @@ impl Default for BehaviorSettings {
             run_on_startup: false,
             minimize_to_tray: true,
             start_minimized: false,
-            autostart_effect: false,
+            legacy_autostart: false,
             auto_fullscreen: true,
         }
     }
@@ -185,6 +187,11 @@ pub struct AppConfig {
     /// until something else is asked of them.
     #[serde(default)]
     pub natural: bool,
+    /// What each light plays (`ambilight` or a show's id), keyed by room
+    /// light id, as the user last chose it: the next launch picks it up
+    /// again. A light set by hand has no entry.
+    #[serde(default)]
+    pub modes: BTreeMap<String, String>,
 }
 
 fn default_version() -> u32 {
@@ -206,6 +213,7 @@ impl Default for AppConfig {
             states: BTreeMap::new(),
             show: ShowSettings::default(),
             natural: false,
+            modes: BTreeMap::new(),
         }
     }
 }
@@ -222,8 +230,22 @@ impl AppConfig {
     }
 
     /// Parse from JSON, tolerating missing fields (they take their defaults).
+    ///
+    /// A config that asked older versions to start the ambilight on launch
+    /// records it as the mode of every enabled light instead: the launch now
+    /// resumes each light's recorded mode.
     pub fn from_json(s: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(s)
+        let mut cfg: AppConfig = serde_json::from_str(s)?;
+        if std::mem::take(&mut cfg.behavior.legacy_autostart) && cfg.modes.is_empty() {
+            cfg.modes = cfg
+                .room
+                .lights
+                .iter()
+                .filter(|l| l.enabled && cfg.binding_for(&l.id).is_some())
+                .map(|l| (l.id.clone(), "ambilight".to_string()))
+                .collect();
+        }
+        Ok(cfg)
     }
 }
 
@@ -323,6 +345,41 @@ mod tests {
         let json = r#"{ "interface": { "language": "fr" } }"#;
         let cfg = AppConfig::from_json(json).unwrap();
         assert_eq!(cfg.interface.language, Language::Fr);
+    }
+
+    #[test]
+    fn light_modes_round_trip() {
+        let json = r#"{ "modes": { "l1": "ambilight", "l2": "rainbow" } }"#;
+        let cfg = AppConfig::from_json(json).unwrap();
+        assert_eq!(cfg.modes.get("l2").map(String::as_str), Some("rainbow"));
+        let back = AppConfig::from_json(&cfg.to_json().unwrap()).unwrap();
+        assert_eq!(back.modes, cfg.modes);
+        // Configs saved before per-light modes have none.
+        assert!(AppConfig::from_json("{}").unwrap().modes.is_empty());
+    }
+
+    #[test]
+    fn launch_ambilight_becomes_recorded_modes() {
+        // An older config: three lights, the second disabled, the third
+        // without a bulb, and the ambilight asked for at launch.
+        let mut old: serde_json::Value =
+            serde_json::from_str(&AppConfig::default().to_json().unwrap()).unwrap();
+        old["room"]["lights"] = serde_json::json!([
+            { "id": "l1", "name": "a", "pos": { "x": 0, "y": 0 } },
+            { "id": "l2", "name": "b", "pos": { "x": 0, "y": 0 }, "enabled": false },
+            { "id": "l3", "name": "c", "pos": { "x": 0, "y": 0 } }
+        ]);
+        old["bindings"] = serde_json::json!([
+            { "light_id": "l1", "device_id": "0x1", "ip": "192.168.1.5" },
+            { "light_id": "l2", "device_id": "0x2", "ip": "192.168.1.6" }
+        ]);
+        old["behavior"]["autostart_effect"] = true.into();
+        let cfg = AppConfig::from_json(&old.to_string()).unwrap();
+        // Only the enabled light with a bulb follows the screen.
+        assert_eq!(cfg.modes.len(), 1);
+        assert_eq!(cfg.modes.get("l1").map(String::as_str), Some("ambilight"));
+        // The old setting is not written back.
+        assert!(!cfg.to_json().unwrap().contains("autostart_effect"));
     }
 
     #[test]
