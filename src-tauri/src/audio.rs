@@ -44,7 +44,7 @@ impl AudioTap {
         };
 
         let channels = usize::from(config.channels().max(1));
-        let sample_rate = config.sample_rate().0;
+        let sample_rate = config.sample_rate();
         // A second of sound at most: if nobody reads, the oldest goes.
         let cap = sample_rate as usize;
         let buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::with_capacity(cap)));
@@ -56,10 +56,10 @@ impl AudioTap {
         };
         let stream_config = config.config();
         let stream = match config.sample_format() {
-            SampleFormat::F32 => tap.stream::<f32>(&device, &stream_config),
-            SampleFormat::I16 => tap.stream::<i16>(&device, &stream_config),
-            SampleFormat::U16 => tap.stream::<u16>(&device, &stream_config),
-            SampleFormat::I32 => tap.stream::<i32>(&device, &stream_config),
+            SampleFormat::F32 => tap.stream::<f32>(&device, stream_config),
+            SampleFormat::I16 => tap.stream::<i16>(&device, stream_config),
+            SampleFormat::U16 => tap.stream::<u16>(&device, stream_config),
+            SampleFormat::I32 => tap.stream::<i32>(&device, stream_config),
             other => return Err(err(format!("unsupported sample format {other}"))),
         }
         .map_err(err)?;
@@ -95,11 +95,7 @@ struct Tap {
 
 impl Tap {
     /// An input stream of `T` samples feeding the buffer, mixed down to mono.
-    fn stream<T>(
-        self,
-        device: &cpal::Device,
-        config: &StreamConfig,
-    ) -> Result<Stream, cpal::BuildStreamError>
+    fn stream<T>(self, device: &cpal::Device, config: StreamConfig) -> Result<Stream, cpal::Error>
     where
         T: SizedSample,
         f32: FromSample<T>,
