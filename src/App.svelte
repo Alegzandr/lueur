@@ -5,6 +5,7 @@
   import { onEffectChanged, onLightsChanged, onSleepChanged, onUpdateReady, setUiLanguage, setWindowTheme, updateReady } from "./lib/ipc";
   import { MOD_KEY } from "./lib/platform";
   import Icon, { type IconName } from "./lib/ui/Icon.svelte";
+  import Logo from "./lib/ui/Logo.svelte";
   import Toasts from "./lib/ui/Toasts.svelte";
   import UpdateButton from "./lib/ui/UpdateButton.svelte";
   import Lighting from "./lib/views/Lighting.svelte";
@@ -93,11 +94,7 @@
 <div class="shell">
   <aside class="sidebar">
     <div class="brand">
-      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-        <rect x="2.5" y="4" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5" />
-        <path d="M7.5 17h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-        <rect x="5" y="6.5" width="10" height="5" rx="0.5" fill="var(--glow)" />
-      </svg>
+      <Logo size={22} />
       Lueur
     </div>
 

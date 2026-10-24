@@ -1,41 +1,38 @@
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  <!-- Three lights around a screen, each mirroring its own slice: the product
-       model itself. Zone hues match the room plan in the app. -->
+  <!-- A single light and its glow, tinted by what it mirrors: the bounce on
+       the wall takes the zone hues of the room plan (coral left, amber
+       behind, blue right) around a warm core. That glow is the lueur. -->
   <defs>
-    <radialGradient id="glowLeft" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#e78a6e" stop-opacity="0.9"/>
-      <stop offset="1" stop-color="#e78a6e" stop-opacity="0"/>
+    <radialGradient id="core" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f6d48e"/>
+      <stop offset="0.6" stop-color="#f4ae7c"/>
+      <stop offset="1" stop-color="#ec8e6f"/>
     </radialGradient>
-    <radialGradient id="glowBehind" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#d1a458" stop-opacity="0.9"/>
-      <stop offset="1" stop-color="#d1a458" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="glowRight" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#6ba9c7" stop-opacity="0.9"/>
-      <stop offset="1" stop-color="#6ba9c7" stop-opacity="0"/>
+    <radialGradient id="rim" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.55" stop-color="#fbe7c0" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#fbe7c0" stop-opacity="0"/>
     </radialGradient>
     <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="30"/>
+      <feGaussianBlur stdDeviation="34"/>
     </filter>
+    <clipPath id="tile">
+      <rect x="16" y="16" width="480" height="480" rx="112"/>
+    </clipPath>
   </defs>
 
   <!-- Rounded app tile, neutral anthracite like the app chrome -->
   <rect x="16" y="16" width="480" height="480" rx="112" fill="#131316"/>
 
-  <!-- The bounce: light spilling onto the wall behind and beside the screen -->
-  <g filter="url(#soft)">
-    <ellipse cx="146" cy="262" rx="74" ry="132" fill="url(#glowLeft)"/>
-    <ellipse cx="256" cy="158" rx="146" ry="70" fill="url(#glowBehind)"/>
-    <ellipse cx="366" cy="262" rx="74" ry="132" fill="url(#glowRight)"/>
+  <!-- The bounce, one hue per zone -->
+  <g clip-path="url(#tile)">
+    <g filter="url(#soft)">
+      <circle cx="186" cy="276" r="112" fill="#e78a6e"/>
+      <circle cx="236" cy="180" r="104" fill="#e0b062"/>
+      <circle cx="326" cy="264" r="116" fill="#6ba9c7"/>
+    </g>
   </g>
 
-  <!-- The screen -->
-  <rect x="152" y="172" width="208" height="146" rx="16" fill="#191a1d"
-        stroke="#383a40" stroke-width="4"/>
-  <!-- A glimmer on the glass: the lueur -->
-  <path d="M180 300 L216 200 L252 300 Z" fill="#eceef2" opacity="0.14"/>
-
-  <!-- Stand -->
-  <rect x="240" y="318" width="32" height="24" fill="#282a2f"/>
-  <rect x="208" y="340" width="96" height="13" rx="6.5" fill="#282a2f"/>
+  <!-- The light itself -->
+  <circle cx="256" cy="256" r="124" fill="url(#rim)"/>
+  <circle cx="256" cy="256" r="84" fill="url(#core)"/>
 </svg>

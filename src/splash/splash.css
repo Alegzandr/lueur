@@ -20,6 +20,9 @@ body {
 }
 
 h1 {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
   margin: 0;
   font-size: var(--t-lg);
   font-weight: 600;
