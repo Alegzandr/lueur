@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { app, edit, fail } from "../state.svelte";
+  import { app, edit, exportConfig, fail, importConfig } from "../state.svelte";
   import { t, pct } from "../i18n";
   import * as ipc from "../ipc";
   import {
@@ -245,6 +245,12 @@
           <Switch checked={c.behavior[b.key]} label={b.label} onchange={(v) => setBehavior(b.key, v)} />
         </Row>
       {/each}
+      <Row label={t("config_file")} tip={t("config_file_tip")}>
+        <div class="file-actions">
+          <button class="btn sm" disabled={!ipc.inTauri()} onclick={exportConfig}>{t("export")}</button>
+          <button class="btn sm" disabled={!ipc.inTauri()} onclick={importConfig}>{t("import")}</button>
+        </div>
+      </Row>
     </div>
   </section>
 
@@ -259,6 +265,11 @@
     text-align: center;
     font-size: var(--t-sm);
     color: var(--text-3);
+  }
+  .file-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--s-2);
   }
   select {
     width: 100%;

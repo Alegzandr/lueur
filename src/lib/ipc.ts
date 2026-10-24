@@ -9,8 +9,11 @@ import {
   type AppConfig,
   type DiscoveredDevice,
   type EffectStatus,
+  type Endpoint,
+  type LightState,
   type MonitorInfo,
   type PowerResult,
+  type TuyaLogin,
 } from "./types";
 
 /** True when we're running inside the Tauri webview. */
@@ -49,6 +52,7 @@ function demoConfig(): AppConfig {
     port: 55443,
     model: "color",
     name: `Yeelight Color ${i + 1}`,
+    kind: { family: "yeelight" },
   }));
   return c;
 }
@@ -68,6 +72,16 @@ export async function getConfig(): Promise<AppConfig> {
 export async function saveConfig(config: AppConfig): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>("save_config", { config });
+}
+
+/** Save the config to a file the user picks. False if they cancelled. */
+export async function exportConfig(): Promise<boolean> {
+  return invoke<boolean>("export_config");
+}
+
+/** Replace the config with a file the user picks. Null if they cancelled. */
+export async function importConfig(): Promise<AppConfig | null> {
+  return invoke<AppConfig | null>("import_config");
 }
 
 export async function listMonitors(): Promise<MonitorInfo[]> {
@@ -90,32 +104,73 @@ export async function discoverDevices(timeoutMs = 2500): Promise<DiscoveredDevic
       name: demo() && i < 3 ? `Yeelight Color ${i + 1}` : "",
       support: ["set_music", "set_rgb"],
       fw_ver: "26",
+      kind: { family: "yeelight" as const },
+      paired: true,
     }));
   }
   return invoke<DiscoveredDevice[]>("discover_devices", { timeoutMs });
 }
 
 export async function testDevice(
-  ip: string,
-  port: number,
+  endpoint: Endpoint,
   r: number,
   g: number,
   b: number,
 ): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("test_device", { ip, port, r, g, b });
+  return invoke<void>("test_device", { endpoint, r, g, b });
 }
 
-/** Power a bulb on/off by address. */
-export async function setDevicePower(ip: string, port: number, on: boolean): Promise<void> {
+/** Power one bulb on/off. */
+export async function setDevicePower(endpoint: Endpoint, on: boolean): Promise<void> {
   if (!inTauri()) return;
-  return invoke<void>("set_device_power", { ip, port, on });
+  return invoke<void>("set_device_power", { endpoint, on });
+}
+
+/** Pair with a Hue bridge or Nanoleaf controller. Rejects with
+ *  `pair_waiting` until its button has been pressed. */
+export async function pairDevice(device: DiscoveredDevice): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("pair_device", { device });
+}
+
+/** Start a Smart Life sign-in: returns the QR code to show. */
+export async function tuyaLoginStart(userCode: string): Promise<TuyaLogin> {
+  return invoke<TuyaLogin>("tuya_login_start", { userCode });
+}
+
+/** Null until the QR code is scanned, then how many bulbs were imported. */
+export async function tuyaLoginPoll(token: string, userCode: string): Promise<number | null> {
+  return invoke<number | null>("tuya_login_poll", { token, userCode });
 }
 
 /** Power the bulb bound to a room light on/off. */
 export async function setLightPower(lightId: string, on: boolean): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>("set_light_power", { lightId, on });
+}
+
+/** Set a light by hand. Rejects with `light_following` while the running
+ *  ambilight drives it. */
+export async function setLightState(lightId: string, state: LightState): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("set_light_state", { lightId, state });
+}
+
+/** Apply a built-in mood or a saved scene to every light. Stops the effect. */
+export async function applyScene(id: string): Promise<PowerResult> {
+  if (!inTauri()) {
+    previewRunning = false;
+    return { total: 0, succeeded: 0, failures: [] };
+  }
+  return invoke<PowerResult>("apply_scene", { id });
+}
+
+/** Called when the tray or automatic mode changed what the lights show. */
+export async function onLightsChanged(cb: () => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen("lights-changed", () => cb());
 }
 
 /** Power every bound bulb on/off. Turning off also stops the effect. */

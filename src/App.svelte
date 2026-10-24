@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { app, bootstrap, fail, refreshStatus, toggleEffect, type View } from "./lib/state.svelte";
+  import { app, bootstrap, fail, refreshStatus, reloadStates, toggleEffect, type View } from "./lib/state.svelte";
   import { lang, t, tn } from "./lib/i18n";
-  import { onEffectChanged, onUpdateReady, setUiLanguage, setWindowTheme, updateReady } from "./lib/ipc";
+  import { onEffectChanged, onLightsChanged, onUpdateReady, setUiLanguage, setWindowTheme, updateReady } from "./lib/ipc";
   import Icon, { type IconName } from "./lib/ui/Icon.svelte";
   import Toasts from "./lib/ui/Toasts.svelte";
   import UpdateBanner from "./lib/ui/UpdateBanner.svelte";
@@ -27,6 +27,9 @@
       if (error) fail(error);
       void refreshStatus();
     }).then((u) => (unlisten = u));
+    // The tray or automatic mode changed what the lights show.
+    let unlistenLights = () => {};
+    onLightsChanged(() => void reloadStates()).then((u) => (unlistenLights = u));
     // An update installed in the background waits for a restart.
     let unlistenUpdate = () => {};
     updateReady()
@@ -36,6 +39,7 @@
     return () => {
       clearInterval(poll);
       unlisten();
+      unlistenLights();
       unlistenUpdate();
     };
   });
@@ -72,6 +76,10 @@
   const bound = $derived(app.config.bindings.length);
   const unbound = $derived(
     app.config.room.lights.filter((l) => !app.config.bindings.some((b) => b.light_id === l.id)).length,
+  );
+  // Automatic mode only exists where fullscreen can be detected (Windows).
+  const waitingForFullscreen = $derived(
+    /windows/i.test(navigator.userAgent) && app.config.behavior.auto_fullscreen && bound > 0,
   );
   const mod = navigator.platform.toLowerCase().includes("mac") ? "⌘" : "Ctrl+";
 </script>
@@ -122,6 +130,8 @@
                   : tn("n_bulbs_following", app.status.connected_lights)}
               {:else if bound === 0}
                 {t("state_none")}
+              {:else if waitingForFullscreen}
+                {t("auto_waiting")}
               {:else}
                 {tn("n_bulbs_ready", bound)}
               {/if}

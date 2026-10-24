@@ -11,6 +11,7 @@
 //! * [`yeelight`] — the Yeelight LAN protocol, discovery and music-mode control.
 //! * [`device`] — every bulb family (Yeelight, WiZ, LIFX, Govee, Hue, Nanoleaf)
 //!   behind one stream / power / identify interface, plus their discovery.
+//! * [`scene`] — lights held steady by hand: built-in moods and saved scenes.
 //! * [`config`] — persisted settings and portable data-dir resolution.
 //!
 //! The desktop shell (`src-tauri`) supplies real screen capture and the webview;
@@ -22,6 +23,7 @@ pub mod config;
 pub mod device;
 pub mod engine;
 pub mod geometry;
+pub mod scene;
 pub mod yeelight;
 
 pub use color::Rgb;

@@ -3,22 +3,26 @@
 //! The shell decides where the data directory is (see `src-tauri/src/paths.rs`);
 //! this module only reads and writes `config.json` inside it.
 
+use crate::device::{DeviceKind, Endpoint, Pairings};
 use crate::engine::EngineSettings;
 use crate::geometry::Room;
+use crate::scene::{LightState, Scene};
 use crate::yeelight::Effect;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Bumped when the on-disk format changes incompatibly.
 pub const CONFIG_VERSION: u32 = 1;
 
 /// Links a light placed in the room ([`crate::geometry::Light::id`]) to a
-/// physical Yeelight bulb.
+/// physical bulb.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeviceBinding {
     /// Matches `Light.id` in the room layout.
     pub light_id: String,
-    /// Yeelight device id (stable across IP changes).
+    /// Device id (stable across IP changes; family-prefixed for every family
+    /// but Yeelight).
     pub device_id: String,
     pub ip: String,
     #[serde(default = "default_port")]
@@ -27,6 +31,20 @@ pub struct DeviceBinding {
     pub model: String,
     #[serde(default)]
     pub name: String,
+    /// Bindings saved before other families existed have none: Yeelight.
+    #[serde(default)]
+    pub kind: DeviceKind,
+}
+
+impl DeviceBinding {
+    pub fn endpoint(&self) -> Endpoint {
+        Endpoint {
+            id: self.device_id.clone(),
+            ip: self.ip.clone(),
+            port: self.port,
+            kind: self.kind.clone(),
+        }
+    }
 }
 
 fn default_port() -> u16 {
@@ -82,6 +100,14 @@ pub struct BehaviorSettings {
     pub start_minimized: bool,
     /// Automatically start the ambilight effect when the app launches.
     pub autostart_effect: bool,
+    /// Start the ambilight when a game or video goes fullscreen, and stop it
+    /// when that ends (Windows).
+    #[serde(default = "yes")]
+    pub auto_fullscreen: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for BehaviorSettings {
@@ -91,6 +117,7 @@ impl Default for BehaviorSettings {
             minimize_to_tray: true,
             start_minimized: false,
             autostart_effect: false,
+            auto_fullscreen: true,
         }
     }
 }
@@ -137,6 +164,9 @@ pub struct AppConfig {
     pub room: Room,
     #[serde(default)]
     pub bindings: Vec<DeviceBinding>,
+    /// What bridges and accounts granted Lueur, so their bulbs stay usable.
+    #[serde(default)]
+    pub pairings: Pairings,
     #[serde(default)]
     pub capture: CaptureSettings,
     #[serde(default)]
@@ -147,6 +177,13 @@ pub struct AppConfig {
     pub behavior: BehaviorSettings,
     #[serde(default)]
     pub interface: InterfaceSettings,
+    /// What each light was last set to by hand, keyed by room light id, so
+    /// the controls show it and switching a light back on restores it.
+    #[serde(default)]
+    pub states: BTreeMap<String, LightState>,
+    /// Scenes the user saved, in the order they are shown.
+    #[serde(default)]
+    pub scenes: Vec<Scene>,
 }
 
 fn default_version() -> u32 {
@@ -159,11 +196,14 @@ impl Default for AppConfig {
             version: CONFIG_VERSION,
             room: Room::default(),
             bindings: Vec::new(),
+            pairings: Pairings::default(),
             capture: CaptureSettings::default(),
             engine: EngineSettings::default(),
             transition: TransitionSettings::default(),
             behavior: BehaviorSettings::default(),
             interface: InterfaceSettings::default(),
+            states: BTreeMap::new(),
+            scenes: Vec::new(),
         }
     }
 }
@@ -279,9 +319,21 @@ mod tests {
             port: 55443,
             model: "color".into(),
             name: "desk".into(),
+            kind: DeviceKind::Yeelight,
         });
         assert!(cfg.binding_for("l1").is_some());
         assert!(cfg.binding_for("nope").is_none());
+    }
+
+    #[test]
+    fn old_bindings_read_as_yeelight() {
+        let json =
+            r#"{ "bindings": [{ "light_id": "l1", "device_id": "0x1", "ip": "192.168.1.5" }] }"#;
+        let cfg = AppConfig::from_json(json).unwrap();
+        let ep = cfg.bindings[0].endpoint();
+        assert_eq!(ep.kind, DeviceKind::Yeelight);
+        assert_eq!(ep.port, crate::yeelight::DEFAULT_CONTROL_PORT);
+        assert!(cfg.pairings.hue.is_empty());
     }
 
     #[test]

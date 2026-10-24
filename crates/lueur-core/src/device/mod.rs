@@ -17,6 +17,7 @@ pub mod hue;
 pub mod lifx;
 pub mod mdns;
 pub mod nanoleaf;
+pub mod tuya;
 pub mod wiz;
 
 use crate::color::{BulbOutput, Rgb};
@@ -53,6 +54,17 @@ pub enum DeviceKind {
         #[serde(default)]
         token: String,
     },
+    /// A Tuya / Smart Life bulb. The shell drives these (see
+    /// [`tuya`]); `key` is the device's local key from the Smart Life
+    /// sign-in, `version` the protocol it answered to (empty until known).
+    Tuya {
+        #[serde(default)]
+        key: String,
+        #[serde(default)]
+        version: String,
+        #[serde(default)]
+        dps: tuya::TuyaDps,
+    },
 }
 
 impl DeviceKind {
@@ -64,6 +76,7 @@ impl DeviceKind {
             DeviceKind::Govee => "govee",
             DeviceKind::Hue { .. } => "hue",
             DeviceKind::Nanoleaf { .. } => "nanoleaf",
+            DeviceKind::Tuya { .. } => "tuya",
         }
     }
 
@@ -72,6 +85,7 @@ impl DeviceKind {
         match self {
             DeviceKind::Hue { username, light } => !username.is_empty() && !light.is_empty(),
             DeviceKind::Nanoleaf { token } => !token.is_empty(),
+            DeviceKind::Tuya { key, .. } => !key.is_empty(),
             _ => true,
         }
     }
@@ -159,6 +173,20 @@ pub struct NanoleafPairing {
     pub token: String,
 }
 
+/// A Tuya bulb imported from the user's Smart Life account. Only what local
+/// control needs is kept; the account's tokens are discarded after import.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TuyaDevice {
+    /// Tuya device id, as the cloud reports it (no family prefix).
+    pub id: String,
+    pub name: String,
+    pub key: String,
+    #[serde(default)]
+    pub product: String,
+    #[serde(default)]
+    pub dps: tuya::TuyaDps,
+}
+
 /// Credentials Lueur was granted, by family.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pairings {
@@ -166,6 +194,8 @@ pub struct Pairings {
     pub hue: Vec<HueBridge>,
     #[serde(default)]
     pub nanoleaf: Vec<NanoleafPairing>,
+    #[serde(default)]
+    pub tuya: Vec<TuyaDevice>,
 }
 
 /// A live, per-frame channel to one bulb.
@@ -222,6 +252,7 @@ pub fn open_stream(ep: &Endpoint, siblings: usize) -> io::Result<Box<dyn LightSt
         DeviceKind::Nanoleaf { token } => {
             Box::new(nanoleaf::NanoleafStream::open(&ep.ip, ep.port, token)?)
         }
+        DeviceKind::Tuya { .. } => return Err(shell_only()),
     })
 }
 
@@ -237,6 +268,7 @@ pub fn set_power(ep: &Endpoint, on: bool) -> io::Result<()> {
         DeviceKind::Govee => govee::set_power(&ep.ip, on),
         DeviceKind::Hue { username, light } => hue::set_power(&ep.ip, username, light, on),
         DeviceKind::Nanoleaf { token } => nanoleaf::set_power(&ep.ip, ep.port, token, on),
+        DeviceKind::Tuya { .. } => Err(shell_only()),
     }
 }
 
@@ -260,6 +292,14 @@ pub fn identify(ep: &Endpoint, color: Rgb) -> io::Result<()> {
             open_stream(ep, 1)?.push(output, Effect::Smooth, 300)
         }
     }
+}
+
+/// Tuya's transport lives in the shell, which handles these kinds itself.
+fn shell_only() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Tuya devices are driven by the shell",
+    )
 }
 
 fn require_ready(ep: &Endpoint) -> io::Result<()> {

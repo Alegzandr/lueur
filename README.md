@@ -33,17 +33,46 @@ around you follows what's on screen.
   executable that installs itself silently for the current user, no admin
   rights, no wizard. Every launch checks GitHub for a new version and applies
   it before the app starts.
+- 🤖 **Automatic.** On Windows, the ambilight starts by itself when a game or
+  a video goes fullscreen and stops when it ends, handing each light back to
+  what it showed before. Fullscreen is read from the shell's notification
+  state (what Windows uses to hold notifications during a game): no window
+  or process is ever inspected.
+- 💡 **Everyday lighting too.** Brightness, warm-to-cool white and colour for
+  each light, four built-in moods (Daylight, Reading, Relax, Night light) and
+  your own saved scenes, from the window or the tray menu, so the phone app
+  can stay in your pocket.
 - 🔌 **Tray, autostart, start-minimised.** Close to tray, launch at login, and
   optionally auto-start the effect.
-- 🔒 **Minimal attack surface.** The only network traffic is LAN bulb control,
-  SSDP discovery and the update check against GitHub, whose downloads are
-  signature-checked; strict Content-Security-Policy; every IPC input is validated.
+- 🔒 **Minimal attack surface.** Network traffic is LAN bulb control and
+  discovery, the update check against GitHub (whose downloads are
+  signature-checked) and, only while you import Smart Life bulbs, Tuya's
+  sign-in API; strict Content-Security-Policy; every IPC input is validated.
 - 🛡️ **Anti-cheat safe.** Lueur reads the screen the way OBS or Discord screen
   share do, and nothing else. See [Competitive games and anti-cheat](#competitive-games-and-anti-cheat).
 
-> **Supported bulbs today:** Yeelight Color (v2). More models will be added as
-> they can be tested — the device layer is a small trait, so new bulbs slot in
-> without touching the engine.
+> **Supported bulbs:** Yeelight Color (tested), Smart Life / Tuya colour bulbs
+> (tested on a v3.3 bulb), Philips Hue (through the bridge), WiZ, LIFX, Govee
+> (LAN Control on) and Nanoleaf. Everything is driven over the LAN; the device
+> layer is a small trait, so new families slot in without touching the engine.
+
+### Smart Life / Tuya bulbs
+
+Tuya bulbs only obey clients that know their *local key*, which the Smart Life
+app keeps to itself. **Smart Life** on the Bulbs page asks for your user code
+(Smart Life: Me → ⚙ → Account and Security → User Code) and shows a QR code;
+scan it from the Smart Life app and confirm. Lueur then lists your homes'
+colour bulbs, keeps each one's id and local key, and ends the session: no
+account token is stored, and everything afterwards is local.
+
+- Bulbs someone shared with you one by one are not visible to this sign-in.
+  Ask their owner to add you to their home instead.
+- Lueur finds the bulbs by their UDP announcements where the firewall lets
+  them through, and otherwise by knocking on TCP 6668 across your /24 and
+  trying the imported keys.
+- The sign-in uses the partner id Home Assistant ships with Tuya's SDK
+  (`CLIENT_ID` in `src-tauri/src/tuya_cloud.rs`). A public release should
+  register its own with Tuya.
 
 ## The app
 
@@ -55,7 +84,7 @@ to leave a game.
 
 | Lighting | Room | Bulbs | Settings |
 |---|---|---|---|
-| Every light with its power and "follows the screen" switch, a response preset (Instant, Balanced, Calm), brightness and colour intensity | A floor plan you draw on: drag lights, corners and the screen, drag *You* to turn the screen | Network search, *Add all*, assign a bulb to an existing light, rename | Capture, colour, transitions, language, appearance and startup |
+| Moods and saved scenes; every light with its power, brightness, white or colour and "follows the screen" switch; the ambilight's automatic mode, response preset (Instant, Balanced, Calm), brightness and colour intensity | A floor plan you draw on: drag lights, corners and the screen, drag *You* to turn the screen | Network search, *Add all*, assign a bulb to an existing light, rename | Capture, colour, transitions, language, appearance and startup |
 
 The first launch walks you through three steps (add bulbs, place them, start).
 New bulbs land in a row behind the screen, the usual setup. Bulbs that get a
@@ -119,11 +148,16 @@ lueur/
 │   ├─ geometry.rs        Room model + light→screen-zone mapping
 │   ├─ engine.rs          Frame → one colour per light
 │   ├─ yeelight/          LAN protocol, SSDP discovery, music-mode sockets
+│   ├─ device/            Every family behind one stream/power/identify API:
+│   │                     WiZ, LIFX, Govee, Hue, Nanoleaf, Tuya DP encoding
 │   └─ config.rs          Persisted settings
 ├─ src-tauri/             Desktop shell (Tauri v2)
 │   ├─ capture.rs         Screen capture behind a FrameSource trait
 │   │  └─ dxgi.rs        Windows: Desktop Duplication, GPU-downscaled
 │   ├─ runner.rs          The live capture→compute→push loop
+│   ├─ devices.rs         Dispatch between the core families and Tuya
+│   ├─ tuya.rs            Tuya LAN control (rustuya), discovery by key
+│   ├─ tuya_cloud.rs      Smart Life QR sign-in that imports local keys
 │   ├─ commands.rs        Validated IPC surface
 │   ├─ tray.rs            Tray menu: start/stop, open, quit
 │   ├─ error.rs           Errors sent as codes the UI words in its language
@@ -182,7 +216,9 @@ npm run tauri build                  # Linux: AppImage, macOS: .app
 
 The output lands in `target/release/`. Settings live in a `lueur` folder in
 your user config dir (`%APPDATA%`, `~/.config`, `~/Library/Application
-Support`); set `LUEUR_DATA_DIR` to put them elsewhere.
+Support`); set `LUEUR_DATA_DIR` to put them elsewhere. **Settings →
+Configuration** exports them to a file and imports one back, to keep a copy
+or move to another computer.
 
 ## Install, updates and releases
 
@@ -199,8 +235,9 @@ updates replace that file or bundle in place.
 GitHub release; a new version is downloaded, its signature checked, installed,
 and the app restarts into it. Without network it gives up after a few seconds.
 While Lueur runs it checks again every six hours, installs what it finds, and
-offers a restart in the sidebar. This is the only traffic Lueur sends beyond
-your LAN, over HTTPS to github.com. Development builds never update.
+offers a restart in the sidebar. Apart from the Smart Life
+sign-in, this is the only traffic Lueur sends beyond your LAN, over HTTPS to
+github.com. Development builds never update.
 
 **Releasing.** Bump `version` in `Cargo.toml` (`[workspace.package]`) and
 `package.json`, merge to `main`, then push a tag:
@@ -218,9 +255,11 @@ whose public key goes in `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`
 
 ## First-time setup in the app
 
-1. **Bulbs**: Lueur searches the network on first visit. (Enable **LAN
-   Control** for each bulb in the official Yeelight app first.) Add the bulbs
-   you want; *Identify* flashes one so you know which is which.
+1. **Bulbs**: Lueur searches the network on first visit. (Yeelight and
+   Govee need **LAN Control** on in their app first; a Hue bridge or Nanoleaf
+   asks you to press its button once; Smart Life bulbs need the sign-in
+   above.) Add the bulbs you want; *Identify* flashes one so you know which is
+   which.
 2. **Room**: drag the **screen** to where your monitor is and drag the **You**
    marker to your seat to turn it; drag each **light** to its real position. The
    dotted lines and glows show what each light will mirror.
@@ -229,7 +268,8 @@ whose public key goes in `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`
 
 ## Roadmap
 
-- More bulb families (Philips Hue Entertainment, WLED, LIFX, Govee LAN…).
+- Hue Entertainment streaming (DTLS) instead of the REST API, and WLED.
+- Testing WiZ, LIFX, Govee, Hue and Nanoleaf on real hardware.
 - Optional per-light manual zone override in the UI.
 - Multi-monitor spanning and per-zone brightness curves.
 

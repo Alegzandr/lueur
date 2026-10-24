@@ -1,6 +1,8 @@
 //! Shared application state managed by Tauri.
 
+use crate::auto;
 use crate::error::{AppError, AppResult};
+use crate::manual::Manual;
 use crate::runner;
 use lueur_core::config::{self, AppConfig};
 use std::path::PathBuf;
@@ -13,6 +15,10 @@ pub struct AppState {
     pub config: Mutex<AppConfig>,
     /// The running effect, if any.
     pub effect: Mutex<Option<runner::Handle>>,
+    /// Lights being set by hand.
+    pub manual: Manual,
+    /// Who started the running effect, for automatic mode.
+    pub auto_owner: Mutex<auto::Owner>,
     /// Language the interface resolved to ("en" or "fr"), reported by the
     /// frontend so the tray menu can match it.
     pub ui_language: Mutex<String>,
@@ -29,6 +35,8 @@ impl AppState {
             data_dir,
             config: Mutex::new(config),
             effect: Mutex::new(None),
+            manual: Manual::default(),
+            auto_owner: Mutex::new(auto::Owner::default()),
             ui_language: Mutex::new("en".into()),
         }
     }

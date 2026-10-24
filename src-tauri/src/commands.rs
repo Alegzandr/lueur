@@ -3,53 +3,36 @@
 //! Security notes:
 //! * Every command validates its inputs (addresses, colour ranges, timeouts).
 //! * No command takes a shell string, path to execute, or arbitrary URL; the
-//!   only network egress is LAN Yeelight control and SSDP discovery (plus the
-//!   update check in `updater.rs`, which no command can point elsewhere).
+//!   network egress is LAN bulb control and discovery, the Smart Life sign-in
+//!   while the user is importing Tuya bulbs (Tuya's own hosts only, see
+//!   `tuya_cloud.rs`), and the update check in `updater.rs`. No command can
+//!   point any of them elsewhere.
+//! * The config export and import write and read only the file the user picks
+//!   in the system's own save and open dialogs; the interface never names a
+//!   path.
 //! * Discovery/connect timeouts are clamped so a malicious reply can't wedge us.
 
 use crate::capture::{self, MonitorInfo};
+use crate::devices;
 use crate::error::{AppError, AppResult};
-use crate::runner::{self, LiveSettings};
+use crate::lights::{self, PowerResult, poisoned, power_one, unreachable, validate_ip};
+use crate::runner::LiveSettings;
 use crate::state::AppState;
+use crate::tuya_cloud::{self, CloudError};
 use lueur_core::color::Rgb;
 use lueur_core::config::AppConfig;
-use lueur_core::yeelight::{self, DiscoveredDevice, YeelightControl};
+use lueur_core::device::{self, DeviceKind, DiscoveredDevice, Endpoint, hue, nanoleaf};
+use lueur_core::scene::LightState;
+use std::io;
 use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 
 /// Result of querying/toggling the effect, sent back to the UI.
 #[derive(serde::Serialize)]
 pub struct EffectStatus {
     pub running: bool,
     pub connected_lights: usize,
-}
-
-/// Outcome of a bulk power command. Individual bulbs are allowed to fail (one
-/// may be unplugged); the UI reports the tally rather than erroring out.
-#[derive(serde::Serialize)]
-pub struct PowerResult {
-    pub total: usize,
-    pub succeeded: usize,
-    /// Names of the lights whose bulb did not answer.
-    pub failures: Vec<String>,
-}
-
-/// How long we give a single bulb to accept a power command.
-const POWER_TIMEOUT: Duration = Duration::from_secs(3);
-
-/// Blocking helper: open a control connection and flip the bulb's power.
-fn power_one(ip: &str, port: u16, on: bool) -> AppResult<()> {
-    let mut ctrl =
-        YeelightControl::connect(ip, port, POWER_TIMEOUT).map_err(|e| unreachable(ip, e))?;
-    ctrl.set_power(on).map_err(|e| unreachable(ip, e))
-}
-
-fn unreachable(ip: &str, e: impl std::fmt::Display) -> AppError {
-    AppError::new("bulb_unreachable").subject(ip).detail(e)
-}
-
-fn poisoned() -> AppError {
-    AppError::internal("lock poisoned")
 }
 
 /// Return the current configuration.
@@ -64,16 +47,28 @@ pub fn get_config(state: State<AppState>) -> AppResult<AppConfig> {
 
 /// Replace and persist the configuration. If the effect is running, live-tunable
 /// settings are pushed to it immediately.
+///
+/// Pairings are the backend's: they change behind the interface's back (a
+/// bridge paired, a Smart Life import), so the copy sent here is ignored, and
+/// Tuya bindings take their key from them.
 #[tauri::command]
-pub fn save_config(state: State<AppState>, config: AppConfig) -> AppResult<()> {
+pub fn save_config(app: AppHandle, state: State<AppState>, mut config: AppConfig) -> AppResult<()> {
     {
         let mut guard = state.config.lock().map_err(|_| poisoned())?;
+        config.pairings = guard.pairings.clone();
+        refresh_tuya_keys(&mut config);
         *guard = config;
     }
     state.persist()?;
+    push_live(&state)?;
+    // Scenes may have been saved, renamed or removed.
+    crate::tray::refresh(&app);
+    Ok(())
+}
 
-    // Push live settings to a running effect (topology changes need a restart,
-    // which the UI performs explicitly).
+/// Push live settings to a running effect (topology changes need a restart,
+/// which the UI performs explicitly).
+fn push_live(state: &AppState) -> AppResult<()> {
     let cfg = state.config.lock().map_err(|_| poisoned())?;
     if let Ok(guard) = state.effect.lock()
         && let Some(handle) = guard.as_ref()
@@ -87,50 +82,285 @@ pub fn save_config(state: State<AppState>, config: AppConfig) -> AppResult<()> {
     Ok(())
 }
 
+/// Name the export dialog suggests.
+const EXPORT_FILE_NAME: &str = "lueur-config.json";
+/// A config is a few kilobytes; anything far larger is not one.
+const IMPORT_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+/// A file dialog for config files, over the main window.
+fn config_dialog(app: &AppHandle) -> tauri_plugin_dialog::FileDialogBuilder<tauri::Wry> {
+    let dialog = app.dialog().file().add_filter("JSON", &["json"]);
+    match app.get_webview_window("main") {
+        Some(win) => dialog.set_parent(&win),
+        None => dialog,
+    }
+}
+
+/// Save the whole configuration, pairings included, to a file the user
+/// picks. `false` if they cancelled.
+#[tauri::command]
+pub async fn export_config(app: AppHandle) -> AppResult<bool> {
+    let json = {
+        let cfg = app.state::<AppState>();
+        let cfg = cfg.config.lock().map_err(|_| poisoned())?;
+        cfg.to_json().map_err(AppError::internal)?
+    };
+    blocking(move || {
+        let Some(path) = config_dialog(&app)
+            .set_file_name(EXPORT_FILE_NAME)
+            .blocking_save_file()
+        else {
+            return Ok(false);
+        };
+        let path = path.into_path().map_err(AppError::internal)?;
+        std::fs::write(&path, json).map_err(|e| AppError::new("export_failed").detail(e))?;
+        Ok(true)
+    })
+    .await
+}
+
+/// Replace the configuration with one read from a file the user picks, and
+/// return it. `None` if they cancelled.
+///
+/// Whether Lueur opens at login stays this computer's: it mirrors the OS
+/// login item, which an import does not touch.
+#[tauri::command]
+pub async fn import_config(app: AppHandle) -> AppResult<Option<AppConfig>> {
+    let handle = app.clone();
+    let imported = blocking(move || {
+        let Some(path) = config_dialog(&handle).blocking_pick_file() else {
+            return Ok(None);
+        };
+        let path = path.into_path().map_err(AppError::internal)?;
+        let invalid = |e: &dyn std::fmt::Display| AppError::new("import_invalid").detail(e);
+        let size = std::fs::metadata(&path).map_err(|e| invalid(&e))?.len();
+        if size > IMPORT_MAX_BYTES {
+            return Err(invalid(&"file too large"));
+        }
+        let text = std::fs::read_to_string(&path).map_err(|e| invalid(&e))?;
+        let config = AppConfig::from_json(&text).map_err(|e| invalid(&e))?;
+        // The effect connects straight to these.
+        for ip in config
+            .bindings
+            .iter()
+            .map(|b| &b.ip)
+            .chain(config.pairings.hue.iter().map(|h| &h.ip))
+        {
+            validate_ip(ip)?;
+        }
+        Ok(Some(config))
+    })
+    .await?;
+    let Some(mut config) = imported else {
+        return Ok(None);
+    };
+
+    let state = app.state::<AppState>();
+    {
+        let mut guard = state.config.lock().map_err(|_| poisoned())?;
+        config.behavior.run_on_startup = guard.behavior.run_on_startup;
+        refresh_tuya_keys(&mut config);
+        *guard = config.clone();
+    }
+    state.persist()?;
+    push_live(&state)?;
+    crate::tray::refresh(&app);
+    Ok(Some(config))
+}
+
 /// List connected monitors for the capture picker.
 #[tauri::command]
 pub fn list_monitors() -> AppResult<Vec<MonitorInfo>> {
     capture::list_monitors()
 }
 
-/// Discover Yeelight bulbs on the LAN. `timeout_ms` is clamped to 500..=8000.
+/// Discover bulbs of every family on the LAN, plus the Tuya bulbs imported
+/// from Smart Life. `timeout_ms` is clamped to 500..=8000.
 #[tauri::command]
-pub async fn discover_devices(timeout_ms: Option<u64>) -> AppResult<Vec<DiscoveredDevice>> {
+pub async fn discover_devices(
+    state: State<'_, AppState>,
+    timeout_ms: Option<u64>,
+) -> AppResult<Vec<DiscoveredDevice>> {
     let ms = timeout_ms.unwrap_or(2500).clamp(500, 8000);
-    // Discovery blocks on UDP; run it off the async runtime's worker.
+    let (pairings, bindings) = {
+        let cfg = state.config.lock().map_err(|_| poisoned())?;
+        (cfg.pairings.clone(), cfg.bindings.clone())
+    };
+    // Discovery blocks on the network; run it off the async runtime's worker.
     tauri::async_runtime::spawn_blocking(move || {
-        yeelight::discover(Duration::from_millis(ms))
+        devices::discover(Duration::from_millis(ms), &pairings, &bindings)
             .map_err(|e| AppError::new("discovery_failed").detail(e))
     })
     .await
     .map_err(AppError::internal)?
 }
 
-/// Flash a bulb a colour so the user can identify it while placing lights.
-/// Uses a plain (rate-limited) control connection — this is a one-shot.
+/// A credential a bridge or controller granted.
+enum Granted {
+    Hue(device::HueBridge),
+    Nanoleaf(device::NanoleafPairing),
+}
+
+/// Pair with a Hue bridge or Nanoleaf controller found by discovery.
+///
+/// Fails with `pair_waiting` until the user has pressed the bridge's link
+/// button (or held the controller's power button); the interface retries.
 #[tauri::command]
-pub async fn test_device(ip: String, port: Option<u16>, r: u8, g: u8, b: u8) -> AppResult<()> {
-    validate_ip(&ip)?;
-    let port = port.unwrap_or(yeelight::DEFAULT_CONTROL_PORT);
+pub async fn pair_device(state: State<'_, AppState>, device: DiscoveredDevice) -> AppResult<()> {
+    validate_ip(&device.ip)?;
+    let family = device.kind.family();
+    let granted = tauri::async_runtime::spawn_blocking(move || match &device.kind {
+        DeviceKind::Hue { .. } => hue::pair(&device.ip).map(Granted::Hue),
+        DeviceKind::Nanoleaf { .. } => {
+            let id = device.id.strip_prefix("nanoleaf:").unwrap_or(&device.id);
+            nanoleaf::pair(&device.ip, device.port, id).map(Granted::Nanoleaf)
+        }
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "this device needs no pairing",
+        )),
+    })
+    .await
+    .map_err(AppError::internal)?
+    .map_err(|e| {
+        if e.kind() == io::ErrorKind::WouldBlock {
+            AppError::new("pair_waiting").subject(family)
+        } else {
+            AppError::new("pair_failed").detail(e)
+        }
+    })?;
+
+    {
+        let mut cfg = state.config.lock().map_err(|_| poisoned())?;
+        let p = &mut cfg.pairings;
+        match granted {
+            Granted::Hue(b) => {
+                p.hue.retain(|x| x.id != b.id);
+                p.hue.push(b);
+            }
+            Granted::Nanoleaf(n) => {
+                p.nanoleaf.retain(|x| x.id != n.id);
+                p.nanoleaf.push(n);
+            }
+        }
+    }
+    state.persist()
+}
+
+/// A Smart Life sign-in waiting for its QR code to be scanned.
+#[derive(serde::Serialize)]
+pub struct TuyaLogin {
+    pub token: String,
+    /// The QR code, as SVG markup generated here (never from the network).
+    pub svg: String,
+}
+
+fn cloud_error(e: CloudError) -> AppError {
+    match e {
+        CloudError::Unreachable(_) => AppError::new("cloud_unreachable").detail(e),
+        CloudError::Refused(_) => AppError::new("tuya_refused").detail(e),
+    }
+}
+
+/// Start a Smart Life sign-in for the account with `user_code`.
+#[tauri::command]
+pub async fn tuya_login_start(user_code: String) -> AppResult<TuyaLogin> {
+    if !tuya_cloud::valid_code(&user_code) {
+        return Err(AppError::new("invalid_user_code"));
+    }
     tauri::async_runtime::spawn_blocking(move || {
-        let mut ctrl = YeelightControl::connect(&ip, port, Duration::from_secs(3))
-            .map_err(|e| unreachable(&ip, e))?;
-        ctrl.set_power(true).map_err(|e| unreachable(&ip, e))?;
-        ctrl.set_rgb(Rgb::new(r, g, b))
-            .map_err(|e| unreachable(&ip, e))?;
-        Ok::<(), AppError>(())
+        let pending = tuya_cloud::start_login(&user_code).map_err(cloud_error)?;
+        let svg = tuya_cloud::qr_svg(&pending.qr).ok_or_else(|| AppError::internal("QR"))?;
+        Ok(TuyaLogin {
+            token: pending.token,
+            svg,
+        })
     })
     .await
     .map_err(AppError::internal)?
 }
 
-/// Turn a single bulb on or off by address. Used by the per-light power button
-/// and by anything that knows an address but not a room light.
+/// Check whether the QR code was scanned. `None` until it is; then the
+/// account's colour bulbs are imported and their number returned.
 #[tauri::command]
-pub async fn set_device_power(ip: String, port: Option<u16>, on: bool) -> AppResult<()> {
-    validate_ip(&ip)?;
-    let port = port.unwrap_or(yeelight::DEFAULT_CONTROL_PORT);
-    tauri::async_runtime::spawn_blocking(move || power_one(&ip, port, on))
+pub async fn tuya_login_poll(
+    state: State<'_, AppState>,
+    token: String,
+    user_code: String,
+) -> AppResult<Option<usize>> {
+    if !tuya_cloud::valid_code(&token) || !tuya_cloud::valid_code(&user_code) {
+        return Err(AppError::new("invalid_user_code"));
+    }
+    let bulbs = tauri::async_runtime::spawn_blocking(move || {
+        let Some(session) = tuya_cloud::poll_login(&token, &user_code).map_err(cloud_error)? else {
+            return Ok(None);
+        };
+        let bulbs = session.bulbs();
+        session.end();
+        bulbs.map(Some).map_err(cloud_error)
+    })
+    .await
+    .map_err(AppError::internal)??;
+    let Some(bulbs) = bulbs else {
+        return Ok(None);
+    };
+
+    let count = bulbs.len();
+    {
+        let mut cfg = state.config.lock().map_err(|_| poisoned())?;
+        let known = &mut cfg.pairings.tuya;
+        known.retain(|k| !bulbs.iter().any(|b| b.id == k.id));
+        known.extend(bulbs);
+        refresh_tuya_keys(&mut cfg);
+    }
+    state.persist()?;
+    Ok(Some(count))
+}
+
+/// A bulb re-added in Smart Life gets a new key: carry the imported one to
+/// the binding that drives it.
+fn refresh_tuya_keys(cfg: &mut AppConfig) {
+    let AppConfig {
+        bindings, pairings, ..
+    } = cfg;
+    for binding in bindings {
+        let Some(id) = binding.device_id.strip_prefix("tuya:") else {
+            continue;
+        };
+        if let (Some(fresh), DeviceKind::Tuya { key, dps, .. }) =
+            (pairings.tuya.iter().find(|b| b.id == id), &mut binding.kind)
+        {
+            key.clone_from(&fresh.key);
+            *dps = fresh.dps;
+        }
+    }
+}
+
+/// Flash a bulb a colour so the user can identify it while placing lights.
+#[tauri::command]
+pub async fn test_device(endpoint: Endpoint, r: u8, g: u8, b: u8) -> AppResult<()> {
+    validate_ip(&endpoint.ip)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        devices::identify(&endpoint, Rgb::new(r, g, b)).map_err(|e| unreachable(&endpoint.ip, e))
+    })
+    .await
+    .map_err(AppError::internal)?
+}
+
+/// Turn a single bulb on or off. Used by the per-light power button and by
+/// anything that knows a bulb but not a room light.
+#[tauri::command]
+pub async fn set_device_power(endpoint: Endpoint, on: bool) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || power_one(&endpoint, on))
+        .await
+        .map_err(AppError::internal)?
+}
+
+/// Run a blocking light command off the async runtime's worker.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> AppResult<T> + Send + 'static,
+) -> AppResult<T> {
+    tauri::async_runtime::spawn_blocking(f)
         .await
         .map_err(AppError::internal)?
 }
@@ -140,137 +370,66 @@ pub async fn set_device_power(ip: String, port: Option<u16>, on: bool) -> AppRes
 /// Resolving the binding here (rather than in the UI) keeps the address the
 /// backend acts on the one it persisted itself.
 #[tauri::command]
-pub async fn set_light_power(
-    state: State<'_, AppState>,
-    light_id: String,
-    on: bool,
-) -> AppResult<()> {
-    let binding = {
-        let cfg = state.config.lock().map_err(|_| poisoned())?;
-        cfg.binding_for(&light_id)
-            .cloned()
-            .ok_or_else(|| AppError::new("light_unbound"))?
-    };
-    validate_ip(&binding.ip)?;
-    tauri::async_runtime::spawn_blocking(move || power_one(&binding.ip, binding.port, on))
-        .await
-        .map_err(AppError::internal)?
+pub async fn set_light_power(app: AppHandle, light_id: String, on: bool) -> AppResult<()> {
+    blocking(move || lights::set_light_power(&app.state::<AppState>(), &light_id, on)).await
 }
 
-/// Turn every bound bulb on or off at once.
-///
-/// Turning everything off stops the effect first: the running loop would keep
-/// streaming colours (and its shutdown fade would light the bulbs back up),
-/// so an "all off" that left it running wouldn't stick.
+/// Set a light by hand: on or off, brightness, white or colour. Called as a
+/// slider moves; the interface keeps at most one call per light in flight.
+/// The interface records the state in the config itself.
 #[tauri::command]
-pub async fn set_all_power(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    on: bool,
-) -> AppResult<PowerResult> {
-    if !on {
-        stop_effect(app, state.clone()).await?;
-    }
+pub async fn set_light_state(app: AppHandle, light_id: String, state: LightState) -> AppResult<()> {
+    blocking(move || lights::set_light(&app.state::<AppState>(), &light_id, state)).await
+}
 
-    // Each bulb with the name of the light it drives, which is what the
-    // user calls it.
-    let bindings: Vec<(lueur_core::config::DeviceBinding, String)> = {
-        let cfg = state.config.lock().map_err(|_| poisoned())?;
-        cfg.bindings
-            .iter()
-            .map(|b| {
-                let name = cfg
-                    .room
-                    .lights
-                    .iter()
-                    .find(|l| l.id == b.light_id)
-                    .map(|l| l.name.clone())
-                    .unwrap_or_else(|| b.ip.clone());
-                (b.clone(), name)
-            })
-            .collect()
-    };
-    if bindings.is_empty() {
-        return Err(AppError::new("no_bindings"));
-    }
+/// Turn every bound bulb on or off at once. Off also stops the effect.
+#[tauri::command]
+pub async fn set_all_power(app: AppHandle, on: bool) -> AppResult<PowerResult> {
+    let handle = app.clone();
+    let result = blocking(move || lights::set_all_power(&handle.state::<AppState>(), on)).await;
+    crate::tray::refresh(&app);
+    result
+}
 
-    // One thread per bulb: a bulb that is unplugged costs the full timeout, and
-    // serialising those would make a handful of dead bulbs feel like a hang.
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let outcomes: Vec<Result<(), String>> = std::thread::scope(|scope| {
-            let handles: Vec<_> = bindings
-                .iter()
-                .map(|(b, name)| {
-                    scope.spawn(move || {
-                        validate_ip(&b.ip)
-                            .and_then(|_| power_one(&b.ip, b.port, on))
-                            .map_err(|_| name.clone())
-                    })
-                })
-                .collect();
-            handles
-                .into_iter()
-                .zip(&bindings)
-                .map(|(h, (_, name))| h.join().unwrap_or_else(|_| Err(name.clone())))
-                .collect()
-        });
-
-        let total = outcomes.len();
-        let failures: Vec<String> = outcomes.into_iter().filter_map(|r| r.err()).collect();
-        PowerResult {
-            total,
-            succeeded: total - failures.len(),
-            failures,
-        }
-    })
-    .await
-    .map_err(AppError::internal)?;
-
-    Ok(result)
+/// Apply a built-in mood or a saved scene to every light. Stops the effect.
+#[tauri::command]
+pub async fn apply_scene(app: AppHandle, id: String) -> AppResult<PowerResult> {
+    let handle = app.clone();
+    let result = blocking(move || lights::apply_scene(&handle.state::<AppState>(), &id)).await;
+    crate::tray::refresh(&app);
+    result
 }
 
 /// Start the ambilight effect from the saved config.
 #[tauri::command]
-pub async fn start_effect(app: AppHandle, state: State<'_, AppState>) -> AppResult<EffectStatus> {
-    // Stop any existing effect first (idempotent restart).
-    stop_effect(app.clone(), state.clone()).await?;
-
-    let config = state
-        .config
-        .lock()
-        .map(|c| c.clone())
-        .map_err(|_| poisoned())?;
-
-    // `runner::start` blocks (music-mode handshake); keep it off the UI thread.
-    let handle = tauri::async_runtime::spawn_blocking(move || runner::start(&config))
-        .await
-        .map_err(AppError::internal)??;
-
-    let connected = handle.connected_lights;
-    {
-        let mut guard = state.effect.lock().map_err(|_| poisoned())?;
-        *guard = Some(handle);
-    }
+pub async fn start_effect(app: AppHandle) -> AppResult<EffectStatus> {
+    // Opening the bulbs blocks (music-mode handshake); keep it off the UI thread.
+    let handle = app.clone();
+    let result = blocking(move || {
+        let state = handle.state::<AppState>();
+        crate::auto::user_took_over(&state);
+        lights::start_effect(&state)
+    })
+    .await;
     crate::tray::refresh(&app);
     Ok(EffectStatus {
         running: true,
-        connected_lights: connected,
+        connected_lights: result?,
     })
 }
 
 /// Stop the effect if running.
 #[tauri::command]
-pub async fn stop_effect(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
-    let handle = {
-        let mut guard = state.effect.lock().map_err(|_| poisoned())?;
-        guard.take()
-    };
-    if let Some(mut handle) = handle {
-        // stop() joins the loop thread; do it off the UI thread.
-        tauri::async_runtime::spawn_blocking(move || handle.stop())
-            .await
-            .map_err(AppError::internal)?;
-    }
+pub async fn stop_effect(app: AppHandle) -> AppResult<()> {
+    // stop() joins the loop thread; do it off the UI thread.
+    let handle = app.clone();
+    blocking(move || {
+        let state = handle.state::<AppState>();
+        crate::auto::user_took_over(&state);
+        lights::stop_effect(&state, true);
+        Ok(())
+    })
+    .await?;
     crate::tray::refresh(&app);
     Ok(())
 }
@@ -333,12 +492,4 @@ pub fn show_main_window(app: AppHandle) -> AppResult<()> {
         win.set_focus().map_err(AppError::internal)?;
     }
     Ok(())
-}
-
-/// Reject anything that isn't a bare IPv4/IPv6 address, so a command can never
-/// be tricked into connecting somewhere unexpected via a hostname or URL.
-fn validate_ip(ip: &str) -> AppResult<()> {
-    ip.parse::<std::net::IpAddr>()
-        .map(|_| ())
-        .map_err(|_| AppError::new("invalid_ip").subject(ip))
 }

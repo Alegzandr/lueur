@@ -1,22 +1,28 @@
 //! Lueur desktop shell.
 //!
-//! Wires the pure [`lueur_core`] engine to real screen capture, the Yeelight
-//! network and a Tauri webview, and adds the OS niceties gamers expect:
+//! Wires the pure [`lueur_core`] engine to real screen capture, the bulbs on
+//! the network and a Tauri webview, and adds the OS niceties gamers expect:
 //! system-tray minimise, launch-on-startup, single-instance behaviour, a
 //! silent per-user install on Windows and updates from GitHub releases.
 
 // The anti-cheat bans in `clippy.toml` are hard errors, not suggestions.
 #![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
+mod auto;
 mod capture;
 mod commands;
+mod devices;
 mod error;
 #[cfg(windows)]
 mod install;
+mod lights;
+mod manual;
 mod paths;
 mod runner;
 mod state;
 mod tray;
+mod tuya;
+mod tuya_cloud;
 mod updater;
 
 use state::AppState;
@@ -38,6 +44,7 @@ pub(crate) fn start(app: &AppHandle) {
     if let Err(e) = tray::setup(app) {
         eprintln!("lueur: tray: {e}");
     }
+    auto::spawn(app);
 
     let behavior = app
         .state::<AppState>()
@@ -57,16 +64,7 @@ pub(crate) fn start(app: &AppHandle) {
     if behavior.autostart_effect {
         let handle = app.clone();
         std::thread::spawn(move || {
-            let state = handle.state::<AppState>();
-            let cfg = match state.config.lock() {
-                Ok(c) => c.clone(),
-                Err(_) => return,
-            };
-            if let Ok(h) = runner::start(&cfg)
-                && let Ok(mut guard) = state.effect.lock()
-            {
-                *guard = Some(h);
-            }
+            let _ = lights::start_effect(&handle.state::<AppState>());
             tray::refresh(&handle);
         });
     }
@@ -96,17 +94,25 @@ pub fn run() {
             Some(vec![MINIMIZED_ARG]),
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .manage(updater::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
+            commands::export_config,
+            commands::import_config,
             commands::list_monitors,
             commands::discover_devices,
+            commands::pair_device,
+            commands::tuya_login_start,
+            commands::tuya_login_poll,
             commands::test_device,
             commands::set_device_power,
             commands::set_light_power,
             commands::set_all_power,
+            commands::set_light_state,
+            commands::apply_scene,
             commands::start_effect,
             commands::stop_effect,
             commands::effect_status,

@@ -28,8 +28,27 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
-# Only for the updater's timer: a six hour sleep must not hold a thread.
-tokio = { version = "1", features = ["time"] }
+# The save and open dialogs of the config export and import, used from Rust
+# only (no frontend permission).
+tauri-plugin-dialog = "2"
+# The updater's timer (a six hour sleep must not hold a thread) and the
+# runtime the Tuya driver runs on.
+tokio = { version = "1", features = ["net", "rt-multi-thread", "sync", "time"] }
+
+# Tuya / Smart Life (src/tuya.rs, src/tuya_cloud.rs). Local control goes
+# through rustuya; the one-off Smart Life sign-in that hands over each bulb's
+# local key is an HTTPS API whose payloads are signed and AES-GCM sealed.
+rustuya = { version = "0.4.6", features = ["tokio"] }
+ureq = { version = "3.5.0", features = ["json"] }
+aes-gcm = "0.11.1"
+base64 = "0.23.1"
+getrandom = "0.4.3"
+hmac = "0.13.0"
+md-5 = "0.11.0"
+sha2 = "0.11.1"
+uuid = { version = "1.29.0", features = ["v4"] }
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+
 # Cross-platform screen capture (Windows/macOS/Linux). Version pinned by
 # `cargo generate-lockfile`; see README for the capture-backend notes.
 xcap = "0.9"

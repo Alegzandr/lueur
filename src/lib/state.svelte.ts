@@ -3,14 +3,18 @@
 // change to the backend.
 
 import * as ipc from "./ipc";
-import { errorDetail, errorText, t } from "./i18n";
+import { errorDetail, errorText, t, tn } from "./i18n";
+import { DEFAULT_STATE } from "./scenes";
 import {
   defaultConfig,
   type AppConfig,
   type DeviceBinding,
   type DiscoveredDevice,
   type EffectStatus,
+  type Endpoint,
   type Light,
+  type LightState,
+  type TuyaLogin,
   type Vec2,
 } from "./types";
 
@@ -40,11 +44,14 @@ class AppState {
   discovered = $state<DiscoveredDevice[]>([]);
   hasScanned = $state(false);
   scanning = $state(false);
+  /** The bridge or controller waiting for its button to be pressed. */
+  pairing = $state<string | null>(null);
+  /** The Smart Life sign-in in progress, if any. */
+  tuya = $state<{ step: "code" | "starting" | "qr"; login?: TuyaLogin } | null>(null);
 
-  // Last power state we *sent* to each light. Yeelight's LAN protocol has no
-  // push channel, so this is an optimistic view, used only to draw buttons.
-  power = $state<Record<string, boolean>>({});
   powerBusy = $state<Record<string, boolean>>({});
+  /** The scene being applied, if any. */
+  sceneBusy = $state<string | null>(null);
 
   /** The light selected on the plan, shared so other views can deep-link. */
   selectedLight = $state<string | null>(null);
@@ -68,6 +75,15 @@ export function lightById(id: string): Light | undefined {
   return app.config.room.lights.find((l) => l.id === id);
 }
 
+/** What the backend needs to reach a bound bulb. */
+export function endpointOf(b: DeviceBinding): Endpoint {
+  return { id: b.device_id, ip: b.ip, port: b.port, kind: b.kind ?? { family: "yeelight" } };
+}
+
+export function endpointOfDevice(d: DiscoveredDevice): Endpoint {
+  return { id: d.id, ip: d.ip, port: d.port, kind: d.kind };
+}
+
 /**
  * The parts of the config a running effect only reads at start: the room,
  * which bulb drives which light, and the capture setup. Everything else is
@@ -83,8 +99,27 @@ export function needsRestart(): boolean {
   return app.status.running && app.startedWith !== null && app.startedWith !== topology();
 }
 
+/**
+ * What a light was last set to. Bulbs have no push channel back to us, so
+ * this is what Lueur sent rather than what the bulb reports; a light nobody
+ * has set yet reads as a warm white, on.
+ */
+export function lightState(lightId: string): LightState {
+  return app.config.states?.[lightId] ?? DEFAULT_STATE;
+}
+
 export function isOn(lightId: string): boolean {
-  return app.power[lightId] ?? true;
+  return lightState(lightId).on;
+}
+
+/** True while the running ambilight sets this light's colour. */
+export function isDriven(lightId: string): boolean {
+  return app.status.running && !!lightById(lightId)?.enabled && !!bindingFor(lightId);
+}
+
+/** Record a state the backend has already applied and persisted. */
+function recorded(lightId: string, s: LightState): void {
+  app.config.states = { ...app.config.states, [lightId]: s };
 }
 
 // --- Config editing and persistence ---
@@ -122,6 +157,8 @@ export async function bootstrap(): Promise<void> {
     const cfg = await ipc.getConfig();
     // Older configs predate some interface fields.
     cfg.interface = { ...defaultConfig().interface, ...cfg.interface };
+    cfg.states ??= {};
+    cfg.scenes ??= [];
     // Someone upgrading with a furnished room has arranged it already.
     if (cfg.room.lights.length > 0 && cfg.bindings.length > 0 && !cfg.interface.room_arranged) {
       cfg.interface.room_arranged = true;
@@ -196,7 +233,7 @@ export async function setLightPower(lightId: string, on: boolean): Promise<void>
   app.powerBusy[lightId] = true;
   try {
     await ipc.setLightPower(lightId, on);
-    app.power[lightId] = on;
+    recorded(lightId, { ...lightState(lightId), on });
   } catch (e) {
     fail(e);
   } finally {
@@ -214,14 +251,9 @@ export async function setAllPower(on: boolean): Promise<void> {
   app.busy = true;
   try {
     const res = await ipc.setAllPower(on);
-    for (const b of app.config.bindings) app.power[b.light_id] = on;
+    await reloadStates();
     if (!on) await refreshStatus();
-    if (res.failures.length > 0) {
-      notify(
-        "error",
-        t("partial_power", { ok: res.succeeded, total: res.total, names: res.failures.join(", ") }),
-      );
-    }
+    reportPartial(res);
   } catch (e) {
     fail(e);
   } finally {
@@ -229,13 +261,117 @@ export async function setAllPower(on: boolean): Promise<void> {
   }
 }
 
+function reportPartial(res: { total: number; succeeded: number; failures: string[] }): void {
+  if (res.failures.length > 0) {
+    notify("error", t("partial_power", { ok: res.succeeded, total: res.total, names: res.failures.join(", ") }));
+  }
+}
+
+// --- Setting lights by hand ---
+
+// One call per light in flight; while it runs, only the newest wish waits.
+// The first call reaches the bulb (seconds, for one that is unplugged), the
+// rest only move a slider's value along an open stream.
+const inFlight = new Set<string>();
+const waiting = new Map<string, LightState>();
+
+async function send(lightId: string, s: LightState): Promise<void> {
+  if (inFlight.has(lightId)) {
+    waiting.set(lightId, s);
+    return;
+  }
+  inFlight.add(lightId);
+  try {
+    await ipc.setLightState(lightId, s);
+  } catch (e) {
+    // One toast per failure, not one per slider step.
+    waiting.delete(lightId);
+    fail(e);
+  } finally {
+    inFlight.delete(lightId);
+  }
+  const next = waiting.get(lightId);
+  if (next) {
+    waiting.delete(lightId);
+    void send(lightId, next);
+  }
+}
+
+/** Change part of a light's state (brightness, white, colour) and show it.
+ *  Touching a light that is off turns it on. */
+export function adjustLight(lightId: string, patch: Partial<LightState>): void {
+  const next: LightState = { ...lightState(lightId), on: true, ...patch };
+  edit((c) => {
+    c.states = { ...c.states, [lightId]: next };
+  });
+  void send(lightId, next);
+}
+
+/** Bring the light states in line with what the backend recorded (after the
+ *  tray, automatic mode or a scene changed them). */
+export async function reloadStates(): Promise<void> {
+  if (!ipc.inTauri()) return;
+  try {
+    await persistNow();
+    const cfg = await ipc.getConfig();
+    app.config.states = cfg.states ?? {};
+  } catch {
+    /* the next change will catch up */
+  }
+}
+
+/** Apply a built-in mood or a saved scene. Stops the ambilight. */
+export async function applyScene(id: string): Promise<void> {
+  if (app.sceneBusy) return;
+  app.sceneBusy = id;
+  try {
+    await persistNow();
+    const res = await ipc.applyScene(id);
+    await reloadStates();
+    await refreshStatus();
+    reportPartial(res);
+  } catch (e) {
+    fail(e);
+  } finally {
+    app.sceneBusy = null;
+  }
+}
+
+/** Keep what every light with a bulb shows now as a named scene. */
+export function saveScene(name: string): void {
+  const lights: Record<string, LightState> = {};
+  for (const b of app.config.bindings) lights[b.light_id] = $state.snapshot(lightState(b.light_id));
+  const scene = { id: crypto.randomUUID(), name: name.trim() || t("scene_n", { n: app.config.scenes.length + 1 }), lights };
+  edit((c) => {
+    c.scenes = [...c.scenes, scene];
+  });
+  notify("info", t("scene_saved", { name: scene.name }));
+}
+
+/** Remove a saved scene, with an undo in the toast. */
+export function removeScene(id: string): void {
+  const index = app.config.scenes.findIndex((s) => s.id === id);
+  if (index < 0) return;
+  const scene = $state.snapshot(app.config.scenes[index]);
+  edit((c) => {
+    c.scenes = c.scenes.filter((s) => s.id !== id);
+  });
+  notify("info", t("removed", { name: scene.name }), {
+    label: t("undo"),
+    run: () =>
+      edit((c) => {
+        c.scenes.splice(Math.min(index, c.scenes.length), 0, scene);
+      }),
+  });
+}
+
 // Warm white: an identify flash should read as "this one", never as a colour
 // the effect could have picked.
 const IDENTIFY_RGB: [number, number, number] = [255, 190, 120];
 
-export async function identify(ip: string, port: number): Promise<void> {
+export async function identify(endpoint: Endpoint): Promise<void> {
   try {
-    await ipc.testDevice(ip, port, ...IDENTIFY_RGB);
+    await ipc.testDevice(endpoint, ...IDENTIFY_RGB);
   } catch (e) {
     fail(e);
   }
@@ -247,13 +383,126 @@ export async function identifyLight(lightId: string): Promise<void> {
     notify("info", t("no_bulb_yet"));
     return;
   }
-  return identify(b.ip, b.port);
+  return identify(endpointOf(b));
+}
+
+/** The backend changed what only it writes (pairings, Tuya keys): reload. */
+async function reloadConfig(): Promise<void> {
+  await persistNow();
+  const cfg = await ipc.getConfig();
+  cfg.interface = { ...defaultConfig().interface, ...cfg.interface };
+  app.config = cfg;
+}
+
+/** Save the config to a file of the user's choosing. */
+export async function exportConfig(): Promise<void> {
+  try {
+    await persistNow();
+    if (await ipc.exportConfig()) notify("info", t("exported"));
+  } catch (e) {
+    fail(e);
+  }
+}
+
+/** Replace the config with one from a file. Unsaved edits are flushed
+ *  first, so they cannot land on top of the import. */
+export async function importConfig(): Promise<void> {
+  try {
+    await persistNow();
+    const cfg = await ipc.importConfig();
+    if (!cfg) return;
+    cfg.interface = { ...defaultConfig().interface, ...cfg.interface };
+    cfg.states ??= {};
+    cfg.scenes ??= [];
+    app.config = cfg;
+    notify("info", t("imported"));
+    if (cfg.bindings.length > 0) void scan(3000, true);
+  } catch (e) {
+    fail(e);
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Pair with a Hue bridge or Nanoleaf controller: ask the user to press its
+ * button, and keep asking the device for up to 30 seconds.
+ */
+export async function pair(d: DiscoveredDevice): Promise<void> {
+  if (app.pairing) return;
+  app.pairing = d.id;
+  notify("info", t(d.kind.family === "hue" ? "pair_hue" : "pair_nanoleaf"));
+  try {
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      try {
+        await ipc.pairDevice($state.snapshot(d));
+        break;
+      } catch (e) {
+        const waiting = typeof e === "object" && e !== null && (e as { code?: string }).code === "pair_waiting";
+        if (!waiting || Date.now() > deadline) throw e;
+        await sleep(1500);
+      }
+    }
+    await reloadConfig();
+    notify("info", t("paired"));
+    app.pairing = null;
+    await scan();
+  } catch (e) {
+    fail(e);
+  } finally {
+    app.pairing = null;
+  }
+}
+
+/** Open the Smart Life sign-in, at the user-code step. */
+export function openTuya(): void {
+  app.tuya = { step: "code" };
+}
+
+export function closeTuya(): void {
+  app.tuya = null;
+}
+
+/**
+ * Sign in to Smart Life with the user code: show the QR code, wait (three
+ * minutes at most) for it to be scanned, import the bulbs and search for them.
+ */
+export async function signInTuya(userCode: string): Promise<void> {
+  if (!app.tuya || app.tuya.step !== "code") return;
+  app.tuya = { step: "starting" };
+  try {
+    const login = await ipc.tuyaLoginStart(userCode.trim());
+    if (!app.tuya) return;
+    app.tuya = { step: "qr", login };
+    const deadline = Date.now() + 180_000;
+    while (app.tuya?.login?.token === login.token) {
+      const n = await ipc.tuyaLoginPoll(login.token, userCode.trim());
+      if (n !== null) {
+        app.tuya = null;
+        await reloadConfig();
+        notify("info", n === 0 ? t("tuya_none") : tn("tuya_imported", n));
+        if (n > 0) await scan();
+        return;
+      }
+      if (Date.now() > deadline) {
+        app.tuya = { step: "code" };
+        notify("info", t("tuya_expired"));
+        return;
+      }
+      await sleep(2000);
+    }
+  } catch (e) {
+    if (app.tuya) app.tuya = { step: "code" };
+    fail(e);
+  }
 }
 
 /**
  * Search the network. Bound bulbs found at a new address are updated in
- * place: the device id is stable, the IP is not. `quiet` skips error toasts
- * for the background search at launch.
+ * place: the device id is stable, the IP is not (nor, for a Tuya bulb, the
+ * protocol version it was found speaking). `quiet` skips error toasts for the
+ * background search at launch.
  */
 export async function scan(timeoutMs = 3000, quiet = false): Promise<void> {
   if (app.scanning) return;
@@ -265,21 +514,27 @@ export async function scan(timeoutMs = 3000, quiet = false): Promise<void> {
     const moved = found.filter((d) =>
       app.config.bindings.some((b) => b.device_id === d.id && (b.ip !== d.ip || b.port !== d.port)),
     );
-    if (moved.length > 0) {
+    const changed = found.filter((d) =>
+      app.config.bindings.some(
+        (b) => b.device_id === d.id && JSON.stringify(endpointOf(b)) !== JSON.stringify(endpointOfDevice(d)),
+      ),
+    );
+    if (changed.length > 0) {
       edit((c) => {
-        for (const d of moved) {
+        for (const d of changed) {
           const b = c.bindings.find((x) => x.device_id === d.id);
           if (b) {
             b.ip = d.ip;
             b.port = d.port;
+            b.kind = $state.snapshot(d.kind);
           }
         }
       });
-      for (const d of moved) {
-        const b = app.config.bindings.find((x) => x.device_id === d.id);
-        const l = b ? lightById(b.light_id) : undefined;
-        notify("info", t("readdressed", { name: l?.name ?? deviceName(d) }));
-      }
+    }
+    for (const d of moved) {
+      const b = app.config.bindings.find((x) => x.device_id === d.id);
+      const l = b ? lightById(b.light_id) : undefined;
+      notify("info", t("readdressed", { name: l?.name ?? deviceName(d) }));
     }
   } catch (e) {
     if (!quiet) fail(e);
@@ -342,7 +597,15 @@ export function addLight(name?: string): Light {
 }
 
 function bindingOf(lightId: string, d: DiscoveredDevice): DeviceBinding {
-  return { light_id: lightId, device_id: d.id, ip: d.ip, port: d.port, model: d.model, name: deviceName(d) };
+  return {
+    light_id: lightId,
+    device_id: d.id,
+    ip: d.ip,
+    port: d.port,
+    model: d.model,
+    name: deviceName(d),
+    kind: $state.snapshot(d.kind),
+  };
 }
 
 /** Add discovered bulbs to the room as new lights. */

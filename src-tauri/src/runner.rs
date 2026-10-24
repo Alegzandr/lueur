@@ -1,18 +1,21 @@
 //! The live ambilight loop.
 //!
-//! [`start`] snapshots the current config, connects to every bound bulb in
-//! music mode, then spins a dedicated thread that captures → computes → pushes
+//! [`start`] snapshots the current config, opens a stream to every bound bulb
+//! (music mode for a Yeelight, whatever the family uses otherwise), then spins a dedicated thread that captures → computes → pushes
 //! colours at the target frame rate. Engine settings (smoothing, brightness,
 //! saturation…) are read from a shared cell each frame so the UI's sliders take
 //! effect instantly without a restart; changing the *topology* (which lights,
 //! where) requires a stop/start, which the UI does for you.
 
 use crate::capture::{FrameSource, ScreenSource, check_monitor_index};
+use crate::devices;
 use crate::error::{AppError, AppResult};
 use lueur_core::config::AppConfig;
+use lueur_core::device::LightStream;
 use lueur_core::engine::{Ambilight, EngineSettings};
-use lueur_core::geometry::{LightMapping, map_light};
-use lueur_core::yeelight::{Effect, MusicConnection};
+use lueur_core::geometry::{Light, LightMapping, map_light};
+use lueur_core::yeelight::Effect;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -33,6 +36,8 @@ pub struct Handle {
     thread: Option<JoinHandle<()>>,
     /// Human-readable summary of what started, for the UI/status.
     pub connected_lights: usize,
+    /// The room lights the effect drives, which nothing else may touch.
+    pub light_ids: Vec<String>,
 }
 
 impl Handle {
@@ -65,23 +70,23 @@ impl Drop for Handle {
 /// One connected, ready-to-drive light.
 struct ConnectedLight {
     mapping: LightMapping,
-    conn: MusicConnection,
+    conn: Box<dyn LightStream>,
 }
 
 /// Start the ambilight effect from `config`.
 ///
 /// Returns an error if there are no bound+enabled lights, capture can't start,
-/// or none of the bulbs accept a music-mode connection.
+/// or none of the bulbs accept a stream.
 pub fn start(config: &AppConfig) -> AppResult<Handle> {
     // Resolve the enabled lights that have a device binding, in room order, and
     // compute each one's screen mapping (zone plus distance shaping).
-    let mut targets: Vec<(LightMapping, &lueur_core::config::DeviceBinding, &str)> = Vec::new();
+    let mut targets: Vec<(LightMapping, &lueur_core::config::DeviceBinding, &Light)> = Vec::new();
     for light in &config.room.lights {
         if !light.enabled {
             continue;
         }
         if let Some(binding) = config.binding_for(&light.id) {
-            targets.push((map_light(&config.room.screen, light), binding, &light.name));
+            targets.push((map_light(&config.room.screen, light), binding, light));
         }
     }
 
@@ -95,18 +100,44 @@ pub fn start(config: &AppConfig) -> AppResult<Handle> {
     let monitor_index = config.capture.monitor_index;
     check_monitor_index(monitor_index)?;
 
-    // Establish music mode for each bulb. We tolerate individual failures (a
-    // bulb may be off) as long as at least one connects.
-    let handshake = Duration::from_secs(3);
+    // Lights behind one host (a Hue bridge) share its command budget.
+    let mut per_host: HashMap<&str, usize> = HashMap::new();
+    for (_, binding, _) in &targets {
+        *per_host.entry(binding.ip.as_str()).or_default() += 1;
+    }
+
+    // Open every bulb at once: an unplugged one costs its whole timeout, and
+    // waiting on each in turn would make a few of them feel like a hang. We
+    // tolerate individual failures as long as at least one connects.
+    let opened: Vec<_> = std::thread::scope(|scope| {
+        let handles: Vec<_> = targets
+            .iter()
+            .map(|(_, binding, _)| {
+                let siblings = per_host[binding.ip.as_str()];
+                scope.spawn(move || devices::open_stream(&binding.endpoint(), siblings))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| Err(std::io::Error::other("bulb thread panicked")))
+            })
+            .collect()
+    });
     let mut connected: Vec<ConnectedLight> = Vec::new();
+    let mut light_ids: Vec<String> = Vec::new();
     let mut failed: Vec<String> = Vec::new();
     let mut details: Vec<String> = Vec::new();
-    for (mapping, binding, name) in targets {
-        match MusicConnection::establish(&binding.ip, binding.port, handshake) {
-            Ok(conn) => connected.push(ConnectedLight { mapping, conn }),
+    for ((mapping, binding, light), result) in targets.into_iter().zip(opened) {
+        match result {
+            Ok(conn) => {
+                connected.push(ConnectedLight { mapping, conn });
+                light_ids.push(light.id.clone());
+            }
             Err(e) => {
-                failed.push(name.to_string());
-                details.push(format!("{} ({}): {e}", name, binding.ip));
+                failed.push(light.name.clone());
+                details.push(format!("{} ({}): {e}", light.name, binding.ip));
             }
         }
     }
@@ -154,6 +185,7 @@ pub fn start(config: &AppConfig) -> AppResult<Handle> {
         live,
         thread: Some(thread),
         connected_lights,
+        light_ids,
     })
 }
 
@@ -260,11 +292,13 @@ fn run_loop(
     // On stop, fade the bulbs to a gentle warm glow and leave them on, so the
     // room stays cosy rather than snapping to black. Brightness has to be set
     // explicitly: the effect may have ended on a dark frame, and the bulb would
-    // otherwise hold that 1-2% brightness and look off.
-    for light in lights.iter_mut() {
-        let _ = light.conn.set_bright(40, Effect::Smooth, 400);
-        let _ = light.conn.set_ct(2700, Effect::Smooth, 400);
-    }
+    // otherwise hold that 1-2% brightness and look off. Every bulb at once, so
+    // they settle together.
+    std::thread::scope(|scope| {
+        for light in lights.iter_mut() {
+            scope.spawn(move || light.conn.rest());
+        }
+    });
 }
 
 #[cfg(test)]
