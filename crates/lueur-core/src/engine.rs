@@ -217,8 +217,7 @@ impl Ambilight {
     pub fn process(&mut self, frame: &Frame, mappings: &[LightMapping]) -> Vec<Rgb> {
         let n = mappings.len().min(self.smoothers.len());
         let mut out = Vec::with_capacity(n);
-        for i in 0..n {
-            let m = &mappings[i];
+        for (i, m) in mappings.iter().take(n).enumerate() {
             let raw = frame.average_zone(&m.zone, self.settings.sample_step);
             // Floor the factor above 0: a zero would freeze the light forever.
             let smoothing = (self.settings.smoothing * m.responsiveness).clamp(0.01, 1.0);

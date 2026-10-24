@@ -27,12 +27,16 @@ serde_json = { workspace = true }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+# Only for the updater's timer: a six hour sleep must not hold a thread.
+tokio = { version = "1", features = ["time"] }
 # Cross-platform screen capture (Windows/macOS/Linux). Version pinned by
 # `cargo generate-lockfile`; see README for the capture-backend notes.
 xcap = "0.9"
 
-# Desktop Duplication capture (see src/capture/dxgi.rs). Same version xcap
-# already pulls in, so it adds no second copy.
+# Desktop Duplication capture (see src/capture/dxgi.rs) and the per-user
+# install (src/install.rs). Same `windows` version xcap already pulls in, so it
+# adds no second copy.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_Graphics_Direct3D",
@@ -40,7 +44,13 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Shell",
 ] }
+self-replace = "1.5"
+winreg = "0.55"
 
 [features]
 # Tauri's custom-protocol is enabled for production builds by the CLI.

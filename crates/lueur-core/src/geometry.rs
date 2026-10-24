@@ -34,13 +34,17 @@ pub struct Vec2 {
     pub y: f32,
 }
 
+impl std::ops::Sub for Vec2 {
+    type Output = Vec2;
+
+    fn sub(self, o: Vec2) -> Vec2 {
+        Vec2::new(self.x - o.x, self.y - o.y)
+    }
+}
+
 impl Vec2 {
     pub const fn new(x: f32, y: f32) -> Self {
         Vec2 { x, y }
-    }
-
-    pub fn sub(self, o: Vec2) -> Vec2 {
-        Vec2::new(self.x - o.x, self.y - o.y)
     }
 
     pub fn dot(self, o: Vec2) -> f32 {
@@ -272,7 +276,7 @@ pub fn map_light(screen: &Screen, light: &Light) -> LightMapping {
 
     let right = screen.right_axis();
     let half = (screen.width * 0.5).max(f32::EPSILON);
-    let rel = light.pos.sub(screen.center);
+    let rel = light.pos - screen.center;
     // Signed position along the screen's width: -1 = left end, +1 = right end.
     let u = rel.dot(right) / half;
     // Signed depth: positive = on the viewer's side of the screen plane.

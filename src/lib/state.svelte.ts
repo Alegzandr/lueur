@@ -51,6 +51,9 @@ class AppState {
 
   /** What the running effect was started with (see `topology`). */
   startedWith = $state<string | null>(null);
+
+  /** Version installed in the background, applied at the next restart. */
+  updateReady = $state<string | null>(null);
 }
 
 export const app = new AppState();

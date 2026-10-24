@@ -66,7 +66,8 @@ impl ColorAccumulator {
     /// Add a sample contributing `w` (non-positive weights are ignored).
     #[inline]
     pub fn add_weighted(&mut self, r: u8, g: u8, b: u8, w: f32) {
-        if !(w > 0.0) {
+        // NaN is ignored too.
+        if w.is_nan() || w <= 0.0 {
             return;
         }
         let w = w as f64;

@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Lueur",
-  "version": "0.2.0",
   "identifier": "com.lueur.app",
   "build": {
     "frontendDist": "../dist",
@@ -22,7 +21,8 @@
         "resizable": true,
         "fullscreen": false,
         "decorations": true,
-        "center": true
+        "center": true,
+        "visible": false
       }
     ],
     "security": {
@@ -31,7 +31,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "appimage",
+      "app"
+    ],
     "category": "Utility",
     "shortDescription": "Low-latency ambilight for smart bulbs.",
     "longDescription": "Lueur turns your smart bulbs into a low-latency ambilight for cosy night gaming. Draw your room, place your screen and lights, pick your bulbs, and the light around you follows what's on screen.",
@@ -41,6 +44,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc5N0NBMTkxRTY1QTA0MTIKUldRU0JGcm1rYUY4ZVc0YkxHeS9xcGNURWlBYkE1bVJtSWVtbFFSenkvSTVld1d2QlNvZmthQlYK",
+      "endpoints": [
+        "https://github.com/Alegzandr/lueur/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

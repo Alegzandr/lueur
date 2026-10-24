@@ -19,8 +19,9 @@ export function inTauri(): boolean {
 }
 
 /** Browser preview: `?demo` gives a furnished room to design against, `?fresh`
- *  a first launch with bulbs waiting on the network. */
-function preview(flag: "demo" | "fresh"): boolean {
+ *  a first launch with bulbs waiting on the network, `?update` an installed
+ *  update waiting for a restart. */
+function preview(flag: "demo" | "fresh" | "update"): boolean {
   return typeof location !== "undefined" && new URLSearchParams(location.search).has(flag);
 }
 const demo = () => preview("demo");
@@ -184,4 +185,23 @@ export async function onEffectChanged(cb: (error: unknown) => void): Promise<() 
   if (!inTauri()) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
   return listen<unknown>("effect-changed", (e) => cb(e.payload));
+}
+
+/** The version installed in the background and waiting for a restart. */
+export async function updateReady(): Promise<string | null> {
+  if (!inTauri()) return preview("update") ? "9.9.9" : null;
+  return invoke<string | null>("update_ready");
+}
+
+/** Called when an update has been installed in the background. */
+export async function onUpdateReady(cb: (version: string) => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<string>("update-ready", (e) => cb(e.payload));
+}
+
+/** Restart into the installed update. */
+export async function restartApp(): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("restart_app");
 }

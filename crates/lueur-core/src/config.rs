@@ -1,16 +1,13 @@
-//! Persistent configuration and portable data-directory resolution.
+//! Persistent configuration.
 //!
-//! Lueur is a *portable* app: by default it keeps its config next to the
-//! executable (in a `lueur-data` folder) so the whole thing can live on a USB
-//! stick and leave no trace on the host. If that location isn't writable (e.g.
-//! installed under `Program Files`), we fall back to the per-user config dir the
-//! shell hands us.
+//! The shell decides where the data directory is (see `src-tauri/src/paths.rs`);
+//! this module only reads and writes `config.json` inside it.
 
 use crate::engine::EngineSettings;
 use crate::geometry::Room;
 use crate::yeelight::Effect;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Bumped when the on-disk format changes incompatibly.
 pub const CONFIG_VERSION: u32 = 1;
@@ -190,37 +187,6 @@ impl AppConfig {
 
 /// File name used inside the data directory.
 pub const CONFIG_FILE_NAME: &str = "config.json";
-/// Portable data folder name placed beside the executable.
-pub const PORTABLE_DIR_NAME: &str = "lueur-data";
-
-/// Decide where to store data.
-///
-/// Prefers a `lueur-data` folder next to the executable (portable). If that
-/// directory can't be created/written, falls back to `user_config_dir`.
-pub fn resolve_data_dir(exe_dir: &Path, user_config_dir: &Path) -> PathBuf {
-    let portable = exe_dir.join(PORTABLE_DIR_NAME);
-    if dir_is_writable(&portable) {
-        portable
-    } else {
-        user_config_dir.join("lueur")
-    }
-}
-
-/// Best-effort check that we can create and write inside `dir`.
-fn dir_is_writable(dir: &Path) -> bool {
-    if std::fs::create_dir_all(dir).is_err() {
-        return false;
-    }
-    let probe = dir.join(".write-probe");
-    match std::fs::write(&probe, b"ok") {
-        Ok(()) => {
-            let _ = std::fs::remove_file(&probe);
-            true
-        }
-        Err(_) => false,
-    }
-}
-
 /// Load config from `data_dir/config.json`, returning defaults if it's missing.
 /// A corrupt file surfaces as an error so the shell can warn rather than
 /// silently wiping the user's layout.

@@ -2,9 +2,10 @@
   import { onMount } from "svelte";
   import { app, bootstrap, fail, refreshStatus, toggleEffect, type View } from "./lib/state.svelte";
   import { lang, t, tn } from "./lib/i18n";
-  import { onEffectChanged, setUiLanguage, setWindowTheme } from "./lib/ipc";
+  import { onEffectChanged, onUpdateReady, setUiLanguage, setWindowTheme, updateReady } from "./lib/ipc";
   import Icon, { type IconName } from "./lib/ui/Icon.svelte";
   import Toasts from "./lib/ui/Toasts.svelte";
+  import UpdateBanner from "./lib/ui/UpdateBanner.svelte";
   import Lighting from "./lib/views/Lighting.svelte";
   import Room from "./lib/views/Room.svelte";
   import Bulbs from "./lib/views/Bulbs.svelte";
@@ -26,9 +27,16 @@
       if (error) fail(error);
       void refreshStatus();
     }).then((u) => (unlisten = u));
+    // An update installed in the background waits for a restart.
+    let unlistenUpdate = () => {};
+    updateReady()
+      .then((v) => (app.updateReady = v))
+      .catch(() => {});
+    onUpdateReady((v) => (app.updateReady = v)).then((u) => (unlistenUpdate = u));
     return () => {
       clearInterval(poll);
       unlisten();
+      unlistenUpdate();
     };
   });
 
@@ -99,34 +107,38 @@
       {/each}
     </nav>
 
-    <div class="power" class:live={app.status.running}>
-      <div class="state" role="status">
-        <span class="dot" aria-hidden="true"></span>
-        <div>
-          <div class="state-title">{app.status.running ? t("state_on") : t("state_off")}</div>
-          <div class="state-sub">
-            {#if app.status.running}
-              {app.status.connected_lights === 0
-                ? t("state_no_answer")
-                : tn("n_bulbs_following", app.status.connected_lights)}
-            {:else if bound === 0}
-              {t("state_none")}
-            {:else}
-              {tn("n_bulbs_ready", bound)}
-            {/if}
+    <div class="foot">
+      <UpdateBanner />
+
+      <div class="power" class:live={app.status.running}>
+        <div class="state" role="status">
+          <span class="dot" aria-hidden="true"></span>
+          <div>
+            <div class="state-title">{app.status.running ? t("state_on") : t("state_off")}</div>
+            <div class="state-sub">
+              {#if app.status.running}
+                {app.status.connected_lights === 0
+                  ? t("state_no_answer")
+                  : tn("n_bulbs_following", app.status.connected_lights)}
+              {:else if bound === 0}
+                {t("state_none")}
+              {:else}
+                {tn("n_bulbs_ready", bound)}
+              {/if}
+            </div>
           </div>
         </div>
+        <button
+          class="btn power-btn"
+          class:primary={!app.status.running}
+          disabled={app.busy || (!app.status.running && bound === 0)}
+          title="{app.status.running ? t('stop') : t('start')} ({mod}Enter)"
+          onclick={toggleEffect}
+        >
+          <Icon name="power" size={14} />
+          {app.busy ? t("wait") : app.status.running ? t("stop") : t("start")}
+        </button>
       </div>
-      <button
-        class="btn power-btn"
-        class:primary={!app.status.running}
-        disabled={app.busy || (!app.status.running && bound === 0)}
-        title="{app.status.running ? t('stop') : t('start')} ({mod}Enter)"
-        onclick={toggleEffect}
-      >
-        <Icon name="power" size={14} />
-        {app.busy ? t("wait") : app.status.running ? t("stop") : t("start")}
-      </button>
     </div>
   </aside>
 
@@ -218,9 +230,15 @@
     text-align: center;
   }
 
+  .foot {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+  }
+
   .power {
     position: relative;
-    margin-top: auto;
     padding: var(--s-3);
     border-radius: var(--r-lg);
     background: var(--surface);

@@ -3,7 +3,8 @@
 //! Security notes:
 //! * Every command validates its inputs (addresses, colour ranges, timeouts).
 //! * No command takes a shell string, path to execute, or arbitrary URL; the
-//!   only network egress is LAN Yeelight control and SSDP discovery.
+//!   only network egress is LAN Yeelight control and SSDP discovery (plus the
+//!   update check in `updater.rs`, which no command can point elsewhere).
 //! * Discovery/connect timeouts are clamped so a malicious reply can't wedge us.
 
 use crate::capture::{self, MonitorInfo};
