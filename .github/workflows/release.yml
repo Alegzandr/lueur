@@ -1,8 +1,17 @@
 name: Release
 
+# Every push to main whose version (Cargo.toml and package.json) has no tag
+# yet is released, and the release creates the tag. Run it by hand to retry
+# a release that failed.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
+
+# One release at a time, never cancelled half-published.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 # Read-only by default; only the publish job can write the release.
 permissions:
@@ -13,39 +22,46 @@ env:
 
 jobs:
   verify:
-    name: Verify tag
+    name: Check version
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
           persist-credentials: false
       - id: v
-        name: Tag, version, branch and update key
+        name: Version, branch and update key
         run: |
-          tag="${GITHUB_REF_NAME}"
-          version="${tag#v}"
-          # The app's version is the workspace's (tauri.conf.json has none).
-          cargo_version=$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml)
-          npm_version=$(jq -r .version package.json)
-          if [ "$version" != "$cargo_version" ] || [ "$version" != "$npm_version" ]; then
-            echo "::error::Tag $tag does not match Cargo.toml ($cargo_version) and package.json ($npm_version)"
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Releases are made from main only"
             exit 1
           fi
-          if ! git branch -r --contains "$GITHUB_SHA" | grep -q 'origin/main$'; then
-            echo "::error::Tag $tag must point to a commit on main"
+          # The app's version is the workspace's (tauri.conf.json has none).
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml)
+          npm_version=$(jq -r .version package.json)
+          if [ "$version" != "$npm_version" ]; then
+            echo "::error::Cargo.toml ($version) and package.json ($npm_version) disagree"
             exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
+            echo "v$version is already released"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           if jq -e '.plugins.updater.pubkey | startswith("REPLACE")' src-tauri/tauri.conf.json > /dev/null; then
             echo "::error::Set the updater public key in src-tauri/tauri.conf.json"
             exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version"
+          echo "release=true" >> "$GITHUB_OUTPUT"
 
   tests:
     needs: verify
+    if: needs.verify.outputs.release == 'true'
     uses: ./.github/workflows/ci.yml
 
   # Builds run every dependency's build script and never see the signing
@@ -171,11 +187,11 @@ jobs:
           name: signed
           path: release
       - name: Update manifest
-        run: ./scripts/latest-json.sh release "$VERSION" "${GITHUB_REPOSITORY}" "${GITHUB_REF_NAME}" > release/latest.json
+        run: ./scripts/latest-json.sh release "$VERSION" "${GITHUB_REPOSITORY}" "v$VERSION" > release/latest.json
       - name: GitHub release
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "v$VERSION" \
+            --target "$GITHUB_SHA" \
             --title "Lueur $VERSION" \
             --generate-notes \
-            --verify-tag \
             release/*

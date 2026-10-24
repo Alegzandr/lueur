@@ -243,16 +243,12 @@ sign-in, this is the only traffic Lueur sends beyond your LAN, over HTTPS to
 github.com. Development builds never update.
 
 **Releasing.** Bump `version` in `Cargo.toml` (`[workspace.package]`) and
-`package.json`, merge to `main`, then push a tag:
-
-```bash
-git tag v0.3.0 && git push origin v0.3.0
-```
-
-`.github/workflows/release.yml` checks the tag against both versions, runs the
-CI, builds Windows, Linux and macOS, signs the update files in a job that
-compiles nothing, and publishes the GitHub release with the `latest.json` the
-updater reads. It needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY`
+`package.json` and merge to `main`. When the version on `main` has no
+`v<version>` tag yet, `.github/workflows/release.yml` checks both versions
+agree, runs the CI, builds Windows, Linux and macOS, signs the update files in a job that
+compiles nothing, and publishes the GitHub release, which creates the tag, with the
+`latest.json` the updater reads. A failed release is retried from the
+workflow's "Run workflow" button. It needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY`
 and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, from `npx tauri signer generate`,
 whose public key goes in `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
 
