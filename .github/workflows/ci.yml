@@ -24,6 +24,8 @@ env:
 jobs:
   lint:
     name: Format and lint
+    # A release commit is tested by the Release workflow, which calls this one.
+    if: github.workflow != 'CI' || github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,6 +55,8 @@ jobs:
   # why, are in .cargo/audit.toml.
   audit:
     name: Dependency audit
+    # A release commit is tested by the Release workflow, which calls this one.
+    if: github.workflow != 'CI' || github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -71,6 +75,8 @@ jobs:
 
   test:
     name: Tests (${{ matrix.os }})
+    # A release commit is tested by the Release workflow, which calls this one.
+    if: github.workflow != 'CI' || github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'release:')
     strategy:
       fail-fast: false
       matrix:
