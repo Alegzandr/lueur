@@ -162,10 +162,7 @@ pub fn parse_discovery(raw: &str) -> Option<DiscoveredDevice> {
             "name" => name = value.to_string(),
             "fw_ver" => fw_ver = Some(value.to_string()),
             "support" => {
-                support = value
-                    .split_whitespace()
-                    .map(|s| s.to_string())
-                    .collect();
+                support = value.split_whitespace().map(|s| s.to_string()).collect();
             }
             _ => {}
         }

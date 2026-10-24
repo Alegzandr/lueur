@@ -11,6 +11,7 @@
 //! captured (a handful of anti-cheat setups block it), switching that game to
 //! borderless-windowed always works.
 
+use crate::error::{AppError, AppResult};
 use lueur_core::engine::{Frame, PixelFormat};
 use xcap::Monitor;
 
@@ -35,13 +36,15 @@ pub struct MonitorInfo {
 }
 
 /// Enumerate the connected monitors, in a stable order.
-pub fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
-    let monitors = Monitor::all().map_err(|e| format!("failed to list monitors: {e}"))?;
+pub fn list_monitors() -> AppResult<Vec<MonitorInfo>> {
+    let monitors = all_monitors()?;
     let mut out = Vec::with_capacity(monitors.len());
     for (index, m) in monitors.iter().enumerate() {
         out.push(MonitorInfo {
             index,
-            name: m.name().unwrap_or_else(|_| format!("Display {}", index + 1)),
+            name: m
+                .name()
+                .unwrap_or_else(|_| format!("Display {}", index + 1)),
             width: m.width().unwrap_or(0),
             height: m.height().unwrap_or(0),
             is_primary: m.is_primary().unwrap_or(index == 0),
@@ -54,15 +57,19 @@ pub fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
 ///
 /// Lets the caller fail fast on a stale monitor choice from a thread that will
 /// never own the capture handle (see [`FrameSource`]).
-pub fn check_monitor_index(index: usize) -> Result<(), String> {
-    let monitors = Monitor::all().map_err(|e| format!("failed to list monitors: {e}"))?;
+pub fn check_monitor_index(index: usize) -> AppResult<()> {
+    let monitors = all_monitors()?;
     if monitors.is_empty() {
-        return Err("no monitors detected".into());
+        return Err(AppError::new("no_monitors"));
     }
     if index >= monitors.len() {
-        return Err(format!("monitor #{index} not found"));
+        return Err(AppError::new("monitor_missing").subject((index + 1).to_string()));
     }
     Ok(())
+}
+
+fn all_monitors() -> AppResult<Vec<Monitor>> {
+    Monitor::all().map_err(|e| AppError::new("monitors_unavailable").detail(e))
 }
 
 /// A [`FrameSource`] backed by one `xcap` monitor.
@@ -75,15 +82,15 @@ pub struct XcapSource {
 
 impl XcapSource {
     /// Build a source for the monitor at `index` (falling back to the first).
-    pub fn for_index(index: usize) -> Result<Self, String> {
-        let monitors = Monitor::all().map_err(|e| format!("failed to list monitors: {e}"))?;
+    pub fn for_index(index: usize) -> AppResult<Self> {
+        let monitors = all_monitors()?;
         if monitors.is_empty() {
-            return Err("no monitors detected".into());
+            return Err(AppError::new("no_monitors"));
         }
         let monitor = monitors
             .into_iter()
             .nth(index)
-            .ok_or_else(|| format!("monitor #{index} not found"))?;
+            .ok_or_else(|| AppError::new("monitor_missing").subject((index + 1).to_string()))?;
         Ok(Self { monitor })
     }
 }

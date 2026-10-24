@@ -5,7 +5,7 @@
 //! and network I/O live in the desktop shell. Keeping it pure means the
 //! colour-critical path is fully deterministic and unit-tested.
 
-use crate::color::{saturate, saturation, BulbOutput, ColorAccumulator, ColorSmoother, Rgb};
+use crate::color::{BulbOutput, ColorAccumulator, ColorSmoother, Rgb, saturate, saturation};
 use crate::geometry::{LightMapping, SampleZone};
 use serde::{Deserialize, Serialize};
 
@@ -321,7 +321,10 @@ mod tests {
         data[2] = 255;
         data[3] = 255;
         let f = Frame::new(1, 1, PixelFormat::Bgra, data);
-        assert_eq!(f.average_zone(&SampleZone::new(0.0, 0.0, 1.0, 1.0), 1), Rgb::new(255, 0, 0));
+        assert_eq!(
+            f.average_zone(&SampleZone::new(0.0, 0.0, 1.0, 1.0), 1),
+            Rgb::new(255, 0, 0)
+        );
     }
 
     /// A mapping that samples the given zone with no distance shaping.
@@ -513,6 +516,9 @@ mod tests {
     #[test]
     fn empty_frame_is_safe() {
         let f = Frame::new(0, 0, PixelFormat::Rgba, vec![]);
-        assert_eq!(f.average_zone(&SampleZone::new(0.0, 0.0, 1.0, 1.0), 2), Rgb::BLACK);
+        assert_eq!(
+            f.average_zone(&SampleZone::new(0.0, 0.0, 1.0, 1.0), 2),
+            Rgb::BLACK
+        );
     }
 }

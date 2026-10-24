@@ -381,7 +381,11 @@ mod tests {
     fn full_chroma_preserves_hue_and_saturation() {
         let dim = Rgb::new(30, 15, 60);
         let full = full_chroma(dim);
-        assert_eq!(full.r.max(full.g).max(full.b), 255, "should hit the ceiling");
+        assert_eq!(
+            full.r.max(full.g).max(full.b),
+            255,
+            "should hit the ceiling"
+        );
         // Channel ratios — and therefore hue — must survive the scaling.
         let ratio_before = dim.r as f32 / dim.b as f32;
         let ratio_after = full.r as f32 / full.b as f32;
@@ -409,7 +413,10 @@ mod tests {
     fn bulb_brightness_honours_user_scale() {
         let full = bulb_brightness(Rgb::new(200, 200, 200), 1.0);
         let half = bulb_brightness(Rgb::new(200, 200, 200), 0.5);
-        assert!((half as i32 * 2 - full as i32).abs() <= 1, "{half} vs {full}");
+        assert!(
+            (half as i32 * 2 - full as i32).abs() <= 1,
+            "{half} vs {full}"
+        );
     }
 
     #[test]

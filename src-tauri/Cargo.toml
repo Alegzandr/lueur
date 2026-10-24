@@ -29,7 +29,7 @@ tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 # Cross-platform screen capture (Windows/macOS/Linux). Version pinned by
 # `cargo generate-lockfile`; see README for the capture-backend notes.
-xcap = "0.7"
+xcap = "0.9"
 
 [features]
 # Tauri's custom-protocol is enabled for production builds by the CLI.

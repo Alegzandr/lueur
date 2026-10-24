@@ -74,6 +74,17 @@ export interface BehaviorSettings {
   autostart_effect: boolean;
 }
 
+export type Appearance = "system" | "light" | "dark";
+
+export type Language = "system" | "en" | "fr";
+
+export interface InterfaceSettings {
+  appearance: Appearance;
+  language: Language;
+  /** The user has arranged the room plan at least once. */
+  room_arranged: boolean;
+}
+
 export interface AppConfig {
   version: number;
   room: Room;
@@ -82,6 +93,7 @@ export interface AppConfig {
   engine: EngineSettings;
   transition: TransitionSettings;
   behavior: BehaviorSettings;
+  interface: InterfaceSettings;
 }
 
 export interface DiscoveredDevice {
@@ -146,5 +158,6 @@ export function defaultConfig(): AppConfig {
       start_minimized: false,
       autostart_effect: false,
     },
+    interface: { appearance: "system", language: "system", room_arranged: false },
   };
 }

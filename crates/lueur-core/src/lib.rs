@@ -23,9 +23,7 @@ pub mod yeelight;
 
 pub use color::Rgb;
 pub use engine::{Ambilight, EngineSettings, Frame, PixelFormat};
-pub use geometry::{
-    map_light, Light, LightMapping, Room, SampleZone, Screen, ScreenEdge, Vec2,
-};
+pub use geometry::{Light, LightMapping, Room, SampleZone, Screen, ScreenEdge, Vec2, map_light};
 
 /// Compute the mapping for every light in a room, in light order.
 ///
