@@ -98,8 +98,7 @@ export const SHOWS: { id: ShowKind; preview: string }[] = [
   { id: "candle", preview: "radial-gradient(circle at 50% 70%, #ffc46a, #ff982a 30%, #ff4e04 60%, #5a1c00)" },
 ];
 
-/** The shows whose pace can be chosen (`has_speed` in show.rs). The music's
- *  pace is its colours', so it has one only while they glide. */
+/** The shows whose pace can be chosen (`has_speed` in show.rs). */
 export const PACED_SHOWS: ShowKind[] = ["rainbow", "sunset", "ocean"];
 
 /** How many times faster than its natural pace a show plays at `speed`

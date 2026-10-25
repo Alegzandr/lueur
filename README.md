@@ -196,15 +196,21 @@ owner to add you to their home instead.
   so it follows any song or game: the default output, another one, or only
   what one application plays (Settings, *Sound source*), so a call or a
   notification stays out of the show. On macOS and Linux it listens to the
-  microphone, or another input. It hears the kick, the snare and the hi-hats apart, finds the
-  tempo and sends each beat a touch early so it lands with the sound, and
-  plays the same whatever the volume. Each light gets a part from where it
-  stands: the quick ones near the screen punch the beat in patterns that
-  travel across the room, slow bulbs (Hue) and lamps out in the room wash
-  it in colour, and a light at the ceiling answers the snare. A breakdown
-  dims the room, a build climbs to white, and the drop lands on every light
-  at once. White flashes can be turned off, and never come more than three
-  a second.
+  microphone, or another input. It hears the kick, the snare and the
+  hi-hats apart, finds the tempo and sends each beat a touch early so it
+  lands with the sound, and plays the same whatever the volume, in Windows
+  or in the player, while a quiet passage still reads as quiet. It plays
+  like a lighting desk: the colours hold through each phrase and change as
+  the next one lands, the room rests in one colour and the beats strike in
+  another, from near dark, each hit fading out just before the next beat.
+  Each light gets a part from where it stands: the quick ones near the
+  screen punch the beat in patterns that travel across the room, from side
+  to side or from the middle out, slow bulbs (Hue) and lamps out in the room
+  wash it in colour, and a light at the ceiling answers the snare. A
+  breakdown rests in one deep colour, a build's chase quickens and climbs
+  to white, and the drop lands on every light at once, into new colours.
+  White flashes can be turned off, and never come more than three a
+  second.
 - **Backup.** **Settings → Configuration** exports your setup to a file and
   imports it back, to keep a copy or move to another computer. The file holds
   no password or key, so it is safe to share; on another computer, pair the

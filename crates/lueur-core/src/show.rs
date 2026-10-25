@@ -26,7 +26,8 @@ pub enum ShowKind {
     /// The lights play the track like a stage: punches, chases and drops.
     #[default]
     Music,
-    /// A gradient across the room, gliding warm to cool and back.
+    /// Combinations of colours that go well together, laid across the room
+    /// and gliding one into the next.
     Rainbow,
     /// Ambers, reds and roses drifting into one another.
     Sunset,
@@ -69,32 +70,16 @@ impl ShowKind {
         }
     }
 
-    /// Whether the show's pace can be chosen: a candle keeps time with a
-    /// real flame, the others are free to drift. The music's pace is the
-    /// speed its spectrum glides at (see [`MusicColors`]), never the beat's.
+    /// Whether the show's pace can be chosen. Music keeps time with the
+    /// track and a candle with a real flame; the others are free to drift.
     pub fn has_speed(self) -> bool {
-        !matches!(self, ShowKind::Candle)
+        matches!(self, ShowKind::Rainbow | ShowKind::Sunset | ShowKind::Ocean)
     }
 }
 
-/// Where the music show takes its colours from. The music never picks them:
-/// it plays the brightness, passes the beat from light to light and flashes
-/// white, over colours that stay as smooth as the rainbow's.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum MusicColors {
-    /// The colour show's combinations, gliding at the chosen speed whatever
-    /// the track does.
-    #[default]
-    Spectrum,
-    /// The colour picked, holding still, in shades close enough to tell the
-    /// lights apart (see [`shade`]).
-    Fixed,
-}
-
 /// The show the window and the tray start, how bright it plays, how fast the
-/// colour shows move, the music's colours, and whether it may flash white.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// colour shows move, and whether the music may flash white.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ShowSettings {
     pub kind: ShowKind,
@@ -106,10 +91,6 @@ pub struct ShowSettings {
     /// times a second: the show's guard ([`crate::safety::FlashGuard::show`])
     /// holds them to that even with the protection off.
     pub flashes: bool,
-    /// Whether the music glides through the combinations or holds `color`.
-    pub music: MusicColors,
-    /// The colour the music holds.
-    pub color: Rgb,
 }
 
 impl Default for ShowSettings {
@@ -119,8 +100,6 @@ impl Default for ShowSettings {
             bright: 80,
             speed: 50,
             flashes: true,
-            music: MusicColors::default(),
-            color: Rgb::new(255, 0, 110),
         }
     }
 }
@@ -137,20 +116,6 @@ impl ShowSettings {
         let s = f32::from(self.speed.clamp(1, 100));
         4f32.powf((s - 50.0) / 50.0)
     }
-}
-
-/// How far round the wheel a held colour's shades reach either side, in
-/// degrees: enough to tell the lights apart, not enough to read as another
-/// colour.
-const SHADE_SPREAD: f32 = 18.0;
-
-/// The shade of `color` a light at `place` (0 at the left of the lights
-/// playing it, 1 at the right) holds: the colour itself in the middle,
-/// turning a little each way towards the ends, so one colour still gives the
-/// room some depth. A lone light, in the middle, holds it exactly.
-pub(crate) fn shade(color: Rgb, place: f32) -> Rgb {
-    let (h, s, v) = hsv(color);
-    from_hsv(h + (place - 0.5) * 2.0 * SHADE_SPREAD, s, v)
 }
 
 /// The colour show's combinations: three colours each, laid across the
@@ -247,7 +212,7 @@ const DRIFT: f32 = 0.12;
 /// kept counting would round each small step away after a few days. A whole
 /// number of loops through the combinations and of ocean swells, so those
 /// two never jump.
-pub(crate) const CLOCK_WRAP: f32 = 3600.0;
+const CLOCK_WRAP: f32 = 3600.0;
 
 /// From a low amber sun to the last rose and plum of the sky, and back.
 const SUNSET: &[Rgb] = &[
@@ -265,6 +230,42 @@ const OCEAN: &[Rgb] = &[
     Rgb::new(0, 105, 255),
     Rgb::new(0, 185, 235),
     Rgb::new(0, 235, 175),
+];
+
+/// The music's harmonies: bolder than the rainbow's, three colours each that
+/// still sit well side by side. Every way round a harmony steers clear of the
+/// yellow-greens, so even its drift between beats stays clean.
+pub(crate) const PARTY: &[[Rgb; 3]] = &[
+    // Neon: hot pink, violet, cyan.
+    [
+        Rgb::new(255, 0, 110),
+        Rgb::new(130, 0, 255),
+        Rgb::new(0, 190, 255),
+    ],
+    // Fire: red, orange, magenta.
+    [
+        Rgb::new(255, 10, 0),
+        Rgb::new(255, 110, 0),
+        Rgb::new(255, 0, 160),
+    ],
+    // Synthwave: magenta, blue, orange.
+    [
+        Rgb::new(255, 0, 200),
+        Rgb::new(30, 40, 255),
+        Rgb::new(255, 90, 0),
+    ],
+    // Deep sea: blue, turquoise, violet.
+    [
+        Rgb::new(0, 60, 255),
+        Rgb::new(0, 230, 190),
+        Rgb::new(150, 0, 255),
+    ],
+    // Aurora: emerald, azure, violet.
+    [
+        Rgb::new(0, 255, 120),
+        Rgb::new(0, 170, 255),
+        Rgb::new(120, 0, 255),
+    ],
 ];
 
 /// A candle at its dimmest (reddest) and brightest (yellowest).
@@ -447,13 +448,12 @@ fn rainbow(t: f32, place: f32, bright: f32) -> BulbOutput {
 
 /// The colour show's colour at time `t` for a light at `place` (0 at the
 /// left of the lights playing it, 1 at the right): the combination of the
-/// moment laid across the lights, drifting gently from side to side. The
-/// music's spectrum is the same one, so it glides just as smoothly.
+/// moment laid across the lights, drifting gently from side to side.
 ///
 /// Each combination lingers a while, then glides into the next, every colour
 /// along the wheel to its place in it. The glide eases in and out without
 /// ever stopping dead, so nothing holds and then lurches on.
-pub(crate) fn spectrum(t: f32, place: f32) -> Rgb {
+fn spectrum(t: f32, place: f32) -> Rgb {
     let pos = (t / COMBO_SECS).rem_euclid(COMBOS.len() as f32);
     let i = (pos.floor() as usize).min(COMBOS.len() - 1);
     let u = pos - pos.floor();
@@ -472,7 +472,7 @@ pub(crate) fn spectrum(t: f32, place: f32) -> Rgb {
 /// in colour, yet a cluster never shares one colour while a lone light far
 /// off takes the rest of the gradient. Every step along the room is a step
 /// along the spectrum.
-pub(crate) fn places(fixtures: &[Fixture]) -> Vec<f32> {
+fn places(fixtures: &[Fixture]) -> Vec<f32> {
     let n = fixtures.len();
     if n < 2 {
         return vec![0.5; n];

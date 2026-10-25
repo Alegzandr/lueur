@@ -54,7 +54,7 @@ impl LiveSettings {
             engine: config.engine,
             effect: config.transition.effect,
             duration_ms: config.transition.duration_ms,
-            show: config.show.clone(),
+            show: config.show,
             wall: config.room.wall,
             safety: config.safety,
             target_fps: config.capture.target_fps,
@@ -622,7 +622,7 @@ fn run_show(
             if let Some(ears) = &mut ears {
                 ears.follow(&g.audio);
             }
-            (g.show.clone(), g.wall, g.safety)
+            (g.show, g.wall, g.safety)
         }) else {
             break;
         };

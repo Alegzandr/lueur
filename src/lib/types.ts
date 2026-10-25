@@ -177,14 +177,7 @@ export interface ShowSettings {
   speed: number;
   /** The music may flash white on drops and snares, at most three a second. */
   flashes: boolean;
-  /** The music glides through the colour show's combinations, or holds `color`. */
-  music: MusicColors;
-  /** The colour the music holds, in shades that tell the lights apart. */
-  color: Rgb;
 }
-
-/** Where the music takes its colours from (see lueur-core show.rs). */
-export type MusicColors = "spectrum" | "fixed";
 
 export interface Rgb {
   r: number;
@@ -353,14 +346,7 @@ export function defaultConfig(): AppConfig {
     },
     interface: { appearance: "system", language: "system", room_arranged: false },
     states: {},
-    show: {
-      kind: "music",
-      bright: 80,
-      speed: 50,
-      flashes: true,
-      music: "spectrum",
-      color: { r: 255, g: 0, b: 110 },
-    },
+    show: { kind: "music", bright: 80, speed: 50, flashes: true },
     audio: { kind: "default" },
     natural: [],
     safety: { flash_guard: true },

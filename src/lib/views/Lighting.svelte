@@ -61,22 +61,8 @@
   const setupDone = $derived(bound > 0 && arranged);
   const live = $derived(app.status.running);
   const showPlaying = $derived(app.status.groups.some((g) => g.mode !== "ambilight"));
+  const pacedPlaying = $derived(app.status.groups.some((g) => (PACED_SHOWS as Mode[]).includes(g.mode)));
   const musicPlaying = $derived(app.status.groups.some((g) => g.mode === "music"));
-  // The music has a pace only while its colours glide.
-  const pacedPlaying = $derived(
-    app.status.groups.some((g) => (PACED_SHOWS as Mode[]).includes(g.mode)) ||
-      (musicPlaying && app.config.show.music === "spectrum"),
-  );
-  const musicFixed = $derived(app.config.show.music === "fixed");
-  const musicTuple = $derived<RgbTuple>([app.config.show.color.r, app.config.show.color.g, app.config.show.color.b]);
-  const musicCustom = $derived(musicFixed && !PALETTE.some((c) => c.every((v, k) => v === musicTuple[k])));
-
-  function setMusicColour([r, g, b]: RgbTuple) {
-    edit((c) => {
-      c.show.music = "fixed";
-      c.show.color = { r, g, b };
-    });
-  }
 
   const feelOptions = $derived(
     FEEL_ORDER.map((f) => ({ value: f, label: t(`feel_${f}`), title: t(`feel_${f}_tip`) })),
@@ -386,44 +372,6 @@
               onchange={(v) => edit((c) => (c.show.bright = v))}
             />
           </Row>
-          {#if musicPlaying}
-            <Row label={t("music_colours")} tip={t("music_colours_tip")}>
-              <div class="palette" role="group" aria-label={t("music_colours")}>
-                <button
-                  class="dot glide"
-                  class:picked={!musicFixed}
-                  style="--p:{SHOWS.find((x) => x.id === 'rainbow')?.preview}"
-                  title={t("music_spectrum")}
-                  aria-label={t("music_spectrum")}
-                  aria-pressed={!musicFixed}
-                  onclick={() => edit((c) => (c.show.music = "spectrum"))}
-                ></button>
-                {#each PALETTE as c, i}
-                  {@const picked = musicFixed && c.every((v, k) => v === musicTuple[k])}
-                  <button
-                    class="dot"
-                    class:picked
-                    style="--c:{rgbCss(c)}"
-                    title={t(`colour_${PALETTE_NAMES[i]}`)}
-                    aria-label={t(`colour_${PALETTE_NAMES[i]}`)}
-                    aria-pressed={picked}
-                    onclick={() => setMusicColour(c)}
-                  ></button>
-                {/each}
-                <label class="dot any" class:picked={musicCustom} title={t("custom_colour")}>
-                  <input
-                    type="color"
-                    value={"#" + musicTuple.map((v) => v.toString(16).padStart(2, "0")).join("")}
-                    aria-label={t("labelled", { name: t("music_colours"), what: t("custom_colour") })}
-                    oninput={(e) => {
-                      const c = rgbOfHex(e.currentTarget.value);
-                      if (c) setMusicColour(c);
-                    }}
-                  />
-                </label>
-              </div>
-            </Row>
-          {/if}
           {#if pacedPlaying}
             <Row label={t("speed")}>
               <Slider
@@ -1231,9 +1179,6 @@
   .dot.any:has(input:focus-visible) {
     outline: 2px solid var(--focus);
     outline-offset: 2px;
-  }
-  .dot.glide {
-    background: var(--p);
   }
   .panel-foot {
     display: flex;
