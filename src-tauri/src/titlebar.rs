@@ -46,7 +46,10 @@ pub fn paint(win: &WebviewWindow, theme: Theme) {
 
     // Title and icon off in the bar only: the taskbar and Alt+Tab keep them.
     let flags = WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON;
-    let options = WTA_OPTIONS { dwFlags: flags, dwMask: flags };
+    let options = WTA_OPTIONS {
+        dwFlags: flags,
+        dwMask: flags,
+    };
     let _ = unsafe {
         SetWindowThemeAttribute(
             hwnd,

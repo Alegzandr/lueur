@@ -121,10 +121,9 @@ pub fn follow_moves(pairings: &mut Pairings, found: &[DiscoveredDevice]) -> bool
         let ip = match &d.kind {
             DeviceKind::Hue { username, .. } if !username.is_empty() => {
                 // `hue:<bridge>:<light>`
-                let bridge = d
-                    .id
-                    .strip_prefix(hue::ID_PREFIX)
-                    .and_then(|rest| rest.split(':').next());
+                let bridge =
+                    d.id.strip_prefix(hue::ID_PREFIX)
+                        .and_then(|rest| rest.split(':').next());
                 pairings
                     .hue
                     .iter_mut()

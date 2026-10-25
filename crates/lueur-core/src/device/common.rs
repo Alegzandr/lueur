@@ -375,6 +375,18 @@ mod tests {
     const RED: Rgb = Rgb::new(255, 0, 0);
 
     #[test]
+    fn a_reply_from_its_own_address_wins() {
+        let mut found = HashMap::new();
+        keep(&mut found, "a".into(), "relayed", false);
+        keep(&mut found, "a".into(), "spoofed", false);
+        assert_eq!(found["a"], ("relayed", false), "the first reply stands");
+        keep(&mut found, "a".into(), "real", true);
+        keep(&mut found, "a".into(), "impostor", true);
+        keep(&mut found, "a".into(), "late", false);
+        assert_eq!(found["a"], ("real", true));
+    }
+
+    #[test]
     fn only_lan_addresses_are_bulbs() {
         let me = local_ip_toward(Ipv4Addr::new(192, 168, 0, 1)).ok();
         for ok in ["192.168.1.5", "10.0.0.2", "172.16.4.1", "169.254.3.3"] {

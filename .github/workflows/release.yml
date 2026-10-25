@@ -59,9 +59,11 @@ jobs:
           echo "Releasing v$version"
           echo "release=true" >> "$GITHUB_OUTPUT"
 
+  # The CI skips release commits and leaves them to this job, so it runs for
+  # one even when its version is already tagged.
   tests:
     needs: verify
-    if: needs.verify.outputs.release == 'true'
+    if: needs.verify.outputs.release == 'true' || startsWith(github.event.head_commit.message, 'release:')
     uses: ./.github/workflows/ci.yml
 
   # Builds run every dependency's build script and never see the signing
@@ -70,6 +72,7 @@ jobs:
   build:
     name: Build (${{ matrix.name }})
     needs: [verify, tests]
+    if: needs.verify.outputs.release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -195,10 +198,18 @@ jobs:
           cd release
           sha256sum $(ls Lueur_* | grep -v '\.sig$') > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      # A draft until every file is up: the updater reads the latest public
+      # release, and a draft has no tag yet, so a failed upload can simply be
+      # run again. A draft left by a failed run is replaced.
       - name: GitHub release
         run: |
+          if [ "$(gh release view "v$VERSION" --json isDraft -q .isDraft 2>/dev/null)" = true ]; then
+            gh release delete "v$VERSION" --yes
+          fi
           gh release create "v$VERSION" \
+            --draft \
             --target "$GITHUB_SHA" \
             --title "Lueur $VERSION" \
             --generate-notes \
             release/*
+          gh release edit "v$VERSION" --draft=false --latest
