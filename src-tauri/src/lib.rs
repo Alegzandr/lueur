@@ -155,21 +155,31 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Close-to-tray: hide instead of quitting when the user closes the
-            // window and has tray-minimise enabled.
-            if let WindowEvent::CloseRequested { api, .. } = event
-                && window.label() == MAIN_WINDOW
-            {
-                let app = window.app_handle();
-                let minimize_to_tray = app
+            if window.label() != MAIN_WINDOW {
+                return;
+            }
+            let to_tray = || {
+                window
+                    .app_handle()
                     .state::<AppState>()
                     .lock_config()
                     .map(|c| c.behavior.minimize_to_tray)
-                    .unwrap_or(true);
-                if minimize_to_tray {
+                    .unwrap_or(true)
+            };
+            match event {
+                // Close-to-tray: hide instead of quitting.
+                WindowEvent::CloseRequested { api, .. } if to_tray() => {
                     let _ = window.hide();
                     api.prevent_close();
                 }
+                // Without close-to-tray, closing quits, so minimising is how
+                // Lueur goes to the tray; with it, minimising stays ordinary.
+                // A Mac keeps its Dock, where minimised windows belong.
+                #[cfg(not(target_os = "macos"))]
+                WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) && !to_tray() => {
+                    let _ = window.hide();
+                }
+                _ => {}
             }
         })
         .run(tauri::generate_context!())
