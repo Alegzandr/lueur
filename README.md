@@ -54,7 +54,7 @@ to date.
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/lighting-light.png">
-        <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: screen ambilight, five effects, five moods, a sleep timer and every light with its brightness.">
+        <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: who effects and moods go to, the screen ambilight, five effects, five moods with Relax on, a sleep timer and every light with its mood and brightness.">
       </picture>
       <p><b>Lighting</b>: start the screen ambilight, pick an effect or a mood,
       and adjust each light.</p>
@@ -170,9 +170,11 @@ owner to add you to their home instead.
 
 ## Everyday use
 
-- **Tray.** Closing the window keeps Lueur in the tray (unless you turn that
-  off in Settings); the tray menu starts and stops the ambilight, so you never
-  have to leave a game.
+- **Tray.** Closing the window keeps Lueur in the tray. Turn off *Keep
+  running when closed* in Settings and closing quits instead, while
+  minimising goes to the tray (on Windows and Linux; a Mac minimises to the
+  Dock). The tray menu starts and stops the ambilight, so you never have to
+  leave a game.
 - **At login.** *Open at login* and *Start hidden in the tray* in Settings;
   each light picks up the effect it was left playing.
 - **Keyboard.** <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>1</kbd>–<kbd>4</kbd>
