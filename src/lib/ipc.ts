@@ -4,6 +4,7 @@
 // plain `vite` browser preview), so the UI can be developed without the shell.
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { DEFAULT_STATE, MOODS } from "./scenes";
 import {
   defaultConfig,
   type AppConfig,
@@ -56,6 +57,12 @@ function demoConfig(): AppConfig {
     name: `Yeelight Color ${i + 1}`,
     kind: { family: "yeelight" },
   }));
+  // Lights set by hand, each its own way, as a room in use is.
+  c.states = {
+    "demo-0": { on: true, bright: 20, tint: { mode: "color", r: 255, g: 45, b: 146 } },
+    "demo-1": { on: true, bright: 68, tint: { mode: "color", r: 10, g: 40, b: 255 } },
+    "demo-2": { on: true, bright: 100, tint: { mode: "white", kelvin: 5500 } },
+  };
   return c;
 }
 
@@ -74,13 +81,22 @@ async function subscribe<T>(event: string, cb: (payload: T) => void): Promise<()
   return listen<T>(event, (e) => cb(e.payload));
 }
 
+// The browser preview keeps the config as the backend would: what the lights
+// show is its own, whatever the interface saves.
+let previewConfig: AppConfig | null = null;
+const previewCfg = () => (previewConfig ??= demo() ? demoConfig() : defaultConfig());
+
 export async function getConfig(): Promise<AppConfig> {
-  if (!inTauri()) return demo() ? demoConfig() : defaultConfig();
+  if (!inTauri()) return structuredClone(previewCfg());
   return invoke<AppConfig>("get_config");
 }
 
 export async function saveConfig(config: AppConfig): Promise<void> {
-  if (!inTauri()) return;
+  if (!inTauri()) {
+    const { states, natural } = previewCfg();
+    previewConfig = { ...structuredClone(config), states, natural };
+    return;
+  }
   return invoke<void>("save_config", { config });
 }
 
@@ -151,24 +167,40 @@ export async function tuyaLoginPoll(token: string, userCode: string): Promise<nu
 
 /** Power the bulb bound to a room light on/off. */
 export async function setLightPower(lightId: string, on: boolean): Promise<void> {
-  if (!inTauri()) return;
+  if (!inTauri()) {
+    const c = previewCfg();
+    c.states[lightId] = { ...(c.states[lightId] ?? DEFAULT_STATE), on };
+    return;
+  }
   return invoke<void>("set_light_power", { lightId, on });
 }
 
 /** Set a light by hand. Rejects with `light_following` while the running
  *  ambilight drives it. */
 export async function setLightState(lightId: string, state: LightState): Promise<void> {
-  if (!inTauri()) return;
+  if (!inTauri()) {
+    const c = previewCfg();
+    c.states[lightId] = state;
+    c.natural = (c.natural ?? []).filter((id) => id !== lightId);
+    return;
+  }
   return invoke<void>("set_light_state", { lightId, state });
 }
 
-/** Apply a built-in mood to every light. Stops whatever effect runs. */
-export async function applyScene(id: string): Promise<PowerResult> {
+/** Apply a built-in mood to `lightIds`, or to every light with null. Stops
+ *  the effects playing on them. */
+export async function applyScene(id: string, lightIds: string[] | null): Promise<PowerResult> {
   if (!inTauri()) {
-    previewModes = {};
-    return { total: 0, succeeded: 0, failures: [] };
+    const c = previewCfg();
+    const ids = lightIds ?? c.bindings.map((b) => b.light_id);
+    previewModes = Object.fromEntries(Object.entries(previewModes).filter(([l]) => !ids.includes(l)));
+    const m = MOODS.find((m) => m.id === id) ?? { kelvin: 4500, bright: 90 };
+    const rest = (c.natural ?? []).filter((l) => !ids.includes(l));
+    c.natural = id === "natural" ? [...rest, ...ids] : rest;
+    for (const l of ids) c.states[l] = { on: true, bright: m.bright, tint: { mode: "white", kelvin: m.kelvin } };
+    return { total: ids.length, succeeded: ids.length, failures: [] };
   }
-  return invoke<PowerResult>("apply_scene", { id });
+  return invoke<PowerResult>("apply_scene", { id, lightIds });
 }
 
 /** Called when the tray or automatic mode changed what the lights show. */
@@ -180,7 +212,9 @@ export function onLightsChanged(cb: () => void): Promise<() => void> {
 export async function setAllPower(on: boolean): Promise<PowerResult> {
   if (!inTauri()) {
     if (!on) previewModes = {};
-    return { total: 0, succeeded: 0, failures: [] };
+    const c = previewCfg();
+    for (const b of c.bindings) c.states[b.light_id] = { ...(c.states[b.light_id] ?? DEFAULT_STATE), on };
+    return { total: c.bindings.length, succeeded: c.bindings.length, failures: [] };
   }
   return invoke<PowerResult>("set_all_power", { on });
 }
@@ -222,15 +256,15 @@ export async function stopEffect(mode?: Mode): Promise<void> {
   return invoke<void>("stop_effect", { mode: mode ?? null });
 }
 
-/** Play `mode` on one light, in step with the others playing it, or give
- *  it back to the hand with null. */
-export async function setLightMode(lightId: string, mode: Mode | null): Promise<EffectStatus> {
+/** Play `mode` on `lightIds`, in step with the others playing it, or give
+ *  them back to the hand with null. */
+export async function setLightsMode(lightIds: string[], mode: Mode | null): Promise<EffectStatus> {
   if (!inTauri()) {
-    if (mode) previewModes = { ...previewModes, [lightId]: mode };
-    else previewModes = Object.fromEntries(Object.entries(previewModes).filter(([id]) => id !== lightId));
+    const rest = Object.entries(previewModes).filter(([id]) => !lightIds.includes(id));
+    previewModes = Object.fromEntries(mode ? [...rest, ...lightIds.map((id) => [id, mode])] : rest);
     return previewStatus();
   }
-  return invoke<EffectStatus>("set_light_mode", { lightId, mode });
+  return invoke<EffectStatus>("set_lights_mode", { lightIds, mode });
 }
 
 /** Restart the effects on their lights, to pick up room and capture changes. */

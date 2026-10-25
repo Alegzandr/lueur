@@ -202,64 +202,108 @@ fn put_back(state: &AppState, ids: &[String], or_default: bool) {
     });
 }
 
-/// Play `mode` on one light, or give it back to the hand with `None`.
+/// Play `mode` on `ids`, or give them back to the hand with `None`.
 ///
 /// Lights playing the same mode share one loop, so they move in step: the
-/// light joins that loop, which restarts with it, and the one it leaves
-/// restarts without it. Loops driving a light behind the same host restart
+/// lights join that loop, which restarts with them, and the ones they leave
+/// restart without them. Loops driving a light behind the same host restart
 /// too, so a Hue bridge's budget is split anew. The bulbs go straight from
 /// one loop to the next, without settling in between.
-pub fn set_light_mode(state: &AppState, light_id: &str, mode: Option<Mode>) -> AppResult<()> {
+pub fn set_lights_mode(state: &AppState, ids: &[String], mode: Option<Mode>) -> AppResult<()> {
+    move_lights(state, ids, mode, true)
+}
+
+/// [`set_lights_mode`]. Lights given back to the hand show what they were
+/// last set to, unless `settle` is false: something else is about to be
+/// shown on them.
+fn move_lights(
+    state: &AppState,
+    ids: &[String],
+    mode: Option<Mode>,
+    settle: bool,
+) -> AppResult<()> {
     let _change = state.effects.change();
-    let binding = binding(state, light_id)?;
-    let from = state.effects.mode_of(light_id);
-    if from == mode {
+    let bindings = ids
+        .iter()
+        .map(|id| binding(state, id))
+        .collect::<AppResult<Vec<_>>>()?;
+    let moving: Vec<&String> = ids
+        .iter()
+        .filter(|id| state.effects.mode_of(id) != mode)
+        .collect();
+    if moving.is_empty() {
         return Ok(());
     }
+    let from: Vec<Option<Mode>> = moving.iter().map(|id| state.effects.mode_of(id)).collect();
     let config = state.lock_config()?.clone();
-    let same_host = |id: &String| config.binding_for(id).is_some_and(|b| b.ip == binding.ip);
+    let same_host = |id: &String| {
+        config
+            .binding_for(id)
+            .is_some_and(|b| bindings.iter().any(|ours| ours.ip == b.ip))
+    };
     let taken = state.effects.take(|h| {
-        Some(h.mode) == from || Some(h.mode) == mode || h.light_ids.iter().any(same_host)
+        from.contains(&Some(h.mode)) || Some(h.mode) == mode || h.light_ids.iter().any(same_host)
     });
 
     let mut plan: Vec<(Mode, Vec<String>)> = taken
         .iter()
         .map(|h| {
-            let ids = h.light_ids.iter().filter(|id| *id != light_id).cloned();
-            (h.mode, ids.collect())
+            let rest = h
+                .light_ids
+                .iter()
+                .filter(|id| !moving.contains(id))
+                .cloned();
+            (h.mode, rest.collect())
         })
         .collect();
     if let Some(m) = mode {
+        let joining = moving.iter().map(|id| id.to_string());
         match plan.iter_mut().find(|(pm, _)| *pm == m) {
-            Some((_, ids)) => ids.push(light_id.to_string()),
-            None => plan.push((m, vec![light_id.to_string()])),
+            Some((_, ids)) => ids.extend(joining),
+            None => plan.push((m, joining.collect())),
         }
-        state.manual.release(light_id);
+        for id in &moving {
+            state.manual.release(id);
+        }
     }
     plan.retain(|(_, ids)| !ids.is_empty());
     hand_over(taken);
 
     let (mut idle, errors) = launch(state, &config, &plan);
-    if mode.is_none() {
-        idle.push(light_id.to_string());
+    if mode.is_none() && settle {
+        idle.extend(moving.iter().map(|id| id.to_string()));
     }
     put_back(state, &idle, true);
-    if state.effects.mode_of(light_id) == mode {
-        return record_modes(state, |modes, _| match mode {
-            Some(m) => {
-                modes.insert(light_id.to_string(), m.id().to_string());
+    let took: Vec<&String> = moving
+        .iter()
+        .copied()
+        .filter(|id| state.effects.mode_of(id) == mode)
+        .collect();
+    record_modes(state, |modes, _| {
+        for id in &took {
+            match mode {
+                Some(m) => {
+                    modes.insert(id.to_string(), m.id().to_string());
+                }
+                None => {
+                    modes.remove(*id);
+                }
             }
-            None => {
-                modes.remove(light_id);
-            }
-        });
+        }
+    })?;
+    if took.len() == moving.len() {
+        return Ok(());
     }
-    // The light did not take its new mode: say why.
+    // Some light did not take its new mode: say why.
+    let missed = moving.iter().find(|id| !took.contains(id));
+    let ip = missed
+        .and_then(|id| config.binding_for(id))
+        .map_or("", |b| b.ip.as_str());
     Err(errors
         .into_iter()
         .find(|(m, _)| Some(*m) == mode)
         .map(|(_, e)| e)
-        .unwrap_or_else(|| unreachable(&binding.ip, "no stream")))
+        .unwrap_or_else(|| unreachable(ip, "no stream")))
 }
 
 /// Restart every effect, so it picks up a changed room, bulb or capture.
@@ -386,11 +430,19 @@ fn apply_one(
     }
 }
 
-/// Show `wish` on one light.
+/// Show `wish` on one light, and record it. A slider drag calls this many
+/// times a second, so the record waits for the interface's next save to
+/// reach the disk.
 pub fn set_light(state: &AppState, light_id: &str, wish: LightState) -> AppResult<()> {
     let binding = manual_binding(state, light_id)?;
+    let wish = wish.clamped();
     let wall = state.lock_config()?.room.wall;
-    apply_one(state, &binding, wish.clamped(), wall)
+    apply_one(state, &binding, wish, wall)?;
+    state
+        .lock_config()?
+        .states
+        .insert(light_id.to_string(), wish);
+    Ok(())
 }
 
 /// Switch one light on or off, leaving its colour to the bulb. Allowed while
@@ -499,11 +551,12 @@ pub fn set_all_power(state: &AppState, on: bool) -> AppResult<PowerResult> {
     )
 }
 
-/// Apply a built-in mood (by its id) to every light. A mood is a decision
-/// about the whole room, so whatever effect runs stops first. The natural
+/// Apply a built-in mood (by its id) to `ids`, or to every light with
+/// `None`. A mood is a decision about those lights, so whatever effect plays
+/// on them stops first; on the whole room, every effect does. The natural
 /// light shows what suits the time now, and keeps following the day (see
 /// [`follow_natural`]).
-pub fn apply_scene(state: &AppState, id: &str) -> AppResult<PowerResult> {
+pub fn apply_scene(state: &AppState, id: &str, ids: Option<&[String]>) -> AppResult<PowerResult> {
     let wish = if id == scene::NATURAL {
         crate::natural::now()
     } else {
@@ -512,35 +565,51 @@ pub fn apply_scene(state: &AppState, id: &str) -> AppResult<PowerResult> {
             .state()
     };
     crate::auto::user_took_over(state);
-    stop_effect(state, false);
-    set_natural(state, id == scene::NATURAL)?;
-    apply_many(state, |_| Some(wish), false)
+    let ids: Vec<String> = match ids {
+        Some(ids) => {
+            move_lights(state, ids, None, false)?;
+            ids.to_vec()
+        }
+        None => {
+            stop_effect(state, false);
+            let cfg = state.lock_config()?;
+            cfg.bindings.iter().map(|b| b.light_id.clone()).collect()
+        }
+    };
+    set_natural(state, &ids, id == scene::NATURAL)?;
+    apply_many(state, |b| ids.contains(&b.light_id).then_some(wish), false)
 }
 
-/// Turn the natural light on or off, without touching the lights.
-pub fn set_natural(state: &AppState, on: bool) -> AppResult<()> {
+/// Have `ids` follow the natural light or stop following it, without
+/// touching the lights.
+pub fn set_natural(state: &AppState, ids: &[String], on: bool) -> AppResult<()> {
     let mut cfg = state.lock_config()?;
-    if cfg.natural == on {
+    let before = cfg.natural.clone();
+    for id in ids {
+        if on {
+            cfg.natural.insert(id.clone());
+        } else {
+            cfg.natural.remove(id);
+        }
+    }
+    if cfg.natural == before {
         return Ok(());
     }
-    cfg.natural = on;
     drop(cfg);
     state.persist()
 }
 
-/// Bring every light that is on, and free, to what the natural light shows
-/// now. Lights already there are left alone, so this is cheap to call
+/// Bring every light that follows the natural light, is on, and free, to
+/// what it shows now. Lights already there are left alone, so this is cheap to call
 /// often. `true` if any light was changed.
 pub fn follow_natural(state: &AppState, wish: LightState) -> AppResult<bool> {
     let driven = state.effects.driven_ids();
     let behind: Vec<String> = {
         let cfg = state.lock_config()?;
-        if !cfg.natural {
-            return Ok(false);
-        }
         cfg.bindings
             .iter()
             .map(|b| &b.light_id)
+            .filter(|id| cfg.natural.contains(*id))
             .filter(|id| {
                 let now = cfg.states.get(*id).copied().unwrap_or_default();
                 now.on && now != wish && !driven.contains(id)

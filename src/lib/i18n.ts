@@ -96,6 +96,11 @@ const en = {
   sleep_left: "Lights off in {n} min",
   sleep_fading: "Fading out…",
   click_to_stop: "Click again to stop",
+  apply_to: "Apply to",
+  apply_to_tip: "Effects and moods go to the lights picked here. Pick several to set them together.",
+  whole_room: "Whole room",
+  share_of: "{n} of {total}",
+  click_to_extend: "Click to play it on every light picked",
   walls: "Wall colour",
   walls_tip: "Lueur corrects every light for it, so the room shows the colours asked for, not the paint's.",
   wall_custom: "Other paint",
@@ -364,6 +369,11 @@ const fr: Record<Key, string> = {
   sleep_left: "Extinction dans {n} min",
   sleep_fading: "Extinction en cours…",
   click_to_stop: "Cliquez à nouveau pour arrêter",
+  apply_to: "Appliquer à",
+  apply_to_tip: "Les effets et les ambiances vont aux lumières choisies ici. Choisissez-en plusieurs pour les régler ensemble.",
+  whole_room: "Toute la pièce",
+  share_of: "{n} sur {total}",
+  click_to_extend: "Cliquez pour l'étendre à toutes les lumières choisies",
   walls: "Couleur des murs",
   walls_tip: "Lueur en tient compte sur chaque lumière, pour que la pièce montre les couleurs voulues et non celle de la peinture.",
   wall_custom: "Autre peinture",
@@ -547,12 +557,14 @@ const fr: Record<Key, string> = {
 const enCounts = {
   n_bulbs_following: ["{n} bulb following", "{n} bulbs following"],
   n_found: ["{n} found", "{n} found"],
+  n_lights: ["{n} light", "{n} lights"],
   tuya_imported: ["{n} bulb imported from Smart Life.", "{n} bulbs imported from Smart Life."],
 };
 type CountKey = keyof typeof enCounts;
 const frCounts: Record<CountKey, string[]> = {
   n_bulbs_following: ["{n} ampoule active", "{n} ampoules actives"],
   n_found: ["{n} trouvée", "{n} trouvées"],
+  n_lights: ["{n} lumière", "{n} lumières"],
   tuya_imported: ["{n} ampoule importée depuis Smart Life.", "{n} ampoules importées depuis Smart Life."],
 };
 

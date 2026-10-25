@@ -10,7 +10,7 @@ use crate::scene::LightState;
 use crate::show::ShowSettings;
 use crate::yeelight::Effect;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Bumped when the on-disk format changes incompatibly.
@@ -183,15 +183,36 @@ pub struct AppConfig {
     /// How the light shows (fade, candle, music) play.
     #[serde(default)]
     pub show: ShowSettings,
-    /// The lights follow the time of day (see [`crate::scene::natural_at`])
-    /// until something else is asked of them.
-    #[serde(default)]
-    pub natural: bool,
+    /// The lights that follow the time of day (see
+    /// [`crate::scene::natural_at`]), by room light id, until something else
+    /// is asked of them. Older versions kept one switch for the whole room;
+    /// [`AppConfig::from_json`] turns it into every light with a bulb.
+    #[serde(default, deserialize_with = "natural_lights")]
+    pub natural: BTreeSet<String>,
     /// What each light plays (`ambilight` or a show's id), keyed by room
     /// light id, as the user last chose it: the next launch picks it up
     /// again. A light set by hand has no entry.
     #[serde(default)]
     pub modes: BTreeMap<String, String>,
+}
+
+/// Stands, while a config is read, for "every light" in an older config's
+/// natural light switch.
+const EVERY_LIGHT: &str = "*";
+
+/// The natural light's lights, or an older config's switch for all of them.
+fn natural_lights<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeSet<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Natural {
+        Switch(bool),
+        Lights(BTreeSet<String>),
+    }
+    Ok(match Natural::deserialize(d)? {
+        Natural::Switch(true) => BTreeSet::from([EVERY_LIGHT.to_string()]),
+        Natural::Switch(false) => BTreeSet::new(),
+        Natural::Lights(ids) => ids,
+    })
 }
 
 fn default_version() -> u32 {
@@ -212,7 +233,7 @@ impl Default for AppConfig {
             interface: InterfaceSettings::default(),
             states: BTreeMap::new(),
             show: ShowSettings::default(),
-            natural: false,
+            natural: BTreeSet::new(),
             modes: BTreeMap::new(),
         }
     }
@@ -241,6 +262,9 @@ impl AppConfig {
             && cfg.room.wall == crate::color::Rgb::WHITE
         {
             cfg.room.wall = wall;
+        }
+        if cfg.natural.remove(EVERY_LIGHT) {
+            cfg.natural = cfg.bindings.iter().map(|b| b.light_id.clone()).collect();
         }
         if std::mem::take(&mut cfg.behavior.legacy_autostart) && cfg.modes.is_empty() {
             cfg.modes = cfg
@@ -386,6 +410,20 @@ mod tests {
         assert_eq!(cfg.modes.get("l1").map(String::as_str), Some("ambilight"));
         // The old setting is not written back.
         assert!(!cfg.to_json().unwrap().contains("autostart_effect"));
+    }
+
+    #[test]
+    fn the_natural_light_switch_becomes_its_lights() {
+        let bindings = r#""bindings": [
+            { "light_id": "l1", "device_id": "0x1", "ip": "192.168.1.5" },
+            { "light_id": "l2", "device_id": "0x2", "ip": "192.168.1.6" }
+        ]"#;
+        let on = AppConfig::from_json(&format!(r#"{{ {bindings}, "natural": true }}"#)).unwrap();
+        assert_eq!(on.natural, BTreeSet::from(["l1".into(), "l2".into()]));
+        let off = AppConfig::from_json(&format!(r#"{{ {bindings}, "natural": false }}"#)).unwrap();
+        assert!(off.natural.is_empty());
+        let back = AppConfig::from_json(&on.to_json().unwrap()).unwrap();
+        assert_eq!(back.natural, on.natural);
     }
 
     #[test]

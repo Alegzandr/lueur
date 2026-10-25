@@ -6,19 +6,22 @@
     applyScene,
     bindingFor,
     chooseMode,
+    effectTargets,
     identifyLight,
     isDriven,
     isOn,
     isPlaying,
     lightState,
     modeOf,
+    moodTargets,
     setAllPower,
     setLightMode,
     setSleepTimer,
     toggleEffect,
     toggleLightPower,
+    toggleTarget,
   } from "../state.svelte";
-  import { t, pct, times } from "../i18n";
+  import { t, tn, pct, times } from "../i18n";
   import { describe, mapLight } from "../geometry";
   import { applyFeel, currentFeel, FEEL_ORDER, type Feel } from "../presets";
   import {
@@ -37,6 +40,7 @@
     sameRgb,
     showPace,
     tintCss,
+    type MoodId,
     type RgbTuple,
   } from "../scenes";
   import { defaultConfig, type LightState, type Mode } from "../types";
@@ -78,6 +82,25 @@
   const next = $derived(steps.findIndex((s) => !s.done));
 
   const modeName = (m: Mode | "manual") => t(`mode_${m}`);
+
+  // --- Where effects and moods go ---
+
+  /** The lights that can be picked: those with a bulb. */
+  const pickable = $derived(lights.filter((l) => bindingFor(l.id)));
+  const wholeRoom = $derived(!app.target.some((id) => bindingFor(id)));
+  const targets = $derived(effectTargets());
+  /** What the lights picked are called, shown by the effects and moods. */
+  const targetName = $derived.by(() => {
+    if (wholeRoom) return null;
+    const picked = pickable.filter((l) => app.target.includes(l.id));
+    return picked.length === 1 ? picked[0].name : tn("n_lights", picked.length);
+  });
+
+  /** How many of the lights an effect would go to play `mode` already. */
+  const shareOf = (mode: Mode) => targets.filter((id) => modeOf(id) === mode).length;
+  const playsAll = (mode: Mode) => targets.length > 0 && shareOf(mode) === targets.length;
+  const tileTitle = (mode: Mode) =>
+    playsAll(mode) ? t("click_to_stop") : shareOf(mode) > 0 ? t("click_to_extend") : undefined;
 
   /** What a light can play, by hand first. */
   const LIGHT_MODES: (Mode | null)[] = [null, "ambilight", ...SHOWS.map((s) => s.id)];
@@ -122,22 +145,22 @@
   const same = (a: LightState | undefined, b: LightState) =>
     !!a && a.on === b.on && a.bright === b.bright && JSON.stringify(a.tint) === JSON.stringify(b.tint);
 
-  /** The mood every light with a bulb shows now, if any. */
-  const currentMood = $derived(
-    live
-      ? null
-      : app.config.natural
-        ? NATURAL
-        : (MOODS.find((m) =>
-          app.config.bindings.every((b) =>
-            same(app.config.states[b.light_id], {
-              on: true,
-              bright: m.bright,
-              tint: { mode: "white", kelvin: m.kelvin },
-            }),
-          ),
-        )?.id ?? null),
-  );
+  /** The mood a light shows now, if it shows one: the natural light while
+   *  it follows it, or the mood its state is. */
+  const moodOf = (id: string): string | null => {
+    if (isDriven(id)) return null;
+    if (app.config.natural?.includes(id)) return NATURAL;
+    const s = app.config.states[id];
+    return (
+      MOODS.find((m) => same(s, { on: true, bright: m.bright, tint: { mode: "white", kelvin: m.kelvin } }))?.id ?? null
+    );
+  };
+  const moodName = (id: string) => t(id === NATURAL ? "mood_natural" : `mood_${id as MoodId}`);
+
+  const moodIds = $derived(moodTargets());
+  /** How many of the lights a mood would go to show `mood` already. */
+  const moodShare = (mood: string) => moodIds.filter((id) => moodOf(id) === mood).length;
+  const moodAll = (mood: string) => moodIds.length > 0 && moodShare(mood) === moodIds.length;
 
   /** The natural light's swatch: its day, from night to noon and back. */
   const naturalSwatch = `linear-gradient(135deg, ${[2200, 4000, 5500, 3000].map((k) => rgbCss(kelvinRgb(k))).join(", ")})`;
@@ -207,16 +230,51 @@
     </section>
   {/if}
 
+  {#if pickable.length > 1}
+    <section class="group">
+      <div class="group-head"><h2 class="group-title" title={t("apply_to_tip")}>{t("apply_to")}</h2></div>
+      <div class="targets" role="group" aria-label={t("apply_to")}>
+        <button
+          class="chip"
+          class:picked={wholeRoom}
+          aria-pressed={wholeRoom}
+          onclick={() => (app.target = [])}
+        >
+          <Icon name="plan" size={13} />
+          {t("whole_room")}
+        </button>
+        {#each pickable as l (l.id)}
+          {@const picked = !wholeRoom && app.target.includes(l.id)}
+          {@const dark = !isDriven(l.id) && !isOn(l.id)}
+          <button class="chip" class:picked aria-pressed={picked} onclick={() => toggleTarget(l.id)}>
+            <span
+              class="chip-dot"
+              class:off={dark}
+              style={dark ? undefined : `background:${modeSwatch(modeOf(l.id), lightState(l.id))}`}
+              aria-hidden="true"
+            ></span>
+            {l.name}
+          </button>
+        {/each}
+      </div>
+    </section>
+  {/if}
+
   {#if bound > 0}
     <section class="group">
-      <div class="group-head"><h2 class="group-title">{t("effects")}</h2></div>
+      <div class="group-head">
+        <h2 class="group-title">
+          {t("effects")}{#if targetName}<span class="for">{` · ${targetName}`}</span>{/if}
+        </h2>
+      </div>
       <div class="modes">
         <button
           class="tile screen"
-          class:active={isPlaying("ambilight")}
+          class:active={playsAll("ambilight")}
+          class:partial={shareOf("ambilight") > 0 && !playsAll("ambilight")}
           class:pending={app.pending === "ambilight"}
-          aria-pressed={isPlaying("ambilight")}
-          title={isPlaying("ambilight") ? t("click_to_stop") : undefined}
+          aria-pressed={playsAll("ambilight") ? true : shareOf("ambilight") > 0 ? "mixed" : false}
+          title={tileTitle("ambilight")}
           disabled={app.busy && app.pending !== "ambilight"}
           onclick={() => chooseMode("ambilight")}
         >
@@ -229,23 +287,30 @@
               {DETECTS_FULLSCREEN && app.config.behavior.auto_fullscreen ? t("mode_ambilight_auto") : t("mode_ambilight_sub")}
             </span>
           </span>
-          {#if isPlaying("ambilight")}<span class="on-dot" aria-hidden="true"></span>{/if}
+          {#if shareOf("ambilight") > 0 && !playsAll("ambilight")}
+            <span class="share">{t("share_of", { n: shareOf("ambilight"), total: targets.length })}</span>
+          {/if}
+          {#if shareOf("ambilight") > 0}<span class="on-dot" aria-hidden="true"></span>{/if}
         </button>
         {#each SHOWS as s (s.id)}
           <button
             class="tile"
-            class:active={isPlaying(s.id)}
+            class:active={playsAll(s.id)}
+            class:partial={shareOf(s.id) > 0 && !playsAll(s.id)}
             class:pending={app.pending === s.id}
-            aria-pressed={isPlaying(s.id)}
-            title={isPlaying(s.id) ? t("click_to_stop") : undefined}
+            aria-pressed={playsAll(s.id) ? true : shareOf(s.id) > 0 ? "mixed" : false}
+            title={tileTitle(s.id)}
             disabled={app.busy && app.pending !== s.id}
             onclick={() => chooseMode(s.id)}
           >
             <span class="preview" style="--p:{s.preview}" aria-hidden="true"></span>
             <span class="tile-text">
               <span class="tile-name">{modeName(s.id)}</span>
+              {#if shareOf(s.id) > 0 && !playsAll(s.id)}
+                <span class="tile-sub">{t("share_of", { n: shareOf(s.id), total: targets.length })}</span>
+              {/if}
             </span>
-            {#if isPlaying(s.id)}<span class="on-dot" aria-hidden="true"></span>{/if}
+            {#if shareOf(s.id) > 0}<span class="on-dot" aria-hidden="true"></span>{/if}
           </button>
         {/each}
       </div>
@@ -317,27 +382,38 @@
     </section>
 
     <section class="group">
-      <div class="group-head"><h2 class="group-title">{t("moods")}</h2></div>
+      <div class="group-head">
+        <h2 class="group-title">
+          {t("moods")}{#if targetName}<span class="for">{` · ${targetName}`}</span>{/if}
+        </h2>
+      </div>
       <div class="moods">
         <button
           class="mood"
-          class:active={currentMood === NATURAL}
+          class:active={moodAll(NATURAL)}
+          class:partial={moodShare(NATURAL) > 0 && !moodAll(NATURAL)}
           class:pending={app.pending === NATURAL}
-          aria-pressed={currentMood === NATURAL}
+          aria-pressed={moodAll(NATURAL) ? true : moodShare(NATURAL) > 0 ? "mixed" : false}
           title={t("mood_natural_tip")}
           disabled={app.pending !== null}
           onclick={() => applyScene(NATURAL)}
         >
           <span class="mood-dot" style="--c:{rgbCss(kelvinRgb(4000))};--a:1;background:{naturalSwatch}" aria-hidden="true"
           ></span>
-          {t("mood_natural")}
+          <span class="mood-text">
+            {t("mood_natural")}
+            {#if moodShare(NATURAL) > 0 && !moodAll(NATURAL)}
+              <span class="share">{t("share_of", { n: moodShare(NATURAL), total: moodIds.length })}</span>
+            {/if}
+          </span>
         </button>
         {#each MOODS as m (m.id)}
           <button
             class="mood"
-            class:active={currentMood === m.id}
+            class:active={moodAll(m.id)}
+            class:partial={moodShare(m.id) > 0 && !moodAll(m.id)}
             class:pending={app.pending === m.id}
-            aria-pressed={currentMood === m.id}
+            aria-pressed={moodAll(m.id) ? true : moodShare(m.id) > 0 ? "mixed" : false}
             disabled={app.pending !== null}
             onclick={() => applyScene(m.id)}
           >
@@ -346,7 +422,12 @@
               style="--c:{rgbCss(kelvinRgb(m.kelvin))};--a:{0.4 + (0.6 * m.bright) / 100}"
               aria-hidden="true"
             ></span>
-            {t(`mood_${m.id}`)}
+            <span class="mood-text">
+              {t(`mood_${m.id}`)}
+              {#if moodShare(m.id) > 0 && !moodAll(m.id)}
+                <span class="share">{t("share_of", { n: moodShare(m.id), total: moodIds.length })}</span>
+              {/if}
+            </span>
           </button>
         {/each}
       </div>
@@ -374,7 +455,7 @@
           {@const driven = isDriven(l.id)}
           {@const lm = modeOf(l.id)}
           {@const expanded = open === l.id && !!b}
-          <div class="light" class:expanded>
+          <div class="light" class:expanded class:targeted={!wholeRoom && app.target.includes(l.id)}>
             <div class="light-row">
               <span
                 class="swatch"
@@ -394,6 +475,8 @@
                 {#if !b}
                   <span class="light-sub">{t("no_bulb")}</span>
                 {:else}
+                  {@const mood = s.on ? moodOf(l.id) : null}
+                  {#if mood}<span class="light-sub">{moodName(mood)}</span>{/if}
                   <span class="chev" aria-hidden="true"><Icon name="chevron" size={12} /></span>
                 {/if}
               </button>
@@ -620,6 +703,17 @@
   .screen .tile-text {
     flex: 1;
   }
+  /* Some of the lights picked play it: a dashed edge, not the full ring. */
+  .tile.partial,
+  .mood.partial {
+    outline: 1.5px dashed color-mix(in oklab, var(--glow) 70%, transparent);
+    outline-offset: -1.5px;
+  }
+  .share {
+    font-size: var(--t-sm);
+    color: var(--text-3);
+    white-space: nowrap;
+  }
   .tile.active {
     box-shadow:
       inset 0 0 0 2px var(--glow),
@@ -736,6 +830,14 @@
   .mood:disabled:not(.pending) {
     opacity: 0.6;
   }
+  .mood-text {
+    display: flex;
+    flex-direction: column;
+  }
+  .mood-text .share {
+    font-size: var(--t-xs);
+    font-weight: 400;
+  }
   .mood.active {
     box-shadow: inset 0 0 0 2px var(--glow);
   }
@@ -754,7 +856,25 @@
       0 0 8px color-mix(in oklab, var(--c) 70%, transparent);
   }
 
+  .for {
+    color: var(--glow-text);
+    font-weight: 500;
+  }
+
   /* --- Lights --- */
+  .light.targeted {
+    background: color-mix(in oklab, var(--glow) 7%, transparent);
+    box-shadow: inset 2px 0 0 var(--glow);
+  }
+  .light:first-child {
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+  }
+  .light:last-child {
+    border-radius: 0 0 var(--r-lg) var(--r-lg);
+  }
+  .light:only-child {
+    border-radius: var(--r-lg);
+  }
   .light-row {
     display: flex;
     align-items: center;
@@ -919,6 +1039,14 @@
     flex: none;
     border-radius: 50%;
     box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.18);
+  }
+  .chip-dot.off {
+    box-shadow: inset 0 0 0 1.5px var(--line-strong);
+  }
+  .targets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-1);
   }
   .hint {
     margin: 0;

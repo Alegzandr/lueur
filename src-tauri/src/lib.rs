@@ -134,7 +134,7 @@ pub fn run() {
             commands::apply_scene,
             commands::start_effect,
             commands::stop_effect,
-            commands::set_light_mode,
+            commands::set_lights_mode,
             commands::restart_effect,
             commands::effect_status,
             commands::set_sleep_timer,

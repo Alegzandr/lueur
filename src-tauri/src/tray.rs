@@ -151,7 +151,10 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             None::<&str>,
         )?)?;
     }
-    let natural = state.lock_config().is_ok_and(|c| c.natural);
+    // Ticked while the whole room follows it.
+    let natural = state.lock_config().is_ok_and(|c| {
+        !c.bindings.is_empty() && c.bindings.iter().all(|b| c.natural.contains(&b.light_id))
+    });
     let scenes = Submenu::with_id(app, "scenes", l.scenes, has_lights)?;
     scenes.append(&CheckMenuItem::with_id(
         app,
@@ -247,7 +250,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 if let Some(scene) = id.strip_prefix(SCENE_PREFIX) {
                     let scene = scene.to_string();
                     in_background(app, move |state| {
-                        lights::apply_scene(state, &scene).map(drop)
+                        lights::apply_scene(state, &scene, None).map(drop)
                     });
                 } else if let Some(m) = id.strip_prefix(SLEEP_PREFIX).and_then(|m| m.parse().ok()) {
                     // Picking the timer that runs cancels it, like its tick.

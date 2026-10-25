@@ -114,9 +114,11 @@ fn validate_addresses(config: &AppConfig) -> AppResult<()> {
 /// Pairings are the backend's: they change behind the interface's back (a
 /// bridge paired, a Smart Life import), so the copy sent here is ignored, and
 /// bindings take their credentials from them (the interface never has any).
-/// So is whether the natural light runs: moods and lights set by hand switch
-/// it. So are the modes recorded for each light: starting and stopping
-/// effects records them.
+/// So are the lights that follow the natural light: moods and lights set by
+/// hand switch them. So are the modes recorded for each light: starting and
+/// stopping effects records them. So is what each light was set to: the
+/// interface's copy may predate a mood, the tray or the natural light, and
+/// would put the old states back.
 ///
 /// A slider drag saves several times a second, so the disk write runs off
 /// the main thread, and the tray menu is only rebuilt when what it shows
@@ -130,8 +132,9 @@ pub async fn save_config(app: AppHandle, mut config: AppConfig) -> AppResult<()>
             let had_lights = !guard.bindings.is_empty();
             let repainted = guard.room.wall != config.room.wall;
             config.pairings = guard.pairings.clone();
-            config.natural = guard.natural;
+            config.natural = guard.natural.clone();
             config.modes = guard.modes.clone();
+            config.states = guard.states.clone();
             validate_addresses(&config)?;
             secrets::restore_bindings(&mut config, &guard.bindings);
             *guard = config;
@@ -444,13 +447,13 @@ pub async fn set_light_power(app: AppHandle, light_id: String, on: bool) -> AppR
 
 /// Set a light by hand: on or off, brightness, white or colour. Called as a
 /// slider moves; the interface keeps at most one call per light in flight.
-/// The interface records the state in the config itself. A light set by hand
-/// no longer follows the natural light, nor do the others.
+/// The state is recorded once the bulb has it. A light set by hand no longer
+/// follows the natural light; the others still do.
 #[tauri::command]
 pub async fn set_light_state(app: AppHandle, light_id: String, state: LightState) -> AppResult<()> {
     blocking(move || {
         let s = app.state::<AppState>();
-        lights::set_natural(&s, false)?;
+        lights::set_natural(&s, std::slice::from_ref(&light_id), false)?;
         lights::set_light(&s, &light_id, state)
     })
     .await
@@ -465,11 +468,19 @@ pub async fn set_all_power(app: AppHandle, on: bool) -> AppResult<PowerResult> {
     result
 }
 
-/// Apply a built-in mood to every light. Stops the effect.
+/// Apply a built-in mood to the lights named, or to every light with null.
+/// Stops the effects playing on them.
 #[tauri::command]
-pub async fn apply_scene(app: AppHandle, id: String) -> AppResult<PowerResult> {
+pub async fn apply_scene(
+    app: AppHandle,
+    id: String,
+    light_ids: Option<Vec<String>>,
+) -> AppResult<PowerResult> {
     let handle = app.clone();
-    let result = blocking(move || lights::apply_scene(&handle.state::<AppState>(), &id)).await;
+    let result = blocking(move || {
+        lights::apply_scene(&handle.state::<AppState>(), &id, light_ids.as_deref())
+    })
+    .await;
     crate::tray::refresh(&app);
     result
 }
@@ -512,12 +523,12 @@ pub async fn stop_effect(app: AppHandle, mode: Option<String>) -> AppResult<()> 
     Ok(())
 }
 
-/// Play the mode named by `mode` on one light, in step with the others
-/// playing it, or give the light back to the hand with null.
+/// Play the mode named by `mode` on the lights named, in step with the
+/// others playing it, or give them back to the hand with null.
 #[tauri::command]
-pub async fn set_light_mode(
+pub async fn set_lights_mode(
     app: AppHandle,
-    light_id: String,
+    light_ids: Vec<String>,
     mode: Option<String>,
 ) -> AppResult<EffectStatus> {
     let mode = mode.as_deref().map(parse_mode).transpose()?;
@@ -525,7 +536,7 @@ pub async fn set_light_mode(
     let result = blocking(move || {
         let state = handle.state::<AppState>();
         crate::auto::user_took_over(&state);
-        lights::set_light_mode(&state, &light_id, mode)
+        lights::set_lights_mode(&state, &light_ids, mode)
     })
     .await;
     crate::tray::refresh(&app);

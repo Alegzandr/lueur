@@ -61,6 +61,9 @@ class AppState {
   /** Lights whose mode is being switched, while their effects restart. */
   modeBusy = $state<Record<string, boolean>>({});
 
+  /** The lights effects and moods go to; none picked means the whole room. */
+  target = $state<string[]>([]);
+
   /** The light selected on the plan, shared so other views can deep-link. */
   selectedLight = $state<string | null>(null);
 
@@ -131,6 +134,31 @@ export function isDriven(lightId: string): boolean {
 /** The mode a light plays, or null while it is set by hand. */
 export function modeOf(lightId: string): Mode | null {
   return app.status.groups.find((g) => g.light_ids.includes(lightId))?.mode ?? null;
+}
+
+/** The lights picked for effects and moods that still have a bulb, or
+ *  null for the whole room. */
+export function pickedLights(): string[] | null {
+  const ids = app.target.filter((id) => bindingFor(id));
+  return ids.length > 0 ? ids : null;
+}
+
+/** The lights an effect goes to: those picked, or every light with a bulb
+ *  that takes part in effects. */
+export function effectTargets(): string[] {
+  return pickedLights() ?? app.config.room.lights.filter((l) => l.enabled && bindingFor(l.id)).map((l) => l.id);
+}
+
+/** The lights a mood goes to: those picked, or every light with a bulb. */
+export function moodTargets(): string[] {
+  return pickedLights() ?? app.config.bindings.map((b) => b.light_id);
+}
+
+/** Pick a light for effects and moods, or put it back. Picking them all is
+ *  the same as the whole room. */
+export function toggleTarget(lightId: string): void {
+  const ids = app.target.includes(lightId) ? app.target.filter((id) => id !== lightId) : [...app.target, lightId];
+  app.target = app.config.bindings.every((b) => ids.includes(b.light_id)) ? [] : ids;
 }
 
 /** True while some light plays `mode`. */
@@ -336,8 +364,8 @@ export function adjustLight(lightId: string, patch: Partial<LightState>): void {
   const next: LightState = { ...lightState(lightId), on: true, ...patch };
   edit((c) => {
     c.states = { ...c.states, [lightId]: next };
-    // The backend stops the natural light too.
-    c.natural = false;
+    // The backend takes it off the natural light too.
+    c.natural = (c.natural ?? []).filter((id) => id !== lightId);
   });
   void send(lightId, next);
 }
@@ -345,24 +373,24 @@ export function adjustLight(lightId: string, patch: Partial<LightState>): void {
 /** Bring the light states in line with what the backend recorded (after the
  *  tray, automatic mode or a scene changed them). */
 export async function reloadStates(): Promise<void> {
-  if (!ipc.inTauri()) return;
   try {
     await persistNow();
     const cfg = await ipc.getConfig();
     app.config.states = cfg.states ?? {};
-    app.config.natural = cfg.natural ?? false;
+    app.config.natural = cfg.natural ?? [];
   } catch {
     /* the next change will catch up */
   }
 }
 
-/** Apply a built-in mood to every light. Stops whatever effect runs. */
+/** Apply a built-in mood to the lights picked, or to the whole room. Stops
+ *  the effects playing on them. */
 export async function applyScene(id: string): Promise<void> {
   if (app.pending) return;
   app.pending = id;
   try {
     await persistNow();
-    const res = await ipc.applyScene(id);
+    const res = await ipc.applyScene(id, pickedLights());
     await reloadStates();
     await refreshStatus();
     reportPartial(res);
@@ -387,18 +415,23 @@ export async function setSleepTimer(minutes: number | null): Promise<void> {
   }
 }
 
-/** Start the ambilight or a show on the whole room; picking one that plays
- *  stops it, on every light playing it. */
+/** Play the ambilight or a show on the lights picked, or on the whole room.
+ *  Picking one they all play already stops it on them. */
 export async function chooseMode(mode: Mode): Promise<void> {
   if (app.busy || app.pending) return;
   app.pending = mode;
   app.busy = true;
   try {
     await persistNow();
-    if (isPlaying(mode)) {
-      await ipc.stopEffect(mode);
+    const ids = effectTargets();
+    const picked = pickedLights();
+    if (ids.length > 0 && ids.every((id) => modeOf(id) === mode)) {
+      if (picked) await moveLights(picked, null);
+      else await ipc.stopEffect(mode);
       await reloadStates();
       await refreshStatus();
+    } else if (picked) {
+      await moveLights(picked, mode);
     } else {
       await start(mode);
     }
@@ -411,17 +444,22 @@ export async function chooseMode(mode: Mode): Promise<void> {
   }
 }
 
-/** Play `mode` on one light, in step with every other light playing it, or
- *  give the light back to the hand with null. */
+/** Play `mode` on `ids`, in step with every other light playing it, or give
+ *  them back to the hand with null. */
+async function moveLights(ids: string[], mode: Mode | null): Promise<void> {
+  const wasRunning = app.status.running;
+  app.status = await ipc.setLightsMode(ids, mode);
+  if (!app.status.running) app.startedWith = null;
+  else if (!wasRunning || app.startedWith === null) app.startedWith = topology();
+}
+
+/** Play `mode` on one light, or give it back to the hand with null. */
 export async function setLightMode(lightId: string, mode: Mode | null): Promise<void> {
   if (app.busy || app.modeBusy[lightId] || modeOf(lightId) === mode) return;
   app.modeBusy[lightId] = true;
   try {
     await persistNow();
-    const wasRunning = app.status.running;
-    app.status = await ipc.setLightMode(lightId, mode);
-    if (!app.status.running) app.startedWith = null;
-    else if (!wasRunning || app.startedWith === null) app.startedWith = topology();
+    await moveLights([lightId], mode);
     if (mode === null) await reloadStates();
   } catch (e) {
     await refreshStatus();

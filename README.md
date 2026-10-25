@@ -38,7 +38,8 @@ around you follows what's on screen.
   it ends.
 - 🎵 **Effects and moods.** Music (your lights play the track like a stage:
   punches and chases on the beat, builds and drops, at any volume), Rainbow, Sunset, Ocean and Candle, plus everyday moods: Natural
-  light, Daylight, Reading, Relax and Night light. One click, nothing to tune.
+  light, Daylight, Reading, Relax and Night light. One click, nothing to tune,
+  on the whole room or on just the lights you pick.
 - 💡 **Every light, one window.** Power, brightness, warm-to-cool white and
   colour for each bulb, from the app or the tray menu, so the phone app can
   stay in your pocket. A sleep timer fades everything off when you're done.
