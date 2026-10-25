@@ -4,16 +4,16 @@
 //! before anything else starts. A new version is downloaded, its minisign
 //! signature verified by the official plugin, installed in place, and the app
 //! restarts into it. Without one (or without network) the splash closes and
-//! the app starts. While the app runs, it checks again every few hours; a
-//! version found then is installed right away and the window offers a
-//! restart. On Windows the installed `.exe` is swapped in place instead of
+//! the app starts. While the app runs, it checks again every hour; a version
+//! found then is installed right away and the window offers a restart in its
+//! title bar. On Windows the installed `.exe` is swapped in place instead of
 //! running an installer. AppImage and `.app` bundles use the plugin's own
 //! installer.
 //!
 //! A version that downloads but fails to install (no write access to the
 //! install folder, say) is remembered, also on disk: later launches start
 //! without downloading it again, and the running app tries it again only
-//! after the usual wait between checks, not after the short network retry.
+//! after a few hours, not after the short network retry.
 //!
 //! Never an older version, nor the same one again. `latest.json` itself is
 //! not signed, only each update file is, so the version it announces proves
@@ -41,7 +41,12 @@ use crate::state::AppState;
 pub const SPLASH: &str = "splash";
 /// Event the frontend listens to, with the installed version as payload.
 pub const UPDATE_READY: &str = "update-ready";
-const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+/// Often enough that a running app offers a new version the day it is out;
+/// each check is one small HTTPS request.
+const CHECK_EVERY: Duration = Duration::from_secs(60 * 60);
+/// A version that downloads but does not install is tens of megabytes:
+/// not every hour.
+const INSTALL_RETRY: Duration = Duration::from_secs(6 * 60 * 60);
 const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
 /// No network at login must not hold the app for long.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(8);
@@ -126,7 +131,7 @@ impl Failure {
             }
             Failure::Install(e) => {
                 log::error!("update install: {e}");
-                CHECK_EVERY
+                INSTALL_RETRY
             }
         }
     }
@@ -254,7 +259,7 @@ pub fn launch(app: &AppHandle) -> tauri::Result<()> {
 
 /// Checks again while the app runs; a found version waits for a restart.
 /// The wait is a timer, not a parked thread: `spawn_blocking` would hold a
-/// pool thread for six hours in an app that mostly sits in the tray.
+/// pool thread for an hour in an app that mostly sits in the tray.
 async fn watch(app: AppHandle, mut wait: Duration) {
     loop {
         tokio::time::sleep(wait).await;
@@ -276,7 +281,7 @@ async fn watch(app: AppHandle, mut wait: Duration) {
 /// Installs a newer release if there is one and returns its version.
 /// `splash` reports each step to the splash window, and skips a version that
 /// already failed to install: the launch must not wait on a download that
-/// cannot be used. The running app still tries it, every `CHECK_EVERY`.
+/// cannot be used. The running app still tries it, every `INSTALL_RETRY`.
 async fn check_and_install(app: &AppHandle, splash: bool) -> Result<Option<String>, Failure> {
     let update = app
         .updater_builder()

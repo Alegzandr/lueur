@@ -251,8 +251,8 @@ install.
 **Updates.** Each launch shows a small window while Lueur checks the latest
 GitHub release; a new version is downloaded, its signature checked, installed,
 and the app restarts into it. Without network it gives up after a few seconds.
-While Lueur runs it checks again every six hours. Development builds never
-update.
+While Lueur runs it checks again every hour, and a version found then waits
+behind a *Restart* button in the title bar. Development builds never update.
 
 **No going back.** The Tauri updater verifies the minisign signature of the
 downloaded file against the public key in `tauri.conf.json`, and installs
