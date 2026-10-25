@@ -66,22 +66,32 @@ log = { version = "0.4.29", features = ["kv"] }
 tauri-plugin-opener = "2"
 
 # Desktop Duplication and GDI capture (see src/capture/dxgi.rs, gdi.rs), the
-# capture benchmark's CPU time and the per-user install (src/install.rs). Same
-# `windows` version xcap already pulls in, so it adds no second copy.
+# capture benchmark's CPU time, the per-user install (src/install.rs) and one
+# application's sound for the music show (src/audio/apps.rs). Same `windows`
+# version xcap already pulls in, so it adds no second copy.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
+    "Win32_Foundation",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
+    "Win32_Media_Audio",
+    "Win32_Media_Multimedia",
+    "Win32_Storage_FileSystem",
     "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
     "Win32_System_LibraryLoader",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
+    "Win32_System_Variant",
     "Win32_UI_Shell",
 ] }
+# The `#[implement]` of src/audio/apps.rs names it; the version `windows`
+# itself uses.
+windows-core = "0.62"
 self-replace = "1.5"
 winreg = "0.56"
 

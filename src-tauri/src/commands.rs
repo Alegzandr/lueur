@@ -16,6 +16,7 @@
 //!   whether it comes from the interface, an imported file or discovery.
 //! * Discovery/connect timeouts are clamped so a malicious reply can't wedge us.
 
+use crate::audio::{self, AudioSources};
 use crate::capture::{self, MonitorInfo};
 use crate::devices;
 use crate::error::{AppError, AppResult};
@@ -55,12 +56,15 @@ pub struct EffectStatus {
     pub groups: Vec<EffectGroup>,
     /// The driven lights whose bulb dropped and is being reconnected.
     pub reconnecting: Vec<String>,
+    /// The music plays but its sound source is away, and it waits for it.
+    pub music_waiting: bool,
 }
 
 fn status(state: &AppState) -> EffectStatus {
     let groups = state.effects.groups();
     EffectStatus {
         reconnecting: state.effects.reconnecting_ids(),
+        music_waiting: state.effects.waiting_for_sound(),
         running: !groups.is_empty(),
         connected_lights: groups.iter().map(|g| g.2).sum(),
         mode: match groups.as_slice() {
@@ -168,8 +172,8 @@ fn applied(app: &AppHandle, state: &AppState) -> AppResult<()> {
 fn persist_and_go_live(state: &AppState) -> AppResult<()> {
     state.persist()?;
     let live = LiveSettings::of(&*state.lock_config()?);
-    state.effects.update_live(live);
     state.manual.protect(live.safety.flash_guard);
+    state.effects.update_live(live);
     Ok(())
 }
 
@@ -265,6 +269,13 @@ pub async fn import_config(app: AppHandle) -> AppResult<Option<AppConfig>> {
 #[tauri::command]
 pub fn list_monitors() -> AppResult<Vec<MonitorInfo>> {
     capture::list_monitors()
+}
+
+/// What the music show can listen to, for its source picker. Off the UI
+/// thread: asking every device for its name takes a moment.
+#[tauri::command]
+pub async fn list_audio_sources() -> AppResult<AudioSources> {
+    blocking(|| Ok(audio::sources())).await
 }
 
 /// Discover bulbs of every family on the LAN, plus the Tuya bulbs imported

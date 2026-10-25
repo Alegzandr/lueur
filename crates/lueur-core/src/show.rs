@@ -69,16 +69,32 @@ impl ShowKind {
         }
     }
 
-    /// Whether the show's pace can be chosen. Music keeps time with the
-    /// track and a candle with a real flame; the others are free to drift.
+    /// Whether the show's pace can be chosen: a candle keeps time with a
+    /// real flame, the others are free to drift. The music's pace is the
+    /// speed its spectrum glides at (see [`MusicColors`]), never the beat's.
     pub fn has_speed(self) -> bool {
-        matches!(self, ShowKind::Rainbow | ShowKind::Sunset | ShowKind::Ocean)
+        !matches!(self, ShowKind::Candle)
     }
 }
 
+/// Where the music show takes its colours from. The music never picks them:
+/// it plays the brightness, passes the beat from light to light and flashes
+/// white, over colours that stay as smooth as the rainbow's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MusicColors {
+    /// The colour show's combinations, gliding at the chosen speed whatever
+    /// the track does.
+    #[default]
+    Spectrum,
+    /// The colour picked, holding still, in shades close enough to tell the
+    /// lights apart (see [`shade`]).
+    Fixed,
+}
+
 /// The show the window and the tray start, how bright it plays, how fast the
-/// colour shows move, and whether the music may flash white.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// colour shows move, the music's colours, and whether it may flash white.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ShowSettings {
     pub kind: ShowKind,
@@ -90,6 +106,10 @@ pub struct ShowSettings {
     /// times a second: the show's guard ([`crate::safety::FlashGuard::show`])
     /// holds them to that even with the protection off.
     pub flashes: bool,
+    /// Whether the music glides through the combinations or holds `color`.
+    pub music: MusicColors,
+    /// The colour the music holds.
+    pub color: Rgb,
 }
 
 impl Default for ShowSettings {
@@ -99,6 +119,8 @@ impl Default for ShowSettings {
             bright: 80,
             speed: 50,
             flashes: true,
+            music: MusicColors::default(),
+            color: Rgb::new(255, 0, 110),
         }
     }
 }
@@ -117,46 +139,115 @@ impl ShowSettings {
     }
 }
 
-/// The rainbow's spectrum, from a golden amber to an emerald: the wheel
-/// walked the long way round, warm to cool, with every stop chosen for how it
-/// looks on a bulb rather than on a screen. Pure blue is lifted towards azure
-/// and pure magenta warmed a touch, so no stop reads dull or harsh, and the
-/// yellow-greens are left out: chartreuse and lime turn sickly on a bulb, so
-/// the spectrum stops at the emerald instead of closing the wheel through
-/// them.
-const SPECTRUM: &[Rgb] = &[
-    Rgb::new(255, 150, 0), // gold
-    Rgb::new(255, 90, 0),  // orange
-    Rgb::new(255, 20, 10), // red
-    Rgb::new(255, 0, 90),  // raspberry
-    Rgb::new(240, 0, 220), // magenta
-    Rgb::new(130, 0, 255), // violet
-    Rgb::new(30, 50, 255), // blue
-    Rgb::new(0, 130, 255), // azure
-    Rgb::new(0, 210, 240), // cyan
-    Rgb::new(0, 235, 180), // turquoise
-    Rgb::new(0, 255, 110), // emerald
+/// How far round the wheel a held colour's shades reach either side, in
+/// degrees: enough to tell the lights apart, not enough to read as another
+/// colour.
+const SHADE_SPREAD: f32 = 18.0;
+
+/// The shade of `color` a light at `place` (0 at the left of the lights
+/// playing it, 1 at the right) holds: the colour itself in the middle,
+/// turning a little each way towards the ends, so one colour still gives the
+/// room some depth. A lone light, in the middle, holds it exactly.
+pub(crate) fn shade(color: Rgb, place: f32) -> Rgb {
+    let (h, s, v) = hsv(color);
+    from_hsv(h + (place - 0.5) * 2.0 * SHADE_SPREAD, s, v)
+}
+
+/// The colour show's combinations: three colours each, laid across the
+/// lights left to right, that sit well together on a bulb and still mix into
+/// a colour on the walls (neighbours stay within a quarter turn of the
+/// wheel). The show glides from each to the next, looping: every colour
+/// moves only a short way round the wheel to its place in the next one, and
+/// the last leads back into the first, so the loop has no seam. The
+/// yellow-greens are left out, and no glide passes through them: chartreuse
+/// and lime turn sickly on a bulb.
+const COMBOS: &[[Rgb; 3]] = &[
+    // Embers: gold, orange, red.
+    [
+        Rgb::new(255, 160, 0),
+        Rgb::new(255, 70, 0),
+        Rgb::new(255, 0, 40),
+    ],
+    // Dusk: orange, coral, raspberry.
+    [
+        Rgb::new(255, 100, 0),
+        Rgb::new(255, 20, 50),
+        Rgb::new(235, 0, 150),
+    ],
+    // Flamingo: coral, hot pink, violet.
+    [
+        Rgb::new(255, 30, 60),
+        Rgb::new(255, 0, 140),
+        Rgb::new(170, 0, 255),
+    ],
+    // Neon: hot pink, violet, azure.
+    [
+        Rgb::new(255, 0, 110),
+        Rgb::new(130, 0, 255),
+        Rgb::new(0, 150, 255),
+    ],
+    // Twilight: magenta, indigo, blue.
+    [
+        Rgb::new(220, 0, 230),
+        Rgb::new(90, 20, 255),
+        Rgb::new(0, 110, 255),
+    ],
+    // Lagoon: violet, blue, cyan.
+    [
+        Rgb::new(120, 0, 255),
+        Rgb::new(20, 60, 255),
+        Rgb::new(0, 200, 240),
+    ],
+    // Ocean: blue, azure, turquoise.
+    [
+        Rgb::new(30, 50, 255),
+        Rgb::new(0, 140, 255),
+        Rgb::new(0, 230, 190),
+    ],
+    // Aurora: azure, turquoise, emerald.
+    [
+        Rgb::new(0, 170, 255),
+        Rgb::new(0, 230, 170),
+        Rgb::new(0, 255, 110),
+    ],
+    // Glacier: indigo, azure, cyan.
+    [
+        Rgb::new(90, 40, 255),
+        Rgb::new(0, 150, 255),
+        Rgb::new(0, 220, 220),
+    ],
+    // Orchid: purple, indigo, azure.
+    [
+        Rgb::new(200, 0, 255),
+        Rgb::new(90, 40, 255),
+        Rgb::new(0, 130, 255),
+    ],
+    // Berry: raspberry, magenta, violet.
+    [
+        Rgb::new(255, 0, 90),
+        Rgb::new(200, 0, 220),
+        Rgb::new(100, 20, 255),
+    ],
+    // Coral: orange, red, hot pink.
+    [
+        Rgb::new(255, 70, 0),
+        Rgb::new(255, 10, 40),
+        Rgb::new(255, 0, 150),
+    ],
 ];
 
-/// How many stops of the spectrum the room spans, from its leftmost light to
-/// its rightmost: wide enough for a real gradient (red, raspberry, magenta,
-/// violet), close enough that every pair of lights still sits well together
-/// and mixes into a colour on the walls.
-const ROOM_SPAN: f32 = 3.0;
-
-/// Seconds for the rainbow to sweep warm to cool and back.
-const RAINBOW_CYCLE: f32 = 60.0;
+/// Seconds the colour show takes from one combination to the next.
+const COMBO_SECS: f32 = 25.0;
+/// Seconds for the colours to drift across the lights and back, so the room
+/// never sits still even while a combination holds.
+const DRIFT_SECS: f32 = 20.0;
+/// How far the drift carries the colours, as a share of the room.
+const DRIFT: f32 = 0.12;
 /// The shows' clocks go back to zero after this many seconds: an `f32` that
 /// kept counting would round each small step away after a few days. A whole
-/// number of rainbow cycles and ocean swells, so those two never jump.
-const CLOCK_WRAP: f32 = 3600.0;
-
-/// Which colour of a harmony light `i` plays. Two lights side by side never
-/// share one, and the first and last of a harmony, the furthest apart, are
-/// never neighbours.
-pub(crate) fn column(i: usize) -> usize {
-    [0, 1, 2, 1][i % 4]
-}
+/// number of loops through the combinations and of ocean swells, so those
+/// two never jump.
+pub(crate) const CLOCK_WRAP: f32 = 3600.0;
 
 /// From a low amber sun to the last rose and plum of the sky, and back.
 const SUNSET: &[Rgb] = &[
@@ -174,42 +265,6 @@ const OCEAN: &[Rgb] = &[
     Rgb::new(0, 105, 255),
     Rgb::new(0, 185, 235),
     Rgb::new(0, 235, 175),
-];
-
-/// The music's harmonies: bolder than the rainbow's, three colours each that
-/// still sit well side by side. Every way round a harmony steers clear of the
-/// yellow-greens, so even its drift between beats stays clean.
-pub(crate) const PARTY: &[[Rgb; 3]] = &[
-    // Neon: hot pink, violet, cyan.
-    [
-        Rgb::new(255, 0, 110),
-        Rgb::new(130, 0, 255),
-        Rgb::new(0, 190, 255),
-    ],
-    // Fire: red, orange, magenta.
-    [
-        Rgb::new(255, 10, 0),
-        Rgb::new(255, 110, 0),
-        Rgb::new(255, 0, 160),
-    ],
-    // Synthwave: magenta, blue, orange.
-    [
-        Rgb::new(255, 0, 200),
-        Rgb::new(30, 40, 255),
-        Rgb::new(255, 90, 0),
-    ],
-    // Deep sea: blue, turquoise, violet.
-    [
-        Rgb::new(0, 60, 255),
-        Rgb::new(0, 230, 190),
-        Rgb::new(150, 0, 255),
-    ],
-    // Aurora: emerald, azure, violet.
-    [
-        Rgb::new(0, 255, 120),
-        Rgb::new(0, 170, 255),
-        Rgb::new(120, 0, 255),
-    ],
 ];
 
 /// A candle at its dimmest (reddest) and brightest (yellowest).
@@ -277,6 +332,10 @@ fn from_hsv(h: f32, s: f32, v: f32) -> Rgb {
     Rgb::new(to(r), to(g), to(b))
 }
 
+/// The yellow-green no glide may pass through, in degrees: the middle of the
+/// sickly hues, chartreuse to lime.
+const SICKLY_HUE: f32 = 95.0;
+
 /// Blend two colours by `t` along the hue circle, the short way round.
 /// Mixing in RGB would pass through grey between opposite colours; going
 /// round the wheel keeps every step as vivid as the ends.
@@ -296,6 +355,25 @@ pub fn blend(a: Rgb, b: Rgb, t: f32) -> Rgb {
     } else if dh < -180.0 {
         dh += 360.0;
     }
+    from_hsv(ha + dh * t, sa + (sb - sa) * t, va + (vb - va) * t)
+}
+
+/// Blend two colours by `t` round the hue circle the way that steers clear
+/// of the yellow-greens: the short way, unless that passes through them.
+fn clean_blend(a: Rgb, b: Rgb, t: f32) -> Rgb {
+    let (ha, sa, va) = hsv(a);
+    let (hb, sb, vb) = hsv(b);
+    let mut dh = (hb - ha + 180.0).rem_euclid(360.0) - 180.0;
+    let to_sickly = (SICKLY_HUE - ha).rem_euclid(360.0);
+    let crosses = if dh >= 0.0 {
+        to_sickly < dh
+    } else {
+        to_sickly > 360.0 + dh
+    };
+    if crosses {
+        dh -= 360.0 * dh.signum();
+    }
+    let t = t.clamp(0.0, 1.0);
     from_hsv(ha + dh * t, sa + (sb - sa) * t, va + (vb - va) * t)
 }
 
@@ -358,18 +436,34 @@ fn seed(light: usize, channel: u32) -> u32 {
     (light as u32).wrapping_mul(0x2c1b_3c6d) ^ channel.wrapping_mul(0x297a_2d39)
 }
 
-/// The rainbow: a gradient laid across the room, left to right, gliding
-/// along the spectrum. Every light follows the one beside it, so the colours
-/// flow through the room as a wave rather than changing on their own; the
-/// sweep runs warm to cool and eases back like a pendulum, so it never
-/// lurches at the ends. `place` is where the light stands in the room, 0 at
-/// the left to 1 at the right.
+/// The colour show: a combination of colours that go well together, laid
+/// across the lights playing it, left to right, gliding into the next (see
+/// [`spectrum`]). `place` is where the light stands among them, 0 at the
+/// left to 1 at the right.
 fn rainbow(t: f32, place: f32, bright: f32) -> BulbOutput {
-    let travel = (SPECTRUM.len() - 1) as f32 - ROOM_SPAN;
-    let sweep = 0.5 - 0.5 * (TAU * t / RAINBOW_CYCLE).cos();
-    let x = (travel * sweep + ROOM_SPAN * place) / (SPECTRUM.len() - 1) as f32;
-    let rgb = ramp(SPECTRUM, x);
+    let rgb = spectrum(t, place);
     output(rgb, bright * even(rgb))
+}
+
+/// The colour show's colour at time `t` for a light at `place` (0 at the
+/// left of the lights playing it, 1 at the right): the combination of the
+/// moment laid across the lights, drifting gently from side to side. The
+/// music's spectrum is the same one, so it glides just as smoothly.
+///
+/// Each combination lingers a while, then glides into the next, every colour
+/// along the wheel to its place in it. The glide eases in and out without
+/// ever stopping dead, so nothing holds and then lurches on.
+pub(crate) fn spectrum(t: f32, place: f32) -> Rgb {
+    let pos = (t / COMBO_SECS).rem_euclid(COMBOS.len() as f32);
+    let i = (pos.floor() as usize).min(COMBOS.len() - 1);
+    let u = pos - pos.floor();
+    let glide = 0.25 * u + 0.75 * u * u * (3.0 - 2.0 * u);
+    let (from, to) = (&COMBOS[i], &COMBOS[(i + 1) % COMBOS.len()]);
+    let combo: [Rgb; 3] = std::array::from_fn(|k| clean_blend(from[k], to[k], glide));
+    let x = (1.0 - 2.0 * DRIFT) * place + DRIFT * (1.0 + (TAU * t / DRIFT_SECS).sin());
+    let at = x.clamp(0.0, 1.0) * 2.0;
+    let k = (at.floor() as usize).min(1);
+    clean_blend(combo[k], combo[k + 1], at - k as f32)
 }
 
 /// Where each light stands across the room, 0 at the left to 1 at the right.
@@ -378,10 +472,10 @@ fn rainbow(t: f32, place: f32, bright: f32) -> BulbOutput {
 /// in colour, yet a cluster never shares one colour while a lone light far
 /// off takes the rest of the gradient. Every step along the room is a step
 /// along the spectrum.
-fn places(fixtures: &[Fixture]) -> Vec<f32> {
+pub(crate) fn places(fixtures: &[Fixture]) -> Vec<f32> {
     let n = fixtures.len();
     if n < 2 {
-        return vec![0.0; n];
+        return vec![0.5; n];
     }
     let mut order: Vec<usize> = (0..n).collect();
     order.sort_by(|&a, &b| fixtures[a].x.total_cmp(&fixtures[b].x).then(a.cmp(&b)));
@@ -712,56 +806,76 @@ mod tests {
         (65.0..=125.0).contains(&hsv(c).0)
     }
 
+    /// One whole loop through the combinations, in seconds.
+    const LOOP: f32 = COMBO_SECS * COMBOS.len() as f32;
+
     #[test]
-    fn the_rainbow_lays_a_gradient_across_the_room() {
-        // Left to right, each light a step further along the spectrum, close
-        // enough to its neighbour to blend, never a sickly colour.
-        for frame in play(ShowKind::Rainbow, 4, 120.0) {
+    fn the_rainbow_lays_a_combination_across_the_room() {
+        // Left to right, each light its own colour, close enough to its
+        // neighbour to blend, never a sickly colour, all the way round.
+        for frame in play(ShowKind::Rainbow, 4, LOOP) {
             for w in frame.windows(2) {
                 let g = gap(rgb(w[0]), rgb(w[1]));
-                assert!((8.0..=60.0).contains(&g), "lights {g}° apart");
+                assert!((3.0..=60.0).contains(&g), "lights {g}° apart");
             }
             for o in &frame {
                 assert!(!sickly(rgb(*o)), "a sickly colour: {:?}", rgb(*o));
             }
-            assert_ne!(rgb(frame[0]), rgb(frame[3]));
+            assert!(gap(rgb(frame[0]), rgb(frame[3])) >= 20.0);
         }
     }
 
     #[test]
-    fn the_rainbow_flows_from_light_to_light() {
-        // The right light plays now what the left light played a moment ago.
-        let frames = play(ShowKind::Rainbow, 2, 30.0);
-        let later = frames
-            .iter()
-            .position(|f| gap(rgb(f[0]), rgb(frames[0][1])) < 3.0);
-        assert!(later.is_some_and(|k| k > 0), "the wave does not travel");
+    fn the_combinations_go_well_together() {
+        for (i, combo) in COMBOS.iter().enumerate() {
+            let next = &COMBOS[(i + 1) % COMBOS.len()];
+            for k in 0..3 {
+                assert!(!sickly(combo[k]), "combination {i}: {:?}", combo[k]);
+                // Each colour has only a short way to go to the next.
+                let g = gap(combo[k], next[k]);
+                assert!(g <= 110.0, "combination {i}, colour {k}: {g}°");
+            }
+            for w in combo.windows(2) {
+                let g = gap(w[0], w[1]);
+                assert!((10.0..=80.0).contains(&g), "combination {i}: {g}°");
+            }
+        }
     }
 
     #[test]
-    fn the_rainbow_goes_from_warm_to_cool_and_back() {
-        let frames = play(ShowKind::Rainbow, 1, RAINBOW_CYCLE);
-        let hue = |k: usize| hsv(rgb(frames[k][0])).0;
-        let warm = |h: f32| !(60.0..=330.0).contains(&h);
-        assert!(warm(hue(0)), "starts at {}°", hue(0));
-        assert!(
-            frames
-                .iter()
-                .any(|f| (150.0..=230.0).contains(&hsv(rgb(f[0])).0))
-        );
-        assert!(
-            warm(hue(frames.len() - 1)),
-            "ends at {}°",
-            hue(frames.len() - 1)
-        );
+    fn a_glide_steers_clear_of_the_yellow_greens() {
+        // Emerald to gold the short way is all chartreuse; the long way is not.
+        let (emerald, gold) = (Rgb::new(0, 255, 110), Rgb::new(255, 160, 0));
+        for k in 0..=20 {
+            let c = clean_blend(emerald, gold, k as f32 / 20.0);
+            assert!(!sickly(c), "{c:?}");
+        }
+        // Elsewhere it goes the short way, as a blend does.
+        let mid = clean_blend(Rgb::new(255, 0, 0), Rgb::new(0, 0, 255), 0.5);
+        assert!(mid.r > 200 && mid.b > 200 && mid.g < 30, "{mid:?}");
     }
 
     #[test]
-    fn the_spectrum_never_lurches_across_the_wheel() {
-        for w in SPECTRUM.windows(2) {
-            let g = gap(w[0], w[1]);
-            assert!(g <= 40.0, "{:?} -> {:?}: {g}°", w[0], w[1]);
-            assert!(!sickly(w[0]) && !sickly(w[1]));
+    fn the_rainbow_moves_through_every_combination() {
+        // Over one loop, warm and cool alike, then back where it began.
+        let frames = play(ShowKind::Rainbow, 1, LOOP);
+        let hues: Vec<f32> = frames.iter().map(|f| hsv(rgb(f[0])).0).collect();
+        let warm = |h: &f32| !(60.0..=330.0).contains(h);
+        assert!(hues.iter().any(warm), "never warm");
+        assert!(
+            hues.iter().any(|h| (150.0..=230.0).contains(h)),
+            "never cool"
+        );
+        let end = rgb(frames[frames.len() - 1][0]);
+        assert!(gap(rgb(frames[0][0]), end) < 3.0, "the loop has a seam");
+    }
+
+    #[test]
+    fn the_rainbow_never_holds_still() {
+        // Even while a combination lingers, the colours drift.
+        let frames = play(ShowKind::Rainbow, 2, COMBO_SECS);
+        for w in frames.chunks(25).collect::<Vec<_>>().windows(2) {
+            assert_ne!(w[0][0], w[1][0], "the show stalled");
         }
     }
 
@@ -771,7 +885,7 @@ mod tests {
         room.swap(0, 2);
         let p = places(&room);
         assert_eq!(p, vec![1.0, 0.5, 0.0]);
-        assert_eq!(places(&Fixture::row(1)), vec![0.0]);
+        assert_eq!(places(&Fixture::row(1)), vec![0.5]);
     }
 
     #[test]

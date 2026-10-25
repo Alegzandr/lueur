@@ -5,6 +5,8 @@
   import * as ipc from "../ipc";
   import {
     type Appearance,
+    type AudioSource,
+    type AudioSources,
     type BehaviorSettings,
     type Language,
     type MonitorInfo,
@@ -15,6 +17,7 @@
   import Segmented from "../ui/Segmented.svelte";
 
   let monitors = $state<MonitorInfo[]>([]);
+  let sound = $state<AudioSources | null>(null);
   let version = $state("");
   // False when no keyring is available: the credentials are then kept
   // unencrypted in the config, and the page says so.
@@ -27,8 +30,19 @@
     } catch (e) {
       fail(e, "err_displays");
     }
+    void refreshSound();
     version = await ipc.appVersion().catch(() => "");
   });
+
+  // Applications come and go: the list is asked again whenever the picker
+  // is about to open.
+  async function refreshSound() {
+    try {
+      sound = await ipc.listAudioSources();
+    } catch (e) {
+      fail(e);
+    }
+  }
 
   const c = $derived(app.config);
 
@@ -66,6 +80,56 @@
       .sort((a, b) => a - b)
       .map((n) => ({ value: String(n), label: String(n) })),
   );
+
+  // The sound source picker's values: one string per choice.
+  function soundKey(s: AudioSource): string {
+    return s.kind === "device" ? `device:${s.id}` : s.kind === "app" ? `app:${s.exe}` : "default";
+  }
+
+  const soundDevices = $derived.by(() => {
+    const list = (sound?.devices ?? []).map((d) => ({ key: `device:${d.id}`, label: d.name, id: d.id }));
+    const a = c.audio;
+    // The one picked, unplugged, stays shown as picked.
+    if (sound && a.kind === "device" && !list.some((d) => d.id === a.id)) {
+      list.push({ key: soundKey(a), label: `${a.name} · ${t("audio_missing")}`, id: a.id });
+    }
+    return list;
+  });
+
+  const soundApps = $derived.by(() => {
+    const list = (sound?.apps ?? []).map((p) => ({ key: `app:${p.exe}`, label: p.name, exe: p.exe }));
+    const a = c.audio;
+    if (sound && a.kind === "app" && !list.some((p) => p.exe.toLowerCase() === a.exe.toLowerCase())) {
+      list.push({ key: soundKey(a), label: `${a.name} · ${t("audio_closed")}`, exe: a.exe });
+    }
+    return list;
+  });
+
+  // The default device by name, so it reads apart from the same device
+  // picked for good (which stays on it when the default moves).
+  const soundDefault = $derived.by(() => {
+    const label = t(sound?.loopback ? "audio_default_output" : "audio_default_input");
+    const device = sound?.devices.find((d) => d.is_default);
+    return device ? `${label} (${device.name})` : label;
+  });
+
+  // An executable's case may differ between two sessions: match the one listed.
+  const soundValue = $derived.by(() => {
+    const a = c.audio;
+    if (a.kind !== "app") return soundKey(a);
+    return soundApps.find((p) => p.exe.toLowerCase() === a.exe.toLowerCase())?.key ?? soundKey(a);
+  });
+
+  function setSound(key: string) {
+    let next: AudioSource = { kind: "default" };
+    const device = soundDevices.find((d) => d.key === key);
+    const app = soundApps.find((p) => p.key === key);
+    if (device) next = { kind: "device", id: device.id, name: device.label };
+    else if (app) next = { kind: "app", exe: app.exe, name: app.label };
+    // A choice gone missing keeps the name it was saved with.
+    if (soundKey(next) === soundKey(c.audio)) return;
+    edit((x) => (x.audio = next));
+  }
 
   // Language names are written in their own language, so anyone can find theirs.
   const languageOptions = $derived<{ value: Language; label: string }[]>([
@@ -114,6 +178,33 @@
       </Row>
     </div>
   </section>
+
+  {#if sound}
+    <section class="group">
+      <div class="group-head"><h2 class="group-title">{t("mode_music")}</h2></div>
+      <div class="card rows">
+        <Row label={t("sound_source")} tip={sound.loopback ? t("sound_source_tip") : undefined}>
+          <select value={soundValue} onfocus={refreshSound} onchange={(e) => setSound(e.currentTarget.value)}>
+            <option value="default">{soundDefault}</option>
+            {#if soundDevices.length > 0}
+              <optgroup label={t(sound.loopback ? "audio_outputs" : "audio_inputs")}>
+                {#each soundDevices as d (d.key)}
+                  <option value={d.key}>{d.label}</option>
+                {/each}
+              </optgroup>
+            {/if}
+            {#if soundApps.length > 0}
+              <optgroup label={t("audio_apps")}>
+                {#each soundApps as p (p.key)}
+                  <option value={p.key}>{p.label}</option>
+                {/each}
+              </optgroup>
+            {/if}
+          </select>
+        </Row>
+      </div>
+    </section>
+  {/if}
 
   <section class="group">
     <div class="group-head"><h2 class="group-title">{t("accessibility")}</h2></div>

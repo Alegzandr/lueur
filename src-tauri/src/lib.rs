@@ -144,6 +144,7 @@ pub fn run() {
             commands::export_config,
             commands::import_config,
             commands::list_monitors,
+            commands::list_audio_sources,
             commands::discover_devices,
             commands::pair_device,
             commands::tuya_login_start,

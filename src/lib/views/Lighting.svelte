@@ -45,7 +45,7 @@
     type RgbTuple,
   } from "../scenes";
   import { defaultConfig, type LightState, type Mode } from "../types";
-  import { DETECTS_FULLSCREEN } from "../platform";
+  import { DETECTS_FULLSCREEN, HEARS_OUTPUTS } from "../platform";
   import Icon from "../ui/Icon.svelte";
   import Slider from "../ui/Slider.svelte";
   import Segmented from "../ui/Segmented.svelte";
@@ -61,12 +61,32 @@
   const setupDone = $derived(bound > 0 && arranged);
   const live = $derived(app.status.running);
   const showPlaying = $derived(app.status.groups.some((g) => g.mode !== "ambilight"));
-  const pacedPlaying = $derived(app.status.groups.some((g) => (PACED_SHOWS as Mode[]).includes(g.mode)));
   const musicPlaying = $derived(app.status.groups.some((g) => g.mode === "music"));
+  // The music has a pace only while its colours glide.
+  const pacedPlaying = $derived(
+    app.status.groups.some((g) => (PACED_SHOWS as Mode[]).includes(g.mode)) ||
+      (musicPlaying && app.config.show.music === "spectrum"),
+  );
+  const musicFixed = $derived(app.config.show.music === "fixed");
+  const musicTuple = $derived<RgbTuple>([app.config.show.color.r, app.config.show.color.g, app.config.show.color.b]);
+  const musicCustom = $derived(musicFixed && !PALETTE.some((c) => c.every((v, k) => v === musicTuple[k])));
+
+  function setMusicColour([r, g, b]: RgbTuple) {
+    edit((c) => {
+      c.show.music = "fixed";
+      c.show.color = { r, g, b };
+    });
+  }
 
   const feelOptions = $derived(
     FEEL_ORDER.map((f) => ({ value: f, label: t(`feel_${f}`), title: t(`feel_${f}_tip`) })),
   );
+  // What the music listens to, by the name the source had when picked.
+  const soundName = $derived.by(() => {
+    const a = app.config.audio;
+    if (a.kind !== "default") return a.name;
+    return t(HEARS_OUTPUTS ? "audio_default_output" : "audio_default_input");
+  });
   /** The three feels, explained together behind the Response row's info mark. */
   const feelTip = $derived(FEEL_ORDER.map((f) => `${t(`feel_${f}`)}: ${t(`feel_${f}_tip`)}`).join("\n"));
 
@@ -366,6 +386,44 @@
               onchange={(v) => edit((c) => (c.show.bright = v))}
             />
           </Row>
+          {#if musicPlaying}
+            <Row label={t("music_colours")} tip={t("music_colours_tip")}>
+              <div class="palette" role="group" aria-label={t("music_colours")}>
+                <button
+                  class="dot glide"
+                  class:picked={!musicFixed}
+                  style="--p:{SHOWS.find((x) => x.id === 'rainbow')?.preview}"
+                  title={t("music_spectrum")}
+                  aria-label={t("music_spectrum")}
+                  aria-pressed={!musicFixed}
+                  onclick={() => edit((c) => (c.show.music = "spectrum"))}
+                ></button>
+                {#each PALETTE as c, i}
+                  {@const picked = musicFixed && c.every((v, k) => v === musicTuple[k])}
+                  <button
+                    class="dot"
+                    class:picked
+                    style="--c:{rgbCss(c)}"
+                    title={t(`colour_${PALETTE_NAMES[i]}`)}
+                    aria-label={t(`colour_${PALETTE_NAMES[i]}`)}
+                    aria-pressed={picked}
+                    onclick={() => setMusicColour(c)}
+                  ></button>
+                {/each}
+                <label class="dot any" class:picked={musicCustom} title={t("custom_colour")}>
+                  <input
+                    type="color"
+                    value={"#" + musicTuple.map((v) => v.toString(16).padStart(2, "0")).join("")}
+                    aria-label={t("labelled", { name: t("music_colours"), what: t("custom_colour") })}
+                    oninput={(e) => {
+                      const c = rgbOfHex(e.currentTarget.value);
+                      if (c) setMusicColour(c);
+                    }}
+                  />
+                </label>
+              </div>
+            </Row>
+          {/if}
           {#if pacedPlaying}
             <Row label={t("speed")}>
               <Slider
@@ -388,6 +446,14 @@
                 label={t("flashes")}
                 onchange={(v) => edit((c) => (c.show.flashes = v))}
               />
+            </Row>
+            <Row label={t("listens_to")}>
+              <div class="listen">
+                <span class="listen-name" class:waiting={app.status.music_waiting}>
+                  {app.status.music_waiting ? t("sound_waiting", { name: soundName }) : soundName}
+                </span>
+                <button class="btn plain sm" onclick={() => (app.view = "settings")}>{t("change")}</button>
+              </div>
             </Row>
           {/if}
         </div>
@@ -644,6 +710,21 @@
     list-style: none;
     margin: 0;
     padding: 0;
+  }
+  .listen {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--s-2);
+    min-width: 0;
+  }
+  .listen-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .listen-name.waiting {
+    color: var(--text-3);
   }
   .step {
     display: flex;
@@ -1150,6 +1231,9 @@
   .dot.any:has(input:focus-visible) {
     outline: 2px solid var(--focus);
     outline-offset: 2px;
+  }
+  .dot.glide {
+    background: var(--p);
   }
   .panel-foot {
     display: flex;

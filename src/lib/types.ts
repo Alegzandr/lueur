@@ -177,7 +177,14 @@ export interface ShowSettings {
   speed: number;
   /** The music may flash white on drops and snares, at most three a second. */
   flashes: boolean;
+  /** The music glides through the colour show's combinations, or holds `color`. */
+  music: MusicColors;
+  /** The colour the music holds, in shades that tell the lights apart. */
+  color: Rgb;
 }
+
+/** Where the music takes its colours from (see lueur-core show.rs). */
+export type MusicColors = "spectrum" | "fixed";
 
 export interface Rgb {
   r: number;
@@ -203,6 +210,22 @@ export interface SafetySettings {
   flash_guard: boolean;
 }
 
+/** What the music show listens to (see lueur-core config.rs). A device or an
+ *  application keeps the name it showed when picked, for while it is gone. */
+export type AudioSource =
+  | { kind: "default" }
+  | { kind: "device"; id: string; name: string }
+  | { kind: "app"; exe: string; name: string };
+
+/** What the music show can listen to right now. */
+export interface AudioSources {
+  /** Outputs and applications (Windows), rather than inputs. */
+  loopback: boolean;
+  devices: { id: string; name: string; is_default: boolean }[];
+  /** The applications that have played sound since they opened. */
+  apps: { exe: string; name: string }[];
+}
+
 export interface AppConfig {
   version: number;
   room: Room;
@@ -216,6 +239,7 @@ export interface AppConfig {
   /** What each light was last set to by hand, by room light id. */
   states: Record<string, LightState>;
   show: ShowSettings;
+  audio: AudioSource;
   /** The lights that follow the time of day, by room light id. The backend
    *  switches them (moods, lights set by hand) and ignores the copy the
    *  interface saves. */
@@ -282,6 +306,8 @@ export interface EffectStatus {
   groups: EffectGroup[];
   /** The driven lights whose bulb dropped and is being reconnected. */
   reconnecting: string[];
+  /** The music plays but its sound source is away, and it waits for it. */
+  music_waiting: boolean;
 }
 
 export interface PowerResult {
@@ -327,7 +353,15 @@ export function defaultConfig(): AppConfig {
     },
     interface: { appearance: "system", language: "system", room_arranged: false },
     states: {},
-    show: { kind: "music", bright: 80, speed: 50, flashes: true },
+    show: {
+      kind: "music",
+      bright: 80,
+      speed: 50,
+      flashes: true,
+      music: "spectrum",
+      color: { r: 255, g: 0, b: 110 },
+    },
+    audio: { kind: "default" },
     natural: [],
     safety: { flash_guard: true },
   };

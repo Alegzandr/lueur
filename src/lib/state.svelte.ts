@@ -74,6 +74,7 @@ const idle = (): EffectStatus => ({
   light_ids: [],
   groups: [],
   reconnecting: [],
+  music_waiting: false,
 });
 
 class AppState {

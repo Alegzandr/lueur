@@ -8,6 +8,11 @@ const WINDOWS = !!nav && /windows/i.test(nav.userAgent);
  *  src-tauri/src/auto.rs): automatic mode exists nowhere else. */
 export const DETECTS_FULLSCREEN = WINDOWS;
 
+/** Whether the music listens to outputs and applications, which only
+ *  Windows lets an app tap (see src-tauri/src/audio.rs); elsewhere it hears
+ *  an input. */
+export const HEARS_OUTPUTS = WINDOWS;
+
 /** Whether the page draws the title bar itself, which it does on Windows
  *  (see src-tauri/src/titlebar.rs); elsewhere the system's own stays. */
 export const OWN_TITLEBAR = WINDOWS;

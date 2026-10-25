@@ -92,6 +92,22 @@ impl Default for CaptureSettings {
     }
 }
 
+/// What the music show listens to. Each choice it names by what outlives a
+/// restart (a device id, an executable), with the name it showed when picked,
+/// for while it is unplugged or closed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum AudioSource {
+    /// The default output (on Windows; elsewhere the default input).
+    #[default]
+    Default,
+    /// One output (elsewhere one input), by the audio backend's device id.
+    Device { id: String, name: String },
+    /// Only what one application plays (Windows), by its executable's file
+    /// name, `spotify.exe` say.
+    App { exe: String, name: String },
+}
+
 /// OS-integration behaviour toggles.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct BehaviorSettings {
@@ -185,6 +201,9 @@ pub struct AppConfig {
     /// How the light shows (fade, candle, music) play.
     #[serde(default)]
     pub show: ShowSettings,
+    /// What the music show listens to.
+    #[serde(default)]
+    pub audio: AudioSource,
     /// The lights that follow the time of day (see
     /// [`crate::scene::natural_at`]), by room light id, until something else
     /// is asked of them. Older versions kept one switch for the whole room;
@@ -238,6 +257,7 @@ impl Default for AppConfig {
             interface: InterfaceSettings::default(),
             states: BTreeMap::new(),
             show: ShowSettings::default(),
+            audio: AudioSource::default(),
             natural: BTreeSet::new(),
             modes: BTreeMap::new(),
             safety: SafetySettings::default(),

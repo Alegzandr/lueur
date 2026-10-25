@@ -8,6 +8,7 @@ import { DEFAULT_STATE, MOODS } from "./scenes";
 import {
   defaultConfig,
   type AppConfig,
+  type AudioSources,
   type DiscoveredDevice,
   type EffectStatus,
   type Endpoint,
@@ -116,6 +117,23 @@ export async function listMonitors(): Promise<MonitorInfo[]> {
     return [{ index: 0, name: "Preview Display", width: 2560, height: 1440, is_primary: true }];
   }
   return invoke<MonitorInfo[]>("list_monitors");
+}
+
+export async function listAudioSources(): Promise<AudioSources> {
+  if (!inTauri()) {
+    return {
+      loopback: true,
+      devices: [
+        { id: "wasapi:speakers", name: "Speakers (Realtek Audio)", is_default: true },
+        { id: "wasapi:headset", name: "Headset (USB Audio)", is_default: false },
+      ],
+      apps: [
+        { exe: "Spotify.exe", name: "Spotify" },
+        { exe: "chrome.exe", name: "Google Chrome" },
+      ],
+    };
+  }
+  return invoke<AudioSources>("list_audio_sources");
 }
 
 export async function discoverDevices(timeoutMs = 2500): Promise<DiscoveredDevice[]> {
@@ -262,6 +280,7 @@ const previewStatus = (): EffectStatus => {
     light_ids,
     groups,
     reconnecting: [],
+    music_waiting: false,
   };
 };
 

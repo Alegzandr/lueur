@@ -2832,6 +2832,7 @@ dependencies = [
  "ureq",
  "uuid",
  "windows",
+ "windows-core",
  "winreg",
  "xcap",
  "zbus",

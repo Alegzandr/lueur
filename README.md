@@ -193,8 +193,10 @@ owner to add you to their home instead.
   redo. Changes made while effects play come with a one-click
   *Apply*.
 - **Music.** On Windows the Music effect listens to the computer's own sound,
-  so it follows any song or game. On macOS and Linux it listens to the
-  microphone. It hears the kick, the snare and the hi-hats apart, finds the
+  so it follows any song or game: the default output, another one, or only
+  what one application plays (Settings, *Sound source*), so a call or a
+  notification stays out of the show. On macOS and Linux it listens to the
+  microphone, or another input. It hears the kick, the snare and the hi-hats apart, finds the
   tempo and sends each beat a touch early so it lands with the sound, and
   plays the same whatever the volume. Each light gets a part from where it
   stands: the quick ones near the screen punch the beat in patterns that
@@ -232,7 +234,9 @@ the like without looking like a cheat:
 - **Desktop capture only.** It reads whole monitors with the same system APIs
   as OBS and Discord. It never captures a game window directly.
 - **Hands off the game.** No access to the game process, no memory reads, no
-  injection, no hooks, no driver.
+  injection, no hooks, no driver. Even when the Music effect follows one
+  application's sound, Windows' audio service does the listening: Lueur
+  never opens that application.
 - **Output only.** No simulated keyboard or mouse input and no global
   hotkeys. The only output is colour sent to bulbs on your network.
 - **No overlay.** Nothing is ever drawn over the game.

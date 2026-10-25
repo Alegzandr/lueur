@@ -12,10 +12,15 @@
 //! shape of the track: dim and slow in a breakdown, rising and whitening
 //! through a build, dark for the breath before the drop, everything at once
 //! when it lands.
+//!
+//! The music never picks the colours. They glide through the colour show's
+//! combinations at the chosen speed, or hold the colours picked (see
+//! [`MusicColors`]); the music plays the brightness on top of them, passes
+//! the beat from light to light, and flashes white.
 
 use crate::color::{BulbOutput, Rgb};
 use crate::geometry::{Light, Screen};
-use crate::show::{PARTY, ShowSettings, column, even, output, palette_at};
+use crate::show::{CLOCK_WRAP, MusicColors, ShowSettings, even, output, places, shade, spectrum};
 use std::collections::VecDeque;
 use std::f32::consts::TAU;
 use std::time::Duration;
@@ -751,6 +756,9 @@ enum Pattern {
     Together,
     /// One after another across the room, left to right.
     Chase,
+    /// Each beat sends a pass of light across the room, one way then the
+    /// other, reaching every light as it passes where it stands.
+    Sweep,
     /// Across and back again.
     Bounce,
     /// Every other light, every other beat.
@@ -765,10 +773,16 @@ impl Pattern {
     fn for_lights(k: usize) -> &'static [Pattern] {
         match k {
             0 | 1 => &[Pattern::Together],
-            2 => &[Pattern::Together, Pattern::Alternate, Pattern::Split],
+            2 => &[
+                Pattern::Together,
+                Pattern::Alternate,
+                Pattern::Sweep,
+                Pattern::Split,
+            ],
             _ => &[
                 Pattern::Together,
                 Pattern::Chase,
+                Pattern::Sweep,
                 Pattern::Alternate,
                 Pattern::Bounce,
                 Pattern::Split,
@@ -776,11 +790,13 @@ impl Pattern {
         }
     }
 
-    /// How much of beat `b` the light `rank` of `k` (left to right) takes.
+    /// How much of beat `b` the light `rank` of `k` (left to right) takes
+    /// as it lands. A sweep's lights take theirs as the pass reaches them.
     fn beat(self, rank: usize, k: usize, b: u32) -> f32 {
         let b = b as usize;
         let on = match self {
             Pattern::Together => true,
+            Pattern::Sweep => false,
             Pattern::Chase => rank == b % k,
             Pattern::Bounce => {
                 let lap = (2 * k).saturating_sub(2).max(1);
@@ -796,7 +812,7 @@ impl Pattern {
     /// How much of a snare the light `rank` of `k` takes, after beat `b`.
     fn snare(self, rank: usize, k: usize, b: u32) -> f32 {
         match self {
-            Pattern::Together => 0.4,
+            Pattern::Together | Pattern::Sweep => 0.4,
             Pattern::Split => {
                 if rank < k.div_ceil(2) {
                     0.0
@@ -808,13 +824,24 @@ impl Pattern {
             _ => 0.5 * (1.0 - self.beat(rank, k, b)),
         }
     }
-
-    /// Whether the colours move on with every beat. A pattern that travels
-    /// already moves; changing the colour too would only blur it.
-    fn turns_colour(self) -> bool {
-        !matches!(self, Pattern::Chase | Pattern::Bounce)
-    }
 }
+
+/// A pass of light crossing the room, sent by a beat.
+#[derive(Debug, Clone, Copy)]
+struct Sweep {
+    /// How far across the room the pass has come, 0..=1 from where it set
+    /// out.
+    at: f32,
+    /// Room widths a second.
+    speed: f32,
+    /// It runs left to right, or back.
+    rightwards: bool,
+    strength: f32,
+}
+
+/// The share of a beat a pass takes to cross the room: it is over well
+/// before the next beat comes.
+const SWEEP_BEATS: f32 = 0.45;
 
 /// Where the track is, as a lighting desk would read it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -833,10 +860,10 @@ enum Section {
 
 /// Beats the show stays on one pattern: two bars of four.
 const BEATS_PER_LOOK: u32 = 8;
-/// Looks the show stays on one harmony.
-const LOOKS_PER_HARMONY: u32 = 2;
 /// Beats a drop plays everyone together before the patterns come back.
 const DROP_BEATS: u32 = 16;
+/// The same, in looks.
+const DROP_LOOKS: u32 = DROP_BEATS / BEATS_PER_LOOK;
 /// How long a build takes to reach white, seconds.
 const BUILD_SECS: f32 = 8.0;
 /// A white flash's colour temperature.
@@ -876,13 +903,20 @@ impl Lamp {
 
 /// The music show.
 ///
-/// Its colours come from one of the party harmonies at a time, three colours
-/// that sit well together, and move on to the next every few bars and at
-/// every drop. A beat changes colour outright rather than gliding, since it
-/// is sent sharp anyway and a glide would flash the colours in between.
+/// Its colours are laid across the room by where each light stands, as the
+/// colour show's are, and never move with the music: a beat changes how
+/// bright a light burns, or turns it white, never its colour, so even a sharp
+/// punch lands on the colour the light was already gliding through.
 #[derive(Debug, Clone)]
 pub struct Stage {
     lamps: Vec<Lamp>,
+    /// Where each light stands across the room, 0 at the left to 1 at the
+    /// right.
+    places: Vec<f32>,
+    /// The colours' own clock, ticking at the chosen pace.
+    clock: f32,
+    /// The pass crossing the room, if a beat sent one.
+    sweep: Option<Sweep>,
     /// Punching lights.
     punches: usize,
     section: Section,
@@ -907,10 +941,6 @@ pub struct Stage {
     /// Beats into the current look, and looks so far.
     beat: u32,
     looks: u32,
-    /// Where the colours are round their harmony: a whole number on the beat.
-    step: f32,
-    /// The wash's slow wander round the harmony.
-    drift: f32,
     /// Snares heard in this build: they walk it across the room.
     roll: usize,
     sharp: Vec<bool>,
@@ -938,6 +968,9 @@ impl Stage {
             .collect();
         Stage {
             lamps,
+            places: places(fixtures),
+            clock: 0.0,
+            sweep: None,
             punches: order.len(),
             section: Section::Calm,
             held: 0.0,
@@ -953,8 +986,6 @@ impl Stage {
             period: 0.5,
             beat: 0,
             looks: 0,
-            step: 0.0,
-            drift: 0.0,
             roll: 0,
             sharp: vec![false; fixtures.len()],
         }
@@ -971,10 +1002,6 @@ impl Stage {
         }
         let all = Pattern::for_lights(self.punches);
         all[self.looks as usize % all.len()]
-    }
-
-    fn harmony(&self) -> &'static [Rgb; 3] {
-        &PARTY[(self.looks / LOOKS_PER_HARMONY) as usize % PARTY.len()]
     }
 
     /// Whether the white flashes are on. How often they may go out is not
@@ -1032,10 +1059,11 @@ impl Stage {
         }
     }
 
-    /// The drop: everyone at once, white if allowed, into a new harmony.
+    /// The drop: everyone at once, white if allowed, and a new pattern after.
     fn drop(&mut self, settings: &ShowSettings) {
         self.enter(Section::Drop);
-        self.looks = (self.looks / LOOKS_PER_HARMONY + 1) * LOOKS_PER_HARMONY;
+        self.looks = (self.looks / DROP_LOOKS + 1) * DROP_LOOKS;
+        self.sweep = None;
         self.beat = 0;
         let white = self.white(settings);
         for lamp in &mut self.lamps {
@@ -1051,6 +1079,7 @@ impl Stage {
             lamp.sharp = false;
         }
         self.held += dt;
+        self.clock = (self.clock + dt * settings.pace()) % CLOCK_WRAP;
         self.since_kick = if levels.kick {
             0.0
         } else {
@@ -1073,22 +1102,19 @@ impl Stage {
         self.swell += (e - self.swell) * follow(dt, tau);
         let tau = if levels.bass > self.bass { 0.06 } else { 0.4 };
         self.bass += (levels.bass - self.bass) * follow(dt, tau);
-        self.drift = (self.drift + dt * 0.05).rem_euclid(3.0);
 
         self.follow_track(settings, &levels);
         match self.section {
             Section::Groove | Section::Drop => self.groove(settings, &levels),
             Section::Build => self.build(settings, &levels),
             Section::Calm => {
-                // The colours wander round their harmony, so the room never
-                // freezes while the beat is away.
-                self.step = (self.step + dt * 0.12).rem_euclid(3.0);
                 if let Some(s) = levels.snare {
                     self.accent(0.5 * s, false);
                 }
             }
             Section::Hold => {}
         }
+        self.pass(dt);
         if let Some(h) = levels.hat {
             for lamp in &mut self.lamps {
                 if lamp.part == Part::Accent {
@@ -1111,17 +1137,20 @@ impl Stage {
             if self.beat >= BEATS_PER_LOOK {
                 self.beat = 0;
                 self.looks += 1;
-                if self.section == Section::Drop
-                    && self.looks.is_multiple_of(DROP_BEATS / BEATS_PER_LOOK)
-                {
+                if self.section == Section::Drop && self.looks.is_multiple_of(DROP_LOOKS) {
                     self.enter(Section::Groove);
                 }
             }
             let pattern = self.pattern();
-            if pattern.turns_colour() {
-                self.step = (self.step.floor() + 1.0).rem_euclid(3.0);
-            }
             let (k, b) = (self.punches, self.beat);
+            if pattern == Pattern::Sweep {
+                self.sweep = Some(Sweep {
+                    at: -1e-3,
+                    speed: 1.0 / (SWEEP_BEATS * self.period.max(FASTEST)),
+                    rightwards: !b.is_multiple_of(2),
+                    strength: s,
+                });
+            }
             for lamp in &mut self.lamps {
                 match lamp.part {
                     Part::Punch => lamp.hit(s * pattern.beat(lamp.rank, k, b), false),
@@ -1169,6 +1198,33 @@ impl Stage {
         }
     }
 
+    /// Move the pass on by `dt`, hitting every punching light it reaches.
+    fn pass(&mut self, dt: f32) {
+        let Some(sweep) = &mut self.sweep else {
+            return;
+        };
+        let from = sweep.at;
+        sweep.at += sweep.speed * dt;
+        for (lamp, &place) in self.lamps.iter_mut().zip(&self.places) {
+            let along = if sweep.rightwards { place } else { 1.0 - place };
+            if lamp.part == Part::Punch && from < along && along <= sweep.at {
+                lamp.hit(sweep.strength, false);
+            }
+        }
+        if sweep.at >= 1.0 {
+            self.sweep = None;
+        }
+    }
+
+    /// The colour light `i` glides through, before the music touches it.
+    fn colour(&self, settings: &ShowSettings, i: usize) -> Rgb {
+        let place = self.places[i];
+        match settings.music {
+            MusicColors::Spectrum => spectrum(self.clock, place),
+            MusicColors::Fixed => shade(settings.color, place),
+        }
+    }
+
     fn accent(&mut self, amount: f32, white: bool) {
         for lamp in &mut self.lamps {
             if lamp.part == Part::Accent {
@@ -1179,7 +1235,6 @@ impl Stage {
 
     /// What each light shows now.
     fn light(&self, settings: &ShowSettings) -> Vec<BulbOutput> {
-        let harmony = self.harmony();
         let bright = settings.bright();
         let swell = self.swell.clamp(0.0, 1.0).powf(2.5);
         let climb = if self.section == Section::Build {
@@ -1189,21 +1244,14 @@ impl Stage {
         };
         self.lamps
             .iter()
-            .map(|lamp| {
+            .enumerate()
+            .map(|(i, lamp)| {
+                let rgb = self.colour(settings, i);
                 // What it glows at between hits.
-                let (base, rgb) = match lamp.part {
-                    Part::Punch => (
-                        0.1 + 0.4 * swell,
-                        palette_at(harmony, self.step + column(lamp.rank) as f32),
-                    ),
-                    Part::Wash => (
-                        0.15 + 0.55 * self.bass.clamp(0.0, 1.0).powf(1.5) + 0.15 * swell,
-                        palette_at(harmony, self.drift + column(lamp.rank + 1) as f32),
-                    ),
-                    Part::Accent => (
-                        0.05 + 0.2 * self.shimmer + 0.15 * swell,
-                        palette_at(harmony, self.step + 2.0),
-                    ),
+                let base = match lamp.part {
+                    Part::Punch => 0.1 + 0.4 * swell,
+                    Part::Wash => 0.15 + 0.55 * self.bass.clamp(0.0, 1.0).powf(1.5) + 0.15 * swell,
+                    Part::Accent => 0.05 + 0.2 * self.shimmer + 0.15 * swell,
                 };
                 let base = match self.section {
                     // Lights out for the breath before the drop.
@@ -1238,7 +1286,6 @@ fn pale(rgb: Rgb, t: f32) -> Rgb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::color::full_chroma;
     use crate::safety::FlashGuard;
 
     fn tone(rate: u32, freq: f32, amp: f32, secs: f32) -> Vec<f32> {
@@ -1541,37 +1588,108 @@ mod tests {
         assert_eq!(order, vec![1, 2, 0]);
     }
 
+    /// How far apart two colours are round the wheel, in degrees.
+    fn gap(a: Rgb, b: Rgb) -> f32 {
+        let hue = |c: Rgb| {
+            let (r, g, b) = (f32::from(c.r), f32::from(c.g), f32::from(c.b));
+            let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+            let d = (max - min).max(1e-3);
+            if max == r {
+                60.0 * ((g - b) / d).rem_euclid(6.0)
+            } else if max == g {
+                60.0 * ((b - r) / d + 2.0)
+            } else {
+                60.0 * ((r - g) / d + 4.0)
+            }
+        };
+        let d = (hue(a) - hue(b)).abs();
+        d.min(360.0 - d)
+    }
+
     #[test]
-    fn the_music_stays_in_one_harmony() {
-        // On every beat, the lights show colours of the harmony playing, and
-        // three lights show all three.
-        let s = ShowSettings::default();
+    fn the_beat_never_changes_a_colour() {
+        // The music plays the brightness; the colours glide on regardless,
+        // even across a punch sent sharp.
+        let s = ShowSettings {
+            flashes: false,
+            ..ShowSettings::default()
+        };
         let mut stage = Stage::new(&Fixture::row(3));
         stage.enter(Section::Groove);
-        let mut seen = Vec::new();
-        for k in 0..96 * 20 {
-            let l = if k % 20 == 0 { beat(1.0) } else { between() };
-            let frame = stage.frame(&s, l, 0.025);
-            if k % 20 != 0 {
-                continue;
+        let frames = groove(&mut stage, &s, 96);
+        for w in frames.windows(2) {
+            for (a, b) in w[0].iter().zip(&w[1]) {
+                let g = gap(rgb(*a), rgb(*b));
+                assert!(g < 2.0, "a colour jumped {g}°: {a:?} -> {b:?}");
             }
-            let harmony = stage.harmony().map(full_chroma);
-            let colours: Vec<Rgb> = frame.iter().map(|o| rgb(*o)).collect();
-            for c in &colours {
-                assert!(harmony.contains(c), "{c:?} is not in {harmony:?}");
-            }
-            assert!(
-                colours[0] != colours[1] && colours[1] != colours[2] && colours[0] != colours[2]
-            );
-            seen.extend(colours);
         }
-        // Over a few minutes, every harmony gets its turn.
+        // And the lights still show a combination, not one colour.
+        let last = &frames[frames.len() - 1];
+        assert!(gap(rgb(last[0]), rgb(last[2])) > 20.0);
+    }
+
+    #[test]
+    fn a_fixed_colour_holds_in_shades() {
+        let red = Rgb::new(255, 0, 0);
+        let s = ShowSettings {
+            flashes: false,
+            music: MusicColors::Fixed,
+            color: red,
+            ..ShowSettings::default()
+        };
+        let mut stage = Stage::new(&Fixture::row(3));
+        stage.enter(Section::Groove);
+        let frames = groove(&mut stage, &s, 16);
+        for frame in &frames {
+            // The middle light holds the colour itself, the others a shade
+            // either side of it, all through the music.
+            assert_eq!(rgb(frame[1]), red);
+            for o in [frame[0], frame[2]] {
+                let g = gap(rgb(o), red);
+                assert!((10.0..=20.0).contains(&g), "a shade {g}° off");
+            }
+        }
+        // A lone light holds it exactly.
+        let mut stage = Stage::new(&Fixture::row(1));
+        for frame in groove(&mut stage, &s, 4) {
+            assert_eq!(rgb(frame[0]), red);
+        }
+    }
+
+    #[test]
+    fn a_sweep_passes_across_the_room_and_back() {
+        let s = ShowSettings {
+            flashes: false,
+            ..ShowSettings::default()
+        };
+        let mut stage = Stage::new(&Fixture::row(3));
+        stage.enter(Section::Groove);
+        stage.looks = 2;
+        assert_eq!(stage.pattern(), Pattern::Sweep);
+        // The frame each light is struck on, for two beats in a row.
+        let mut struck = Vec::new();
+        for _ in 0..2 {
+            let mut at = [usize::MAX; 3];
+            for k in 0..20 {
+                let l = if k == 0 { beat(1.0) } else { between() };
+                stage.frame(&s, l, 0.025);
+                for (i, sharp) in stage.sharp().iter().enumerate() {
+                    if *sharp && at[i] == usize::MAX {
+                        at[i] = k;
+                    }
+                }
+            }
+            struck.push(at);
+        }
+        let (there, back) = (struck[0], struck[1]);
         assert!(
-            PARTY
-                .iter()
-                .flatten()
-                .all(|c| seen.contains(&full_chroma(*c)))
+            there.iter().all(|&k| k < 20),
+            "a light was missed: {there:?}"
         );
+        assert!(there.windows(2).all(|w| w[0] < w[1]), "{there:?}");
+        assert!(back.windows(2).all(|w| w[0] > w[1]), "{back:?}");
+        // The pass is over well before the next beat.
+        assert!(there[2] < 12, "{there:?}");
     }
 
     #[test]
@@ -1595,8 +1713,11 @@ mod tests {
             kick: true,
             ..loud
         };
-        let flash = stage.frame(&s, hit, 0.025)[0].bright();
-        assert!(flash >= s.bright - 5 && flash <= s.bright, "{flash}");
+        let out = stage.frame(&s, hit, 0.025)[0];
+        let flash = out.bright();
+        // Full brightness, evened for the colour it lands on.
+        let top = (f32::from(s.bright) * even(rgb(out))).round() as u8;
+        assert!(flash >= top - 5 && flash <= top, "{flash}, {top} at most");
         assert!(flash - between >= 20, "{between} -> {flash}");
         assert!(stage.sharp()[0]);
     }
