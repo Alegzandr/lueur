@@ -119,7 +119,7 @@
     <div class="foot">
       <!-- Effects start from the Lighting view; this only shows one running, from any view. -->
       {#if app.status.running}
-        <div class="power">
+        <div class="power live">
           <div class="state" role="status">
             <span class="lamp" aria-hidden="true"></span>
             <div>
@@ -255,6 +255,18 @@
     display: flex;
     flex-direction: column;
     gap: var(--s-3);
+    overflow: hidden;
+    isolation: isolate;
+  }
+  /* While an effect plays, a little of its light spills into the panel. */
+  .power.live::before {
+    content: "";
+    position: absolute;
+    inset: -40% -20% auto;
+    height: 120%;
+    z-index: -1;
+    background: radial-gradient(closest-side, var(--glow-soft), transparent);
+    opacity: 0.7;
   }
   .state {
     display: flex;

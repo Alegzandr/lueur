@@ -57,12 +57,11 @@ function demoConfig(): AppConfig {
     name: `Yeelight Color ${i + 1}`,
     kind: { family: "yeelight" },
   }));
-  // Lights set by hand, each its own way, as a room in use is.
-  c.states = {
-    "demo-0": { on: true, bright: 20, tint: { mode: "color", r: 255, g: 45, b: 146 } },
-    "demo-1": { on: true, bright: 68, tint: { mode: "color", r: 10, g: 40, b: 255 } },
-    "demo-2": { on: true, bright: 100, tint: { mode: "white", kelvin: 5500 } },
-  };
+  // An evening in: every light on the Relax mood.
+  const relax = MOODS.find((m) => m.id === "relax")!;
+  c.states = Object.fromEntries(
+    c.bindings.map((b) => [b.light_id, { on: true, bright: relax.bright, tint: { mode: "white", kelvin: relax.kelvin } }]),
+  );
   return c;
 }
 

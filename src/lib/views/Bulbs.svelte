@@ -146,7 +146,6 @@
       {:else}
         {#each unbound as d (d.id)}
           <div class="device">
-            <span class="device-icon"><Icon name="bulb" size={16} /></span>
             <div class="device-text">
               <div class="device-name">{deviceName(d)}</div>
               <div class="device-meta num">
@@ -282,16 +281,6 @@
     padding: var(--s-2) var(--s-3) var(--s-2) var(--s-4);
     min-height: 50px;
   }
-  .device-icon {
-    display: grid;
-    place-items: center;
-    width: 28px;
-    height: 28px;
-    flex: none;
-    border-radius: var(--r-md);
-    background: var(--surface-2);
-    color: var(--text-3);
-  }
   .device-text,
   .grow {
     flex: 1;
@@ -319,11 +308,17 @@
     width: 200px;
     margin-left: -9px;
     font-weight: 500;
-    border-color: transparent;
     background: transparent;
+    box-shadow: none;
+    transition:
+      background var(--dur) var(--ease),
+      box-shadow var(--dur) var(--ease);
   }
-  .rename:hover {
-    border-color: var(--line-strong);
+  /* Plain text until it is pointed at or edited, then a field. */
+  .rename:hover,
+  .rename:focus {
+    background: var(--surface);
+    box-shadow: var(--control-edge);
   }
 
   .tuya {

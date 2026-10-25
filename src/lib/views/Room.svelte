@@ -634,10 +634,14 @@
           <span class="field-label">{t("follows")}</span>
           <Switch checked={l.enabled} label={t("follows")} onchange={(v) => setLightEnabled(l.id, v)} />
         </div>
-        <dl class="facts" title={t("facts_tip")}>
-          <div><dt>{t("fact_brightness")}</dt><dd class="num">{pct(m.gain)}</dd></div>
-          <div><dt>{t("fact_response")}</dt><dd class="num">{pct(m.responsiveness)}</dd></div>
-        </dl>
+        <div class="field inline" title={t("facts_tip")}>
+          <span class="field-label">{t("fact_brightness")}</span>
+          <span class="fact num">{pct(m.gain)}</span>
+        </div>
+        <div class="field inline" title={t("facts_tip")}>
+          <span class="field-label">{t("fact_response")}</span>
+          <span class="fact num">{pct(m.responsiveness)}</span>
+        </div>
       </div>
 
       <div class="bulb-box">
@@ -1028,9 +1032,7 @@
     width: 100%;
     height: auto;
     border-radius: 6px;
-    box-shadow:
-      0 0 0 3px var(--plan-wall),
-      0 4px 12px -4px oklch(0 0 0 / 0.35);
+    box-shadow: 0 0 0 3px var(--plan-wall);
   }
   .preview-bg {
     fill: var(--sunken);
@@ -1084,23 +1086,9 @@
   .field.inline .field-label {
     margin: 0;
   }
-  .facts {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    margin: 0;
-    padding: var(--s-3);
-    border-radius: var(--r-md);
-    background: var(--surface-2);
-  }
-  .facts dt {
-    font-size: var(--t-xs);
-    color: var(--text-3);
-  }
-  .facts dd {
-    margin: 0;
-    font-size: var(--t-lg);
-    font-weight: 600;
-    letter-spacing: -0.01em;
+  .fact {
+    font-size: var(--t-sm);
+    color: var(--text-2);
   }
 
   .bulb-box {
