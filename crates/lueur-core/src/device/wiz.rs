@@ -24,7 +24,7 @@ const MIN_KELVIN: u16 = 2200;
 const MAX_KELVIN: u16 = 6500;
 
 /// About what a WiZ bulb follows smoothly; faster just queues up.
-const FRAME_INTERVAL: Duration = Duration::from_millis(40);
+pub(crate) const FRAME_INTERVAL: Duration = Duration::from_millis(40);
 
 /// The `setPilot` command for one output.
 pub fn pilot(output: BulbOutput) -> Value {

@@ -4,12 +4,14 @@ use crate::auto;
 use crate::error::{AppError, AppResult};
 use crate::identity::Unverified;
 use crate::manual::Manual;
+use crate::peers;
 use crate::runner;
 use crate::sleep;
 use crate::vault::{self, Vault};
 use lueur_core::config::{self, AppConfig};
+use lueur_core::device::lease::{self, Leases};
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// Everything the IPC commands need, behind interior mutability so Tauri can
 /// share it across threads.
@@ -29,6 +31,9 @@ pub struct AppState {
     pub auto_owner: Mutex<auto::Owner>,
     /// When the lights go off by themselves, if the user asked.
     pub sleep: sleep::Timer,
+    /// The bulbs other computers running Lueur drive, and ours (see
+    /// `peers.rs`).
+    pub leases: Arc<Leases>,
     /// Language the interface resolved to ("en" or "fr"), reported by the
     /// frontend so the tray menu can match it.
     pub ui_language: Mutex<&'static str>,
@@ -64,6 +69,11 @@ impl AppState {
             manual,
             auto_owner: Mutex::new(auto::Owner::default()),
             sleep: sleep::Timer::default(),
+            leases: Arc::new(Leases::new(
+                uuid::Uuid::new_v4().to_string(),
+                peers::host_name(),
+                lease::LISTEN,
+            )),
             ui_language: Mutex::new("en"),
         };
         if migrate && let Err(e) = state.persist() {

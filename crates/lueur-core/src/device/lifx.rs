@@ -31,7 +31,7 @@ const MIN_KELVIN: u16 = 2500;
 const MAX_KELVIN: u16 = 9000;
 
 /// LIFX asks clients to stay under 20 messages a second per bulb.
-const FRAME_INTERVAL: Duration = Duration::from_millis(50);
+pub(crate) const FRAME_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Build a frame. `target` is the bulb's MAC (all zero with `tagged` for a
 /// broadcast to every bulb).

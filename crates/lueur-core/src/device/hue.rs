@@ -37,7 +37,7 @@ pub const ID_PREFIX: &str = "hue:";
 const TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The bridge's whole budget, shared by its lamps.
-const BRIDGE_INTERVAL: Duration = Duration::from_millis(100);
+pub(crate) const BRIDGE_INTERVAL: Duration = Duration::from_millis(100);
 
 /// CIE xy of an sRGB colour, through the wide gamut Hue documents for its
 /// colour lamps. The bridge maps it into each lamp's own gamut.

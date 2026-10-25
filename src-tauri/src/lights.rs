@@ -122,7 +122,8 @@ fn start_room(state: &AppState, mode: Mode) -> AppResult<usize> {
         state.persist()?;
     }
     let ids = runner::enabled_ids(&config);
-    let handle = runner::start(&config, mode, &ids, &runner::per_host(&config, &ids))?;
+    let hosts = runner::per_host(&config, &ids);
+    let handle = runner::start(&config, mode, &ids, &hosts, &state.leases)?;
     let connected = handle.connected_lights;
     state.effects.push(handle);
     Ok(connected)
@@ -278,7 +279,8 @@ fn stop_taken(state: &AppState, mut handles: Vec<runner::Handle>, restore: bool)
 }
 
 /// Show on each of `ids` what it was last set to by hand. A light never set
-/// is left as it is, or, with `or_default`, given a warm white.
+/// is left as it is, or, with `or_default`, given a warm white. So is one
+/// whose bulb another computer drives: it shows that computer's effect.
 fn put_back(state: &AppState, ids: &[String], or_default: bool) {
     let Ok(cfg) = state.lock_config() else {
         return;
@@ -293,7 +295,11 @@ fn put_back(state: &AppState, ids: &[String], or_default: bool) {
             } else {
                 saved
             }?;
-            Some((cfg.binding_for(id)?.clone(), wish))
+            let binding = cfg.binding_for(id)?;
+            if state.leases.holder(&binding.device_id).is_some() {
+                return None;
+            }
+            Some((binding.clone(), wish))
         })
         .collect();
     drop(cfg);
@@ -439,6 +445,20 @@ pub fn restart(state: &AppState) -> AppResult<usize> {
     }
 }
 
+/// Take the bulb of `light_id` from whatever drives it, another computer or
+/// another app, as the user asked: the effect playing on the light here
+/// drives it again at once, and the other one waits instead. Only a light
+/// an effect plays on can be taken, or nothing would drive the bulb it
+/// took.
+pub fn take(state: &AppState, light_id: &str) -> AppResult<()> {
+    if state.effects.mode_of(light_id).is_none() {
+        return Err(AppError::new("light_not_playing"));
+    }
+    let device = binding(state, light_id)?.device_id;
+    state.leases.take(&device);
+    Ok(())
+}
+
 /// Stop loops whose lights something else takes over at once.
 fn hand_over(mut handles: Vec<runner::Handle>) {
     std::thread::scope(|scope| {
@@ -464,7 +484,7 @@ fn launch(
     let started: Vec<_> = std::thread::scope(|scope| {
         let handles: Vec<_> = plan
             .iter()
-            .map(|(m, ids)| scope.spawn(|| runner::start(config, *m, ids, &hosts)))
+            .map(|(m, ids)| scope.spawn(|| runner::start(config, *m, ids, &hosts, &state.leases)))
             .collect();
         handles
             .into_iter()
@@ -671,6 +691,28 @@ pub fn set_all_power(state: &AppState, on: bool) -> AppResult<PowerResult> {
                 on,
                 ..LightState::default()
             })
+        },
+        true,
+    )
+}
+
+/// Switch off every light, for the sleep timer, but those whose bulb
+/// another computer drives: the timer puts this computer's room to bed,
+/// not the effect someone plays on the other one.
+pub fn sleep_all(state: &AppState) -> AppResult<PowerResult> {
+    crate::auto::user_took_over(state);
+    stop_effect(state, false);
+    apply_many(
+        state,
+        |b| {
+            state
+                .leases
+                .holder(&b.device_id)
+                .is_none()
+                .then(|| LightState {
+                    on: false,
+                    ..LightState::default()
+                })
         },
         true,
     )

@@ -14,6 +14,7 @@ pub mod common;
 pub mod govee;
 pub mod http;
 pub mod hue;
+pub mod lease;
 pub mod lifx;
 pub mod mdns;
 pub mod nanoleaf;
@@ -385,14 +386,21 @@ pub const CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
 ///
 /// `siblings` is how many lights in this effect share the same host (a Hue
 /// bridge), so families with a shared command budget can split it fairly.
-pub fn open_stream(ep: &Endpoint, siblings: usize) -> io::Result<Box<dyn LightStream>> {
+/// When `polite`, a bulb that says something else streams to it is left
+/// alone, with [`lease::taken`]: only a Yeelight says, through its one
+/// music channel.
+pub fn open_stream(
+    ep: &Endpoint,
+    siblings: usize,
+    polite: bool,
+) -> io::Result<Box<dyn LightStream>> {
     require_ready(ep)?;
     log::debug!(family = ep.kind.family(), id = ep.id.as_str(), ip = ep.ip.as_str(); "opening a stream");
     let wire = Wire::of(ep);
     Ok(match &ep.kind {
         DeviceKind::Yeelight => Box::new(YeelightStream(Mailbox::spawn(
             "yeelight",
-            MusicConnection::establish(&ep.ip, ep.port, CONTROL_TIMEOUT)?.traced(wire),
+            MusicConnection::establish(&ep.ip, ep.port, CONTROL_TIMEOUT, polite)?.traced(wire),
         )?)),
         DeviceKind::Wiz => Box::new(wiz::WizStream::open(&ep.ip, wire)?),
         DeviceKind::Lifx { target } => {
@@ -416,6 +424,20 @@ pub fn open_stream(ep: &Endpoint, siblings: usize) -> io::Result<Box<dyn LightSt
         )?),
         DeviceKind::Tuya { .. } => return Err(shell_only()),
     })
+}
+
+/// The pace a stream to `kind` would keep (see [`LightStream::interval`]),
+/// without opening one: for a light that waits for its bulb. Tuya's is the
+/// shell's.
+pub fn interval_of(kind: &DeviceKind, siblings: usize) -> Duration {
+    match kind {
+        DeviceKind::Yeelight | DeviceKind::Tuya { .. } => Duration::ZERO,
+        DeviceKind::Wiz => wiz::FRAME_INTERVAL,
+        DeviceKind::Lifx { .. } => lifx::FRAME_INTERVAL,
+        DeviceKind::Govee => govee::FRAME_INTERVAL,
+        DeviceKind::Hue { .. } => hue::BRIDGE_INTERVAL * siblings.max(1) as u32,
+        DeviceKind::Nanoleaf { .. } => nanoleaf::FRAME_INTERVAL,
+    }
 }
 
 /// Turn a bulb on or off.
@@ -457,7 +479,7 @@ pub fn identify(ep: &Endpoint, color: Rgb) -> io::Result<()> {
         // Everyone else: power on, then one frame on a fresh stream.
         _ => {
             set_power(ep, true)?;
-            open_stream(ep, 1)?.push(output, Effect::Smooth, 300)
+            open_stream(ep, 1, false)?.push(output, Effect::Smooth, 300)
         }
     }
 }

@@ -3,10 +3,12 @@
 //! Security notes:
 //! * Every command validates its inputs (addresses, colour ranges, timeouts).
 //! * No command takes a shell string, path to execute, or arbitrary URL; the
-//!   network egress is LAN bulb control and discovery, the Smart Life sign-in
-//!   while the user is importing Tuya bulbs (Tuya's own hosts only, see
-//!   `tuya_cloud.rs`), and the update check in `updater.rs`. No command can
-//!   point any of them elsewhere.
+//!   network egress is LAN bulb control and discovery, the LAN broadcast
+//!   that tells other computers running Lueur which bulbs this one drives
+//!   (`peers.rs`: device ids and the computer's name, nothing secret), the
+//!   Smart Life sign-in while the user is importing Tuya bulbs (Tuya's own
+//!   hosts only, see `tuya_cloud.rs`), and the update check in
+//!   `updater.rs`. No command can point any of them elsewhere.
 //! * The config export and import write and read only the file the user picks
 //!   in the system's own save and open dialogs; the interface never names a
 //!   path.
@@ -28,6 +30,7 @@ use crate::state::AppState;
 use crate::tuya_cloud::{self, CloudError};
 use lueur_core::color::Rgb;
 use lueur_core::config::AppConfig;
+use lueur_core::device::relink::Link;
 use lueur_core::device::{self, DeviceKind, DiscoveredDevice, Endpoint, hue, nanoleaf};
 use lueur_core::scene::LightState;
 use std::io;
@@ -56,14 +59,64 @@ pub struct EffectStatus {
     pub groups: Vec<EffectGroup>,
     /// The driven lights whose bulb dropped and is being reconnected.
     pub reconnecting: Vec<String>,
+    /// The room lights whose bulb something else drives: driven here, they
+    /// wait for it, and the user may take it.
+    pub elsewhere: Vec<Elsewhere>,
     /// The music plays but its sound source is away, and it waits for it.
     pub music_waiting: bool,
 }
 
+/// A room light whose bulb something else drives.
+#[derive(serde::Serialize)]
+pub struct Elsewhere {
+    pub light_id: String,
+    /// The computer running Lueur that drives it; none for another app (a
+    /// Yeelight only says it is streamed to, not by whom).
+    pub by: Option<String>,
+}
+
+/// Which driven lights are reconnecting, and which room lights something
+/// else drives.
+fn away(state: &AppState) -> (Vec<String>, Vec<Elsewhere>) {
+    let mut reconnecting = Vec::new();
+    let mut elsewhere = Vec::new();
+    // The effects first: the config is not held while they are asked.
+    let driven = state.effects.driven_ids();
+    let links = state.effects.away();
+    let Ok(cfg) = state.lock_config() else {
+        return (reconnecting, elsewhere);
+    };
+    let holder = |light_id: &str| {
+        cfg.binding_for(light_id)
+            .and_then(|b| state.leases.holder(&b.device_id))
+    };
+    for (light_id, link) in links {
+        let by = holder(&light_id);
+        match link {
+            Link::Up => {}
+            Link::Reconnecting => reconnecting.push(light_id),
+            // Held with nobody to name: still listening for who is there.
+            Link::Held if by.is_none() => reconnecting.push(light_id),
+            Link::Held | Link::Taken => elsewhere.push(Elsewhere { light_id, by }),
+        }
+    }
+    for light in cfg.room.lights.iter().filter(|l| !driven.contains(&l.id)) {
+        if let Some(by) = holder(&light.id) {
+            elsewhere.push(Elsewhere {
+                light_id: light.id.clone(),
+                by: Some(by),
+            });
+        }
+    }
+    (reconnecting, elsewhere)
+}
+
 fn status(state: &AppState) -> EffectStatus {
     let groups = state.effects.groups();
+    let (reconnecting, elsewhere) = away(state);
     EffectStatus {
-        reconnecting: state.effects.reconnecting_ids(),
+        reconnecting,
+        elsewhere,
         music_waiting: state.effects.waiting_for_sound(),
         running: !groups.is_empty(),
         connected_lights: groups.iter().map(|g| g.2).sum(),
@@ -640,6 +693,14 @@ pub fn set_window_theme(window: tauri::WebviewWindow, theme: Option<String>) {
 /// Report whether the effect is running.
 #[tauri::command]
 pub fn effect_status(state: State<AppState>) -> AppResult<EffectStatus> {
+    Ok(status(&state))
+}
+
+/// Take a light's bulb from the other computer or app that drives it, so
+/// the effect playing on it here drives it again.
+#[tauri::command]
+pub fn take_light(state: State<AppState>, light_id: String) -> AppResult<EffectStatus> {
+    lights::take(&state, &light_id)?;
     Ok(status(&state))
 }
 

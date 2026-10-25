@@ -10,6 +10,7 @@
     identifyLight,
     isDriven,
     isReconnecting,
+    drivenElsewhere,
     isOn,
     isPlaying,
     lightState,
@@ -18,6 +19,7 @@
     setAllPower,
     setLightMode,
     setSleepTimer,
+    takeLight,
     toggleLightPower,
     toggleTarget,
   } from "../state.svelte";
@@ -487,6 +489,7 @@
           {@const s = lightState(l.id)}
           {@const driven = isDriven(l.id)}
           {@const lm = modeOf(l.id)}
+          {@const other = b ? drivenElsewhere(l.id) : null}
           {@const expanded = open === l.id && !!b}
           <div class="light" class:expanded class:targeted={!wholeRoom && app.target.includes(l.id)}>
             <div class="light-row">
@@ -508,13 +511,24 @@
                   <span class="light-sub">{t("no_bulb")}</span>
                 {:else}
                   {@const mood = s.on ? moodOf(l.id) : null}
-                  {#if mood}<span class="light-sub">{moodName(mood)}</span>{/if}
+                  {#if !lm && other}
+                    <span class="light-sub">{t("elsewhere_sub", { host: other })}</span>
+                  {:else if mood}<span class="light-sub">{moodName(mood)}</span>{/if}
                   <span class="chev" aria-hidden="true"><Icon name="chevron" size={12} /></span>
                 {/if}
               </button>
 
               {#if !b}
                 <button class="btn sm" onclick={() => (app.view = "bulbs")}>{t("assign")}</button>
+              {:else if lm && other !== null}
+                <span class="live-tag held">
+                  <span class="held-by" title={other ? t("held_tip", { host: other }) : t("held_other_tip")}>
+                    {other ? t("held_by", { host: other }) : t("held_by_other")}
+                  </span>
+                  <button class="btn sm" title={t("take_over_tip")} onclick={() => takeLight(l.id)}>
+                    {t("take_over")}
+                  </button>
+                </span>
               {:else if lm && isReconnecting(l.id)}
                 <span class="live-tag" title={t("reconnecting_tip")}>{t("reconnecting")}</span>
               {:else if lm}
@@ -559,6 +573,9 @@
                 {#if driven}
                   <div class="plays">
                     <p class="hint">{t("driven_hint", { mode: lm ? modeName(lm) : t("mode_mixed") })}</p>
+                    {#if other !== null}
+                      <p class="hint">{other ? t("held_tip", { host: other }) : t("held_other_tip")}</p>
+                    {/if}
                     <button
                       class="btn sm"
                       disabled={app.busy || app.modeBusy[l.id]}
@@ -1040,6 +1057,18 @@
   }
   .live-tag .lamp {
     --lamp: 6px;
+  }
+  .live-tag.held {
+    justify-content: space-between;
+    color: var(--text-3);
+  }
+  .held-by {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .live-tag.held .btn {
+    flex: none;
   }
   .power {
     color: var(--text-3);

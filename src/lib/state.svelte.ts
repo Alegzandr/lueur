@@ -74,6 +74,7 @@ const idle = (): EffectStatus => ({
   light_ids: [],
   groups: [],
   reconnecting: [],
+  elsewhere: [],
   music_waiting: false,
 });
 
@@ -190,6 +191,24 @@ export function modeOf(lightId: string): Mode | null {
  *  reconnected. */
 export function isReconnecting(lightId: string): boolean {
   return app.status.reconnecting?.includes(lightId) ?? false;
+}
+
+/** What else drives this light's bulb: another computer running Lueur (its
+ *  name), another app (an empty string), or nothing (null). */
+export function drivenElsewhere(lightId: string): string | null {
+  const e = app.status.elsewhere?.find((x) => x.light_id === lightId);
+  return e ? (e.by ?? "") : null;
+}
+
+/** Take a light's bulb back from whatever else drives it, so the effect
+ *  playing on it here drives it again. */
+export async function takeLight(lightId: string): Promise<void> {
+  try {
+    app.status = await ipc.takeLight(lightId);
+  } catch (e) {
+    await refreshStatus();
+    fail(e);
+  }
 }
 
 /** The lights picked for effects and moods that still have a bulb, or

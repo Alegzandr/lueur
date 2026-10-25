@@ -1,4 +1,4 @@
-//! Bringing back a bulb that dropped.
+//! Bringing back a bulb that dropped, and waiting for one that is busy.
 //!
 //! A Wi-Fi hiccup, a bulb cut at its wall switch, a bridge that rebooted: a
 //! stream that fails is not the end of the light. [`Relink`] keeps opening a
@@ -6,14 +6,22 @@
 //! own, so the frame loop never waits on a bulb that is not there. Once one
 //! opens, the very next frame goes to it, and the bulb picks up whatever the
 //! room shows at that moment.
+//!
+//! A bulb can also be busy rather than gone. Another computer running Lueur
+//! plays an effect on it, as the link's [`Gate`] says, or a Yeelight says
+//! something else streams to it (a polite open fails with
+//! [`lease::taken`]). Taking it back would cut the other one off, and the
+//! two would take it from each other in turn, so the link waits without
+//! sending anything, and the bulb joins the room again as soon as it is free.
 
 use super::LightStream;
+use super::lease::{self, Gate};
 use crate::color::BulbOutput;
 use crate::yeelight::Effect;
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
@@ -32,6 +40,8 @@ pub const RELINK_JITTER: f64 = 0.2;
 /// shows as reconnecting, rather than flapping between the two. Longer than
 /// [`super::common::REFRESH`], so even a still scene has sent again by then.
 pub const RELINK_STABLE: Duration = Duration::from_secs(8);
+/// How often a bulb something else streams to is asked whether it is free.
+pub const TAKEN_RETRY: Duration = Duration::from_secs(4);
 
 /// How long to wait before each attempt: doubling from [`RELINK_FIRST`] up to
 /// [`RELINK_CAP`], each wait shortened by a random part of [`RELINK_JITTER`].
@@ -72,9 +82,50 @@ fn jitter() -> f64 {
     (h.finish() >> 11) as f64 / (1u64 << 53) as f64
 }
 
-/// Opens a fresh stream to one bulb. Called on a thread of its own, so it may
-/// take as long as the family's handshake does.
-pub type Opener = Arc<dyn Fn() -> io::Result<Box<dyn LightStream>> + Send + Sync>;
+/// What a link is doing, for whoever reports on the lights.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Link {
+    /// The bulb takes frames.
+    Up,
+    /// The bulb dropped and is being reconnected.
+    Reconnecting,
+    /// Another computer running Lueur drives the bulb, or this one is still
+    /// listening for who does: nothing is sent until it is free.
+    Held,
+    /// The bulb said something else streams to it: it is asked again every
+    /// [`TAKEN_RETRY`].
+    Taken,
+}
+
+/// A link's [`Link`], readable from another thread.
+#[derive(Debug)]
+pub struct LinkState(AtomicU8);
+
+impl LinkState {
+    fn new(link: Link) -> Self {
+        LinkState(AtomicU8::new(link as u8))
+    }
+
+    pub fn get(&self) -> Link {
+        match self.0.load(Ordering::SeqCst) {
+            0 => Link::Up,
+            1 => Link::Reconnecting,
+            2 => Link::Held,
+            _ => Link::Taken,
+        }
+    }
+
+    /// Set it; true if that changed it.
+    fn set(&self, link: Link) -> bool {
+        self.0.swap(link as u8, Ordering::SeqCst) != link as u8
+    }
+}
+
+/// Opens a fresh stream to one bulb. When asked to be `polite`, it leaves
+/// alone a bulb that says something else streams to it, failing with
+/// [`lease::taken`]. Called on a thread of its own, so it may take as long
+/// as the family's handshake does.
+pub type Opener = Arc<dyn Fn(bool) -> io::Result<Box<dyn LightStream>> + Send + Sync>;
 
 /// Called when a link goes down or comes back.
 pub type OnChange = Arc<dyn Fn() + Send + Sync>;
@@ -98,8 +149,16 @@ pub struct Relink {
     /// When the stream on trial was reopened (see [`RELINK_STABLE`]).
     trial: Option<Instant>,
     stable: Duration,
-    /// True while the bulb takes frames, for whoever reports on the lights.
-    up: Arc<AtomicBool>,
+    taken_retry: Duration,
+    /// What the link does, for whoever reports on the lights.
+    state: Arc<LinkState>,
+    /// Who else drives the bulb, if anyone: see [`lease`].
+    gate: Option<Gate>,
+    /// The user took the bulb back: the next attempt is not polite.
+    forced: bool,
+    /// The bulb was busy, not away: the next stream that opens counts as
+    /// back at once, without a trial.
+    resumed: bool,
     /// Set once this link is done with, so an attempt that has not started
     /// yet is not made.
     gone: Arc<AtomicBool>,
@@ -112,21 +171,53 @@ impl Relink {
     /// Wrap a stream `open` has just opened; it is called again whenever the
     /// stream fails.
     pub fn new(stream: Box<dyn LightStream>, open: Opener) -> Self {
+        let interval = stream.interval();
+        Self::with(Some(stream), open, interval, Link::Up)
+    }
+
+    /// A link whose bulb is busy (`Held` or `Taken`), opened by `open` once
+    /// it is free. `interval` is the pace its stream will keep.
+    pub fn idle(open: Opener, interval: Duration, link: Link) -> Self {
+        let mut relink = Self::with(None, open, interval, link);
+        relink.resumed = true;
+        if link == Link::Taken {
+            relink.next_try = Instant::now() + relink.taken_retry;
+        }
+        relink
+    }
+
+    fn with(
+        stream: Option<Box<dyn LightStream>>,
+        open: Opener,
+        interval: Duration,
+        link: Link,
+    ) -> Self {
         Relink {
-            interval: stream.interval(),
+            interval,
             open,
-            stream: Some(stream),
+            stream,
             stale: None,
             attempt: None,
             backoff: Backoff::default(),
             next_try: Instant::now(),
             trial: None,
             stable: RELINK_STABLE,
-            up: Arc::new(AtomicBool::new(true)),
+            taken_retry: TAKEN_RETRY,
+            state: Arc::new(LinkState::new(link)),
+            gate: None,
+            forced: false,
+            resumed: false,
             gone: Arc::new(AtomicBool::new(false)),
             on_change: None,
             name: String::new(),
         }
+    }
+
+    /// Go through `gate` before every frame: the bulb is left alone while
+    /// another computer holds it.
+    pub fn gated(mut self, gate: Gate) -> Self {
+        self.gate = Some(gate);
+        self
     }
 
     /// Name the light this link feeds, so its logs say which one it is.
@@ -136,7 +227,7 @@ impl Relink {
     }
 
     /// Call `f` (on the frame loop: it must return at once) each time the
-    /// link goes down or comes back.
+    /// link changes state (see [`Link`]).
     pub fn on_change(mut self, f: OnChange) -> Self {
         self.on_change = Some(f);
         self
@@ -145,12 +236,12 @@ impl Relink {
     /// Whether the bulb takes frames now: its stream opened with the effect,
     /// or reopened and has held for [`RELINK_STABLE`].
     pub fn is_up(&self) -> bool {
-        self.up.load(Ordering::SeqCst)
+        self.state.get() == Link::Up
     }
 
-    /// The same as [`Relink::is_up`], readable from another thread.
-    pub fn up_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.up)
+    /// What the link does, readable from another thread.
+    pub fn state(&self) -> Arc<LinkState> {
+        Arc::clone(&self.state)
     }
 
     /// The pace of the stream the link opened with (see
@@ -163,6 +254,9 @@ impl Relink {
     /// along. A stream that opened since the last frame gets this one in
     /// full, since it has sent nothing yet.
     pub fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) {
+        if !self.cleared() {
+            return;
+        }
         self.poll();
         let Some(stream) = self.stream.as_mut() else {
             return;
@@ -173,7 +267,7 @@ impl Relink {
                     log::info!(light = self.name.as_str(); "a light is back");
                     self.trial = None;
                     self.backoff.reset();
-                    self.set_up(true);
+                    self.set_state(Link::Up);
                 }
             }
             Err(e) => {
@@ -186,7 +280,7 @@ impl Relink {
                 }
                 self.stale = self.stream.take();
                 self.next_try = Instant::now() + self.backoff.next_wait();
-                self.set_up(false);
+                self.set_state(Link::Reconnecting);
             }
         }
     }
@@ -198,6 +292,63 @@ impl Relink {
         if let Some(stream) = self.stream.as_mut() {
             stream.rest();
         }
+        if let Some(gate) = &self.gate {
+            gate.release();
+        }
+    }
+
+    /// Whether the gate lets this frame through. A bulb another computer
+    /// holds is let go at once, without settling it: that computer shows
+    /// its own frames on it.
+    fn cleared(&mut self) -> bool {
+        let Some(gate) = &self.gate else {
+            return true;
+        };
+        if !gate.may_drive() {
+            if self.state.get() != Link::Held {
+                self.hold();
+            }
+            return false;
+        }
+        if gate.take_forced() {
+            // The user took the bulb: at once, from whatever streams to it.
+            self.forced = true;
+            if self.stream.is_none() {
+                self.next_try = Instant::now();
+            }
+        }
+        if self.state.get() == Link::Held {
+            log::info!(light = self.name.as_str(); "a light's bulb is free again");
+            self.resumed = true;
+            self.backoff.reset();
+            self.next_try = Instant::now();
+            self.set_state(Link::Reconnecting);
+        }
+        true
+    }
+
+    fn hold(&mut self) {
+        log::info!(light = self.name.as_str(); "another computer drives a light's bulb, waiting for it");
+        discard(self.stream.take());
+        discard(self.stale.take());
+        // An attempt under way drops its stream on its own thread.
+        self.attempt = None;
+        self.trial = None;
+        self.set_state(Link::Held);
+    }
+
+    /// Something else streams to the bulb: ask again later.
+    fn wait_taken(&mut self) {
+        if self.state.get() != Link::Taken {
+            log::info!(light = self.name.as_str(); "something else drives a light's bulb, waiting for it");
+        }
+        self.resumed = true;
+        self.next_try = if self.forced {
+            Instant::now()
+        } else {
+            Instant::now() + self.taken_retry
+        };
+        self.set_state(Link::Taken);
     }
 
     /// Take the outcome of the attempt under way, or start one when due.
@@ -208,11 +359,22 @@ impl Relink {
         if let Some(attempt) = &self.attempt {
             match attempt.try_recv() {
                 Err(TryRecvError::Empty) => {}
-                // On trial until it has held (see `push`).
                 Ok(Ok(stream)) => {
                     self.attempt = None;
                     self.stream = Some(stream);
-                    self.trial = Some(Instant::now());
+                    if std::mem::take(&mut self.resumed) {
+                        // It was busy, not flaky: back at once.
+                        log::info!(light = self.name.as_str(); "a light is back");
+                        self.backoff.reset();
+                        self.set_state(Link::Up);
+                    } else {
+                        // On trial until it has held (see `push`).
+                        self.trial = Some(Instant::now());
+                    }
+                }
+                Ok(Err(e)) if lease::is_taken(&e) => {
+                    self.attempt = None;
+                    self.wait_taken();
                 }
                 Ok(Err(e)) => {
                     log::debug!(light = self.name.as_str(); "reconnection failed: {e}");
@@ -239,6 +401,7 @@ impl Relink {
         let open = Arc::clone(&self.open);
         let stale = self.stale.take();
         let gone = Arc::clone(&self.gone);
+        let polite = !std::mem::take(&mut self.forced);
         std::thread::Builder::new()
             .name("lueur-relink".into())
             .spawn(move || {
@@ -246,7 +409,7 @@ impl Relink {
                 if gone.load(Ordering::SeqCst) {
                     return;
                 }
-                let opened = open();
+                let opened = open(polite);
                 // Stopped meanwhile ("all off", the sleep timer): the new
                 // stream is dropped here, off the frame loop, without a frame
                 // that would light the bulb again.
@@ -258,8 +421,8 @@ impl Relink {
             .map(|_| rx)
     }
 
-    fn set_up(&self, up: bool) {
-        if self.up.swap(up, Ordering::SeqCst) != up
+    fn set_state(&self, link: Link) {
+        if self.state.set(link)
             && let Some(f) = &self.on_change
         {
             f();
@@ -267,9 +430,21 @@ impl Relink {
     }
 }
 
+/// Close a stream off the frame loop: a Yeelight's may take a moment.
+fn discard(stream: Option<Box<dyn LightStream>>) {
+    if let Some(stream) = stream {
+        let _ = std::thread::Builder::new()
+            .name("lueur-relink".into())
+            .spawn(move || drop(stream));
+    }
+}
+
 impl Drop for Relink {
     fn drop(&mut self) {
         self.gone.store(true, Ordering::SeqCst);
+        if let Some(gate) = &self.gate {
+            gate.release();
+        }
     }
 }
 
@@ -277,6 +452,7 @@ impl Drop for Relink {
 mod tests {
     use super::*;
     use crate::color::Rgb;
+    use crate::device::lease::{Announce, Claim, Leases, PROTOCOL};
     use std::sync::Mutex;
     use std::sync::atomic::AtomicUsize;
 
@@ -369,24 +545,37 @@ mod tests {
         log: Arc<Mutex<Vec<u8>>>,
         opens: Arc<AtomicUsize>,
         dropped: Arc<AtomicUsize>,
+        /// Something else streams to it: a polite open is refused.
+        busy: Arc<AtomicBool>,
+        /// Opens that were not polite.
+        rude: Arc<AtomicUsize>,
+    }
+
+    /// How a fake bulb is opened, each connection taking `handshake`.
+    fn opener(bulb: &Bulb, handshake: Duration) -> Opener {
+        let bulb = bulb.clone();
+        Arc::new(move |polite| {
+            bulb.opens.fetch_add(1, Ordering::SeqCst);
+            if !polite {
+                bulb.rude.fetch_add(1, Ordering::SeqCst);
+            }
+            std::thread::sleep(handshake);
+            if bulb.down.load(Ordering::SeqCst) {
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            }
+            if polite && bulb.busy.load(Ordering::SeqCst) {
+                return Err(lease::taken());
+            }
+            Ok(Box::new(Fake { bulb: bulb.clone() }) as Box<dyn LightStream>)
+        })
     }
 
     /// A link to a fake bulb, each connection taking `handshake`. A reopened
     /// stream counts as back after 100 ms here.
     fn rig(handshake: Duration) -> (Relink, Bulb) {
         let bulb = Bulb::default();
-        let open: Opener = {
-            let bulb = bulb.clone();
-            Arc::new(move || {
-                bulb.opens.fetch_add(1, Ordering::SeqCst);
-                std::thread::sleep(handshake);
-                if bulb.down.load(Ordering::SeqCst) {
-                    return Err(io::Error::from(io::ErrorKind::TimedOut));
-                }
-                Ok(Box::new(Fake { bulb: bulb.clone() }) as Box<dyn LightStream>)
-            })
-        };
-        let mut link = Relink::new(open().unwrap(), open);
+        let open = opener(&bulb, handshake);
+        let mut link = Relink::new(open(true).unwrap(), open);
         link.stable = ms(100);
         bulb.opens.store(0, Ordering::SeqCst);
         (link, bulb)
@@ -426,7 +615,7 @@ mod tests {
         bulb.down.store(true, Ordering::SeqCst);
         link.push(frame(11), Effect::Sudden, 0);
         assert!(!link.is_up(), "the failed push takes the link down");
-        assert!(!link.up_flag().load(Ordering::SeqCst));
+        assert_eq!(link.state().get(), Link::Reconnecting);
         // Before the first wait is over, nothing is tried.
         play(&mut link, 20, ms(300));
         assert_eq!(bulb.opens.load(Ordering::SeqCst), 0);
@@ -535,5 +724,112 @@ mod tests {
             bulb.log.lock().unwrap().is_empty(),
             "and never sent a frame"
         );
+    }
+
+    const LAMP: &str = "lamp";
+
+    /// Leases that have listened already.
+    fn leases() -> Arc<Leases> {
+        Arc::new(Leases::new("me", "Here", Duration::ZERO))
+    }
+
+    /// Another computer, "Salon", driving `devices`.
+    fn salon(round: u32, devices: &[&str]) -> Announce {
+        Announce {
+            lueur: PROTOCOL,
+            id: "salon".into(),
+            host: "Salon".into(),
+            claims: devices
+                .iter()
+                .map(|d| Claim {
+                    device: d.to_string(),
+                    round,
+                    since: 0,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_bulb_held_elsewhere_gets_nothing_until_it_is_free() {
+        let leases = leases();
+        leases.hear(salon(0, &[LAMP]));
+        let bulb = Bulb::default();
+        let changes = Arc::new(AtomicUsize::new(0));
+        let mut link = Relink::idle(opener(&bulb, Duration::ZERO), Duration::ZERO, Link::Held)
+            .gated(leases.gate(LAMP))
+            .on_change(counter(&changes));
+        play(&mut link, 1, ms(300));
+        assert_eq!(bulb.opens.load(Ordering::SeqCst), 0);
+        assert_eq!(link.state().get(), Link::Held);
+        assert_eq!(leases.holder(LAMP).as_deref(), Some("Salon"));
+
+        // The other computer lets go.
+        leases.hear(salon(0, &[]));
+        play(&mut link, 50, ms(200));
+        assert!(link.is_up(), "back at once: it was busy, not away");
+        assert_eq!(bulb.opens.load(Ordering::SeqCst), 1);
+        assert_eq!(changes.load(Ordering::SeqCst), 2, "reconnecting, then up");
+        assert!(bulb.log.lock().unwrap()[0] >= 50, "on a current frame");
+        assert_eq!(leases.holder(LAMP), None);
+    }
+
+    #[test]
+    fn a_link_lets_go_of_a_bulb_another_computer_takes() {
+        let leases = leases();
+        let (link, bulb) = rig(Duration::ZERO);
+        let mut link = link.gated(leases.gate(LAMP));
+        play(&mut link, 1, ms(50));
+        assert!(link.is_up());
+        // Taken from us: one above our claim.
+        leases.hear(salon(1, &[LAMP]));
+        let sent = bulb.log.lock().unwrap().len();
+        play(&mut link, 1, ms(100));
+        assert_eq!(link.state().get(), Link::Held);
+        assert_eq!(bulb.log.lock().unwrap().len(), sent, "not a frame more");
+        std::thread::sleep(ms(50));
+        assert_eq!(bulb.dropped.load(Ordering::SeqCst), 1, "its stream closed");
+        assert_eq!(bulb.opens.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_bulb_something_else_streams_to_is_asked_again_later() {
+        let (mut link, bulb) = rig(Duration::ZERO);
+        link.taken_retry = ms(300);
+        // Someone took the bulb's one channel: ours is cut.
+        bulb.busy.store(true, Ordering::SeqCst);
+        bulb.broken.store(true, Ordering::SeqCst);
+        play(&mut link, 1, ms(700));
+        assert_eq!(link.state().get(), Link::Taken);
+        assert_eq!(bulb.opens.load(Ordering::SeqCst), 1);
+        bulb.broken.store(false, Ordering::SeqCst);
+        play(&mut link, 1, ms(400));
+        assert_eq!(link.state().get(), Link::Taken);
+        let asked = bulb.opens.load(Ordering::SeqCst);
+        assert!((2..=3).contains(&asked), "{asked} opens");
+        assert_eq!(bulb.rude.load(Ordering::SeqCst), 0, "never taken back");
+
+        bulb.busy.store(false, Ordering::SeqCst);
+        play(&mut link, 1, ms(400));
+        assert!(link.is_up(), "back at once once free");
+    }
+
+    #[test]
+    fn the_users_take_goes_ahead_whatever_streams_to_the_bulb() {
+        let leases = leases();
+        let bulb = Bulb::default();
+        bulb.busy.store(true, Ordering::SeqCst);
+        let mut link = Relink::idle(opener(&bulb, Duration::ZERO), Duration::ZERO, Link::Taken)
+            .gated(leases.gate(LAMP));
+        play(&mut link, 1, ms(200));
+        assert_eq!(link.state().get(), Link::Taken);
+        assert_eq!(bulb.opens.load(Ordering::SeqCst), 0, "not asked again yet");
+
+        leases.take(LAMP);
+        play(&mut link, 1, ms(100));
+        assert!(link.is_up());
+        assert_eq!(bulb.rude.load(Ordering::SeqCst), 1);
+        // Only that once.
+        assert!(!leases.gate(LAMP).take_forced());
     }
 }

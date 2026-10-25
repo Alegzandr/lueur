@@ -25,7 +25,7 @@ const MIN_KELVIN: u16 = 2000;
 const MAX_KELVIN: u16 = 9000;
 
 /// Govee's LAN firmware drops commands that arrive much faster than this.
-const FRAME_INTERVAL: Duration = Duration::from_millis(50);
+pub(crate) const FRAME_INTERVAL: Duration = Duration::from_millis(50);
 
 fn cmd(name: &str, data: Value) -> String {
     json!({"msg": {"cmd": name, "data": data}}).to_string()

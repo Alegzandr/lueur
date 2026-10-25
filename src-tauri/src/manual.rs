@@ -116,7 +116,7 @@ impl Manual {
             }
         }
 
-        let opened = devices::set_power(ep, true).and_then(|()| devices::open_stream(ep, 1));
+        let opened = devices::set_power(ep, true).and_then(|()| devices::open_stream(ep, 1, false));
         let mut slots = self.lock();
         let stream = match opened {
             Ok(stream) => stream,

@@ -95,6 +95,11 @@ windows-core = "0.62"
 self-replace = "1.5"
 winreg = "0.56"
 
+# The computer's name other computers running Lueur show (src/peers.rs).
+# Already in the tree through Tauri, tokio and the audio.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Wayland capture through the ScreenCast portal (see src/capture/screencast.rs):
 # the portal over D-Bus, its video over PipeWire. The versions xcap already
 # pulls in on Linux, so neither adds a second copy.

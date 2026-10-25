@@ -63,6 +63,47 @@ impl YeelightControl {
         self.send_line(&protocol::set_music(next_id(), true, host, port))
     }
 
+    /// Whether the bulb is in music mode, streamed to by someone: another
+    /// computer, another app. An error if it does not say.
+    pub fn music_on(&mut self) -> io::Result<bool> {
+        let id = next_id();
+        self.send_line(&protocol::get_prop(id, &["music_on"]))?;
+        // Notifications may come first; the reply is a line of its own.
+        let mut seen = Vec::new();
+        let mut buf = [0u8; 512];
+        while seen.len() < 4096 {
+            let n = self.stream.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            seen.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&seen);
+            if let Some(result) = text.lines().find_map(|l| protocol::parse_result(l, id)) {
+                return Ok(result.first().is_some_and(|v| v == "1"));
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the bulb did not say whether it is in music mode",
+        ))
+    }
+
+    /// Whether someone streams to the bulb and keeps at it. A channel just
+    /// closed (ours, by the effect this one replaces) takes the bulb a
+    /// moment to let go of, so it is asked again for most of a second. A
+    /// bulb that cannot say goes ahead, as it always did.
+    fn streamed(&mut self) -> bool {
+        for ask in 0..4 {
+            if !self.music_on().unwrap_or(false) {
+                return false;
+            }
+            if ask < 3 {
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        }
+        true
+    }
+
     /// Read and discard any pending response bytes (best-effort).
     pub fn drain(&mut self) {
         let mut buf = [0u8; 1024];
@@ -127,8 +168,16 @@ impl MusicConnection {
     /// 3. Open a control connection and send `set_music(1, our_ip, our_port)`.
     /// 4. Accept the connection the bulb opens back to us.
     ///
-    /// `handshake_timeout` bounds the accept step.
-    pub fn establish(ip: &str, port: u16, handshake_timeout: Duration) -> io::Result<Self> {
+    /// `handshake_timeout` bounds the accept step. When `polite`, a bulb
+    /// already in music mode is left to whoever streams to it: the bulb has
+    /// one music channel, and taking it would cut theirs. That fails with
+    /// [`taken`](crate::device::lease::taken).
+    pub fn establish(
+        ip: &str,
+        port: u16,
+        handshake_timeout: Duration,
+        polite: bool,
+    ) -> io::Result<Self> {
         let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))?;
         let local_port = listener.local_addr()?.port();
 
@@ -137,6 +186,9 @@ impl MusicConnection {
 
         // Tell the bulb to connect back to us.
         let mut control = YeelightControl::connect(ip, port, handshake_timeout)?;
+        if polite && control.streamed() {
+            return Err(crate::device::lease::taken());
+        }
         control.enable_music(&local_ip, local_port)?;
         control.drain();
 

@@ -107,6 +107,27 @@ pub fn set_music(id: u32, enable: bool, host: &str, port: u16) -> String {
     }
 }
 
+/// `get_prop`: ask for the values of `props`, answered in the same order.
+pub fn get_prop(id: u32, props: &[&str]) -> String {
+    encode(id, "get_prop", serde_json::json!(props))
+}
+
+/// The `result` of the reply to command `id` in `line`, if that is what the
+/// line holds. A bulb also sends notifications on the same connection, and
+/// replies to other commands: neither is it.
+pub fn parse_result(line: &str, id: u32) -> Option<Vec<String>> {
+    let reply: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if reply.get("id")?.as_u64()? != u64::from(id) {
+        return None;
+    }
+    reply
+        .get("result")?
+        .as_array()?
+        .iter()
+        .map(|v| v.as_str().map(str::to_string))
+        .collect()
+}
+
 fn normalise_duration(effect: Effect, duration_ms: u32) -> u32 {
     match effect {
         Effect::Sudden => 0,
@@ -253,6 +274,26 @@ mod tests {
             set_music(2, false, "x", 0),
             "{\"id\":2,\"method\":\"set_music\",\"params\":[0]}\r\n"
         );
+    }
+
+    #[test]
+    fn get_prop_names_each_property() {
+        assert_eq!(
+            get_prop(3, &["music_on"]),
+            "{\"id\":3,\"method\":\"get_prop\",\"params\":[\"music_on\"]}\r\n"
+        );
+    }
+
+    #[test]
+    fn a_result_is_only_read_from_its_own_reply() {
+        let reply = "{\"id\":3,\"result\":[\"1\"]}\r\n";
+        assert_eq!(parse_result(reply, 3), Some(vec!["1".to_string()]));
+        assert_eq!(parse_result(reply, 4), None);
+        let note = "{\"method\":\"props\",\"params\":{\"power\":\"on\"}}";
+        assert_eq!(parse_result(note, 3), None);
+        let refused = "{\"id\":3,\"error\":{\"code\":-1,\"message\":\"unsupported\"}}";
+        assert_eq!(parse_result(refused, 3), None);
+        assert_eq!(parse_result("not json", 3), None);
     }
 
     #[test]

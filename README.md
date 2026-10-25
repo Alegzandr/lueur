@@ -211,6 +211,14 @@ owner to add you to their home instead.
   to white, and the drop lands on every light at once, into new colours.
   White flashes can be turned off, and never come more than three a
   second.
+- **Several computers.** Lueur can run on every computer in the house. Each
+  one tells the others which bulbs it is playing an effect on, and leaves
+  those alone: a light one computer drives shows *On* and that computer's
+  name on the other, and waits there, picking up again as soon as the first
+  one lets go. *Take over* moves it at once. Nothing Lueur starts by itself,
+  like the Ambilight of a fullscreen game, ever takes a bulb from another
+  computer, and the sleep timer only puts out the lights it drives. A
+  Yeelight that another app streams to is left alone the same way.
 - **Backup.** **Settings → Configuration** exports your setup to a file and
   imports it back, to keep a copy or move to another computer. The file holds
   no password or key, so it is safe to share; on another computer, pair the
@@ -258,6 +266,12 @@ addresses. Beyond that it sends exactly two kinds of traffic: the update
 check to GitHub over HTTPS, and Tuya's sign-in while you import Smart Life
 bulbs. That sign-in identifies itself with the app id Home Assistant uses
 with Tuya, as Lueur has none of its own yet.
+
+While it plays an effect, Lueur also broadcasts to your local network, about
+once a second, which bulbs it drives and the computer's name, so other
+computers running Lueur leave them alone (UDP port 47474). Nothing secret
+goes out, and nothing in what it hears ever reaches a bulb: a forged message
+can at most make a light wait, which *Take over* always overrides.
 
 On your network, a Hue bridge is reached over HTTPS, and only ever with
 the certificate it showed the first time Lueur saw it (at pairing, or for

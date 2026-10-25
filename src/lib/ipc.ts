@@ -30,7 +30,7 @@ export function inTauri(): boolean {
  *  a first launch with bulbs waiting on the network, `?update` an installed
  *  update waiting for a restart, `?unverified` a paired bridge heard at a new
  *  address, `?unsealed` credentials kept unencrypted for want of a keyring. */
-function preview(flag: "demo" | "fresh" | "update" | "unverified" | "unsealed"): boolean {
+function preview(flag: "demo" | "fresh" | "update" | "unverified" | "unsealed" | "shared"): boolean {
   return typeof location !== "undefined" && new URLSearchParams(location.search).has(flag);
 }
 const demo = () => preview("demo");
@@ -280,6 +280,13 @@ const previewStatus = (): EffectStatus => {
     light_ids,
     groups,
     reconnecting: [],
+    // `?shared`: another computer plays on one light, another app on one.
+    elsewhere: preview("shared")
+      ? [
+          { light_id: "demo-1", by: "Salon" },
+          { light_id: "demo-2", by: null },
+        ]
+      : [],
     music_waiting: false,
   };
 };
@@ -322,6 +329,12 @@ export async function restartEffect(): Promise<EffectStatus> {
 export async function effectStatus(): Promise<EffectStatus> {
   if (!inTauri()) return previewStatus();
   return invoke<EffectStatus>("effect_status");
+}
+
+/** Take a light's bulb from the other computer or app that drives it. */
+export async function takeLight(lightId: string): Promise<EffectStatus> {
+  if (!inTauri()) return previewStatus();
+  return invoke<EffectStatus>("take_light", { lightId });
 }
 
 // The browser preview keeps its own timer, so the control can be tried.

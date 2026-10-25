@@ -18,7 +18,9 @@ use crate::devices;
 use crate::error::{AppError, AppResult};
 use lueur_core::color::{BulbOutput, Rgb};
 use lueur_core::config::{AppConfig, AudioSource};
-use lueur_core::device::relink::{OnChange, Opener, Relink};
+use lueur_core::device::LightStream;
+use lueur_core::device::lease::{self, Leases};
+use lueur_core::device::relink::{Link, LinkState, OnChange, Opener, Relink};
 use lueur_core::engine::{Ambilight, EngineSettings};
 use lueur_core::geometry::{LightMapping, map_light};
 use lueur_core::safety::{FlashGuard, SafetySettings};
@@ -110,8 +112,8 @@ pub struct Handle {
     pub connected_lights: usize,
     /// The room lights the effect drives, which nothing else may touch.
     pub light_ids: Vec<String>,
-    /// Each of those lights, and whether its bulb is reachable right now.
-    links: Vec<(String, Arc<AtomicBool>)>,
+    /// Each of those lights, and what its link to the bulb does right now.
+    links: Vec<(String, Arc<LinkState>)>,
     pub mode: Mode,
     /// The music show's: whether it hears its source right now, rather than
     /// waits for it (an application closed, a device unplugged).
@@ -154,12 +156,13 @@ impl Handle {
             .is_some_and(|h| !h.load(Ordering::Relaxed))
     }
 
-    /// The lights it drives whose bulb dropped and is being reconnected.
-    pub fn reconnecting(&self) -> impl Iterator<Item = &String> {
+    /// The lights it drives whose bulb is not taking frames, and why: it
+    /// dropped, or something else drives it.
+    pub fn away(&self) -> impl Iterator<Item = (&String, Link)> {
         self.links
             .iter()
-            .filter(|(_, up)| !up.load(Ordering::SeqCst))
-            .map(|(id, _)| id)
+            .map(|(id, state)| (id, state.get()))
+            .filter(|(_, link)| *link != Link::Up)
     }
 }
 
@@ -206,9 +209,19 @@ pub fn enabled_ids(config: &AppConfig) -> Vec<String> {
         .collect()
 }
 
+/// What became of one bulb when its effect started.
+enum Opened {
+    Stream(Box<dyn LightStream>),
+    /// Busy: another computer drives it, or it said something else does.
+    Busy(Link),
+    Failed(std::io::Error),
+}
+
 /// Open a stream to each of `ids` that has a bulb, in room order. `hosts`
 /// counts every light that will be driven once this starts (see
-/// [`per_host`]).
+/// [`per_host`]). A bulb another computer drives, or that says something
+/// else streams to it, is left alone: its light joins the effect, waiting,
+/// and picks up once the bulb is free.
 ///
 /// Returns an error if there are none, or if none of the bulbs accept a
 /// stream; individual failures are tolerated.
@@ -216,6 +229,7 @@ fn connect(
     config: &AppConfig,
     ids: &[String],
     hosts: &HashMap<String, usize>,
+    leases: &Arc<Leases>,
 ) -> AppResult<(Vec<ConnectedLight>, Vec<String>)> {
     // Resolve the lights that have a device binding, in room order, and
     // compute each one's screen mapping (zone plus distance shaping).
@@ -226,7 +240,8 @@ fn connect(
         .filter(|l| ids.contains(&l.id))
         .filter_map(|l| {
             let binding = config.binding_for(&l.id)?;
-            Some((map_light(&config.room.screen, l), binding, l))
+            let siblings = hosts.get(&binding.ip).copied().unwrap_or(1);
+            Some((map_light(&config.room.screen, l), binding, l, siblings))
         })
         .collect();
     if targets.is_empty() {
@@ -236,24 +251,41 @@ fn connect(
     // How each bulb is opened, now and again whenever it drops.
     let openers: Vec<Opener> = targets
         .iter()
-        .map(|(_, binding, _)| {
+        .map(|(_, binding, _, siblings)| {
             let endpoint = binding.endpoint();
-            let siblings = hosts.get(&binding.ip).copied().unwrap_or(1);
-            Arc::new(move || devices::open_stream(&endpoint, siblings)) as Opener
+            let siblings = *siblings;
+            Arc::new(move |polite| devices::open_stream(&endpoint, siblings, polite)) as Opener
         })
+        .collect();
+    let gates: Vec<_> = targets
+        .iter()
+        .map(|(_, binding, _, _)| leases.gate(&binding.device_id))
         .collect();
     // Open every bulb at once: an unplugged one costs its whole timeout, and
     // waiting on each in turn would make a few of them feel like a hang.
-    let opened: Vec<_> = std::thread::scope(|scope| {
+    let opened: Vec<Opened> = std::thread::scope(|scope| {
         let handles: Vec<_> = openers
             .iter()
-            .map(|open| scope.spawn(move || open()))
+            .zip(&gates)
+            .map(|(open, gate)| {
+                scope.spawn(move || {
+                    if !gate.may_drive() {
+                        return Opened::Busy(Link::Held);
+                    }
+                    match open(true) {
+                        Ok(stream) => Opened::Stream(stream),
+                        Err(e) if lease::is_taken(&e) => Opened::Busy(Link::Taken),
+                        Err(e) => Opened::Failed(e),
+                    }
+                })
+            })
             .collect();
         handles
             .into_iter()
             .map(|h| {
-                h.join()
-                    .unwrap_or_else(|_| Err(std::io::Error::other("bulb thread panicked")))
+                h.join().unwrap_or_else(|_| {
+                    Opened::Failed(std::io::Error::other("bulb thread panicked"))
+                })
             })
             .collect()
     });
@@ -262,26 +294,34 @@ fn connect(
     let mut failed = Vec::new();
     let mut details = Vec::new();
     let changed: OnChange = Arc::new(links_changed);
-    for (((mapping, binding, light), result), open) in targets.into_iter().zip(opened).zip(openers)
+    for ((((mapping, binding, light, siblings), result), open), gate) in
+        targets.into_iter().zip(opened).zip(openers).zip(gates)
     {
-        match result {
-            Ok(conn) => {
-                let fixture = Fixture::place(&config.room.screen, light, conn.interval());
-                connected.push(ConnectedLight {
-                    id: light.id.clone(),
-                    mapping,
-                    fixture,
-                    link: Relink::new(conn, open)
-                        .named(light.id.as_str())
-                        .on_change(Arc::clone(&changed)),
-                });
-                light_ids.push(light.id.clone());
+        let link = match result {
+            Opened::Stream(conn) => Relink::new(conn, open),
+            Opened::Busy(link) => {
+                log::info!(light = light.id.as_str(); "a light's bulb is busy, it waits for it");
+                let interval = devices::interval_of(&binding.endpoint(), siblings);
+                Relink::idle(open, interval, link)
             }
-            Err(e) => {
+            Opened::Failed(e) => {
+                gate.release();
                 failed.push(light.name.clone());
                 details.push(format!("{} ({}): {e}", light.name, binding.ip));
+                continue;
             }
-        }
+        };
+        let fixture = Fixture::place(&config.room.screen, light, link.interval());
+        connected.push(ConnectedLight {
+            id: light.id.clone(),
+            mapping,
+            fixture,
+            link: link
+                .gated(gate)
+                .named(light.id.as_str())
+                .on_change(Arc::clone(&changed)),
+        });
+        light_ids.push(light.id.clone());
     }
     if connected.is_empty() {
         return Err(AppError::new("music_mode_failed")
@@ -335,7 +375,7 @@ fn spawn(
     let connected_lights = lights.len();
     let links = lights
         .iter()
-        .map(|l| (l.id.clone(), l.link.up_flag()))
+        .map(|l| (l.id.clone(), l.link.state()))
         .collect();
     let thread = {
         let live = Arc::clone(&live);
@@ -375,7 +415,8 @@ fn spawn(
     })
 }
 
-/// Start `mode` on the lights `ids` (see [`connect`] for `hosts`).
+/// Start `mode` on the lights `ids` (see [`connect`] for `hosts`), leaving
+/// alone the bulbs other computers hold in `leases`.
 ///
 /// Returns an error if none of them has a bulb that accepts a stream, if
 /// capture can't start (ambilight) or if there is nothing to listen to
@@ -385,10 +426,11 @@ pub fn start(
     mode: Mode,
     ids: &[String],
     hosts: &HashMap<String, usize>,
+    leases: &Arc<Leases>,
 ) -> AppResult<Handle> {
     match mode {
-        Mode::Ambilight => start_ambilight(config, ids, hosts),
-        Mode::Show(kind) => start_show(config, kind, ids, hosts),
+        Mode::Ambilight => start_ambilight(config, ids, hosts, leases),
+        Mode::Show(kind) => start_show(config, kind, ids, hosts, leases),
     }
 }
 
@@ -396,13 +438,14 @@ fn start_ambilight(
     config: &AppConfig,
     ids: &[String],
     hosts: &HashMap<String, usize>,
+    leases: &Arc<Leases>,
 ) -> AppResult<Handle> {
     // Validate the monitor choice before touching the network, so a bad one
     // fails fast without leaving bulbs in music mode. The source itself is
     // opened on the capture thread: its handle is not `Send`.
     let monitor_index = config.capture.monitor_index;
     check_monitor_index(monitor_index)?;
-    let (lights, ids) = connect(config, ids, hosts)?;
+    let (lights, ids) = connect(config, ids, hosts, leases)?;
     spawn(
         config,
         Mode::Ambilight,
@@ -425,6 +468,7 @@ fn start_show(
     kind: ShowKind,
     ids: &[String],
     hosts: &HashMap<String, usize>,
+    leases: &Arc<Leases>,
 ) -> AppResult<Handle> {
     // Make sure this computer has sound to listen to before waking the
     // bulbs. The source picked being away (the application closed, the
@@ -440,7 +484,7 @@ fn start_show(
             Err(e) => return Err(e.into()),
         }
     }
-    let (lights, ids) = connect(config, ids, hosts)?;
+    let (lights, ids) = connect(config, ids, hosts, leases)?;
     let ears = hearing.clone();
     let mut handle = spawn(
         config,
@@ -514,11 +558,11 @@ impl Effects {
         self.lock().iter().any(Handle::waiting_for_sound)
     }
 
-    /// Every driven light whose bulb dropped and is being reconnected.
-    pub fn reconnecting_ids(&self) -> Vec<String> {
+    /// Every driven light whose bulb is not taking frames, and why.
+    pub fn away(&self) -> Vec<(String, Link)> {
         self.lock()
             .iter()
-            .flat_map(|h| h.reconnecting().cloned())
+            .flat_map(|h| h.away().map(|(id, link)| (id.clone(), link)))
             .collect()
     }
 

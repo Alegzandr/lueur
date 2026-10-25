@@ -19,11 +19,17 @@ fn is_tuya(ep: &Endpoint) -> bool {
     matches!(ep.kind, DeviceKind::Tuya { .. })
 }
 
-pub fn open_stream(ep: &Endpoint, siblings: usize) -> io::Result<Box<dyn LightStream>> {
+/// Open a per-frame stream to `ep` (see [`device::open_stream`] for
+/// `siblings` and `polite`).
+pub fn open_stream(
+    ep: &Endpoint,
+    siblings: usize,
+    polite: bool,
+) -> io::Result<Box<dyn LightStream>> {
     let opened = if is_tuya(ep) {
         tuya::open_stream(ep)
     } else {
-        device::open_stream(ep, siblings)
+        device::open_stream(ep, siblings, polite)
     };
     if let Err(e) = &opened {
         log::debug!(
@@ -32,6 +38,15 @@ pub fn open_stream(ep: &Endpoint, siblings: usize) -> io::Result<Box<dyn LightSt
         );
     }
     opened
+}
+
+/// The pace a stream to `ep` would keep, without opening one.
+pub fn interval_of(ep: &Endpoint, siblings: usize) -> Duration {
+    if is_tuya(ep) {
+        tuya::FRAME_INTERVAL
+    } else {
+        device::interval_of(&ep.kind, siblings)
+    }
 }
 
 pub fn set_power(ep: &Endpoint, on: bool) -> io::Result<()> {

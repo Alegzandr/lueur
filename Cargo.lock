@@ -2810,6 +2810,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hmac",
  "keyring",
+ "libc",
  "log",
  "lueur-core",
  "md-5",

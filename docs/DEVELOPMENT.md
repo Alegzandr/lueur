@@ -15,7 +15,9 @@ lueur/
 │   ├─ yeelight/          LAN protocol, SSDP discovery, music-mode sockets
 │   ├─ device/            Every family behind one stream/power/identify API:
 │   │                     WiZ, LIFX, Govee, Hue, Nanoleaf, Tuya DP encoding;
-│   │                     wire.rs traces what each stream sends
+│   │                     wire.rs traces what each stream sends,
+│   │                     relink.rs brings dropped bulbs back, lease.rs
+│   │                     shares bulbs with other computers running Lueur
 │   └─ config.rs          Persisted settings
 ├─ src-tauri/             Desktop shell (Tauri v2)
 │   ├─ capture.rs         Screen capture behind a FrameSource trait
@@ -31,6 +33,7 @@ lueur/
 │   ├─ commands.rs        Validated IPC surface
 │   ├─ secrets.rs         Credentials kept from the UI and from exports
 │   ├─ identity.rs        Paired bridges heard where nothing vouches for them
+│   ├─ peers.rs           Talks with other computers running Lueur (LAN)
 │   ├─ vault.rs           Credentials sealed on disk, the key in the OS keyring
 │   ├─ tray.rs            Tray menu: start/stop, open, quit
 │   ├─ error.rs           Errors sent as codes the UI words in its language
@@ -156,6 +159,40 @@ Validity dates are not checked: the certificate is known by its
 fingerprint. A bridge whose certificate changes (a factory reset, a
 firmware that reissues it) has to be paired again.
 
+### Sharing bulbs between computers
+
+Two computers playing an effect on one bulb would fight over it: a
+Yeelight has one music channel, which each would take back from the other
+in turn (`Relink` reconnects within half a second), and every other family
+would show both streams at once. Two things keep them apart.
+
+- **Leases** (`device/lease.rs`, `peers.rs`). While an instance drives a
+  bulb it broadcasts a claim on it to the LAN, UDP port 47474: at once,
+  then every second, as JSON (`{"lueur":1,"id":…,"host":…,"claims":[{"device":…,"round":…,"since":…}]}`).
+  An instance that drives nothing stays quiet. Each light's `Relink` goes
+  through a `Gate` every frame; a bulb someone else holds is let go at once
+  without settling it, and its light waits (`Link::Held`) until the claim
+  is gone. Who holds a bulb is decided from the claims alone, the same way
+  on every computer: highest `round`, then oldest `since`, then smallest
+  instance id. *Take over* (`take_light`) claims a round above the holder.
+  Claims of an instance not heard for 3.5 s lapse; a released claim stands
+  1.5 s, so the effect that replaces it keeps the bulb; an instance that
+  slept drops its claims and listens for 1.2 s before claiming again, as it
+  does at launch. Announcements are not authenticated: a forged one can
+  make a light wait, never drive a bulb, and *Take over* always wins.
+- **Eviction** (`yeelight/connection.rs`). A reconnecting Yeelight first
+  asks the bulb whether it is in music mode (`get_prop music_on`, asked
+  again for most of a second, so a channel this instance just closed is not
+  mistaken for someone else's). If it is, the open fails with
+  `lease::taken`, the light waits (`Link::Taken`) and asks again every 4 s.
+  This covers another app, or a Lueur older than the leases. Other families
+  cannot tell.
+
+The automatic Ambilight, resuming at launch and moving lights between
+effects never take a bulb: only the user's *Take over* does, and it then
+opens the stream impolitely. Restoring hand-set colours and the sleep
+timer skip the bulbs another computer holds.
+
 ## Building & running
 
 ### Prerequisites
@@ -201,7 +238,8 @@ npm run tauri dev      # hot-reloading app window
 ```
 
 The UI also runs in a plain browser for design work: `npm run dev`, then open
-`http://localhost:1420/?demo` for a furnished sample room, or `?fresh` for a
+`http://localhost:1420/?demo` for a furnished sample room (add `&shared` to
+see lights another computer drives), or `?fresh` for a
 first launch with bulbs waiting on the network. The README screenshots are
 taken from `?demo` at the app's default window size (1180×800, 2× scale).
 

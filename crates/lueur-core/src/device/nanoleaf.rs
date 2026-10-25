@@ -25,7 +25,7 @@ pub const PORT: u16 = 16021;
 pub const ID_PREFIX: &str = "nanoleaf:";
 const STREAM_PORT: u16 = 60222;
 const TIMEOUT: Duration = Duration::from_secs(2);
-const FRAME_INTERVAL: Duration = Duration::from_millis(40);
+pub(crate) const FRAME_INTERVAL: Duration = Duration::from_millis(40);
 
 fn check(resp: Response) -> io::Result<Response> {
     if resp.ok() {

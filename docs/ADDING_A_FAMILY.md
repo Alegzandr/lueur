@@ -17,7 +17,7 @@ encrypted transport lives in the shell.
 | Where | What |
 | --- | --- |
 | `device/<family>.rs` | Protocol, stream, power, discovery, tests |
-| `device/mod.rs` | `pub mod`, a `DeviceKind` variant, `family()`, `is_ready()`, the `Debug` impl, `open_stream`, `set_power`, `discover` |
+| `device/mod.rs` | `pub mod`, a `DeviceKind` variant, `family()`, `is_ready()`, the `Debug` impl, `open_stream`, `interval_of`, `set_power`, `discover` |
 | `lib.rs` (core) | The family in the crate doc's family list |
 | `src/lib/types.ts` | The variant in the `DeviceKind` union |
 | `src/lib/brands.ts` | The brand name in `FAMILY` (and the copy in `views/Bulbs.svelte`, while there is one) |
@@ -224,6 +224,7 @@ pub enum DeviceKind {
 // family():         DeviceKind::Wled => "wled",
 // the Debug impl:   DeviceKind::Wled => f.write_str("Wled"),
 // open_stream():    DeviceKind::Wled => Box::new(wled::WledStream::open(&ep.ip, wire)?),
+// interval_of():    DeviceKind::Wled => wled::FRAME_INTERVAL,
 // set_power():      DeviceKind::Wled => wled::set_power(&ep.ip, on),
 ```
 

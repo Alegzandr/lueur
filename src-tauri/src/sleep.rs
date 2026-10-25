@@ -4,7 +4,9 @@
 //! It is a bedtime timer, so it always puts out the whole room: the lights
 //! the interface picks under "Apply to" do not narrow it (the tray, which
 //! sets it too, picks nothing, and a pick is gone once the window closes).
-//! The interface says so where the timer is set.
+//! The interface says so where the timer is set. Only a light another
+//! computer running Lueur plays on is left out: that is someone else's
+//! evening.
 //!
 //! The fade is the timer's last minute: each light free to be set by hand
 //! dims from what it shows down to its lowest, then everything is switched
@@ -134,7 +136,7 @@ fn run(app: &AppHandle, generation: u64) {
     changed(app);
 
     if fade(&state, generation) {
-        let _ = lights::set_all_power(&state, false);
+        let _ = lights::sleep_all(&state);
         let mut t = state.sleep.lock();
         if t.generation == generation {
             *t = Inner {
@@ -148,13 +150,15 @@ fn run(app: &AppHandle, generation: u64) {
     changed(app);
 }
 
-/// Dim every light that is on down to its lowest. `false` if the timer was
-/// cancelled on the way, in which case the lights are put back.
+/// Dim every light that is on down to its lowest, but those whose bulb
+/// another computer drives. `false` if the timer was cancelled on the way,
+/// in which case the lights are put back.
 fn fade(state: &AppState, generation: u64) -> bool {
     let lit: Vec<(String, LightState)> = match state.lock_config() {
         Ok(cfg) => cfg
             .bindings
             .iter()
+            .filter(|b| state.leases.holder(&b.device_id).is_none())
             .map(|b| {
                 let s = cfg.states.get(&b.light_id).copied().unwrap_or_default();
                 (b.light_id.clone(), s)

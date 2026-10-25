@@ -22,6 +22,7 @@ mod logging;
 mod manual;
 mod natural;
 mod paths;
+mod peers;
 mod runner;
 mod secrets;
 mod sleep;
@@ -159,6 +160,7 @@ pub fn run() {
             commands::set_lights_mode,
             commands::restart_effect,
             commands::effect_status,
+            commands::take_light,
             commands::set_sleep_timer,
             commands::sleep_timer,
             commands::set_run_on_startup,
@@ -174,6 +176,10 @@ pub fn run() {
             logging::open_logs_folder,
         ])
         .setup(|app| {
+            // Listening for the other computers running Lueur from the
+            // first moment, so the effect resumed at launch knows which
+            // bulbs they hold.
+            peers::spawn(app.handle());
             // An effect that ends by itself (no capture, no sound) still
             // shows as playing until the window and the tray are told.
             let handle = app.handle().clone();
@@ -248,6 +254,7 @@ pub fn run() {
                 && let Some(state) = app.try_state::<AppState>()
             {
                 lights::suspend(&state, false);
+                peers::leave(&state);
             }
         });
 }

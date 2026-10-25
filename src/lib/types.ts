@@ -288,6 +288,13 @@ export interface EffectGroup {
   light_ids: string[];
 }
 
+/** A room light whose bulb something else drives. */
+export interface Elsewhere {
+  light_id: string;
+  /** The computer running Lueur that drives it, or null for another app. */
+  by: string | null;
+}
+
 export interface EffectStatus {
   running: boolean;
   connected_lights: number;
@@ -299,6 +306,9 @@ export interface EffectStatus {
   groups: EffectGroup[];
   /** The driven lights whose bulb dropped and is being reconnected. */
   reconnecting: string[];
+  /** The room lights whose bulb something else drives: driven here, they
+   *  wait for it, and the user may take it. */
+  elsewhere: Elsewhere[];
   /** The music plays but its sound source is away, and it waits for it. */
   music_waiting: boolean;
 }

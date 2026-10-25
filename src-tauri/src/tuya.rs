@@ -29,7 +29,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 /// What a Tuya bulb follows smoothly (measured: 20 updates a second hold).
-const FRAME_INTERVAL: Duration = Duration::from_millis(50);
+pub const FRAME_INTERVAL: Duration = Duration::from_millis(50);
 /// How long a connection attempt with one key and version may take.
 const PROBE_TIMEOUT: Duration = Duration::from_millis(2500);
 /// Versions to try on a bulb whose version is unknown, most common first.
