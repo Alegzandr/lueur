@@ -615,7 +615,7 @@ pub fn set_ui_language(app: AppHandle, state: State<AppState>, lang: String) -> 
     Ok(())
 }
 
-/// Force the window's theme (None follows the OS), title bar included.
+/// Force the window's theme (None follows the OS), its frame included.
 #[tauri::command]
 pub fn set_window_theme(window: tauri::WebviewWindow, theme: Option<String>) {
     let theme = match theme.as_deref() {

@@ -179,6 +179,10 @@ const en = {
   apply: "Apply",
   update_ready: "Version {version} is installed. Restart Lueur to apply it.",
   update_restart: "Restart",
+  window_minimize: "Minimise",
+  window_maximize: "Maximise",
+  window_restore: "Restore",
+  window_close: "Close",
 
   search: "Search",
   searching: "Searching",
@@ -508,6 +512,10 @@ const fr: Record<Key, string> = {
   apply: "Appliquer",
   update_ready: "La version {version} est installée. Redémarrez Lueur pour l'appliquer.",
   update_restart: "Redémarrer",
+  window_minimize: "Réduire",
+  window_maximize: "Agrandir",
+  window_restore: "Restaurer",
+  window_close: "Fermer",
 
   search: "Rechercher",
   searching: "Recherche",

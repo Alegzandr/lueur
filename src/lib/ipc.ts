@@ -336,10 +336,38 @@ export async function setRunOnStartup(enabled: boolean): Promise<void> {
   return invoke<void>("set_run_on_startup", { enabled });
 }
 
-/** Match the native title bar to the chosen appearance (null follows the OS). */
+/** Match the window frame to the chosen appearance (null follows the OS). */
 export async function setWindowTheme(theme: "light" | "dark" | null): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>("set_window_theme", { theme });
+}
+
+// The caption buttons of the title bar the page draws (Windows). Closing asks
+// first, as the system's button does, so close-to-tray still applies.
+async function mainWindow() {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  return getCurrentWindow();
+}
+
+export async function minimizeWindow(): Promise<void> {
+  if (inTauri()) await (await mainWindow()).minimize();
+}
+
+export async function toggleMaximizeWindow(): Promise<void> {
+  if (inTauri()) await (await mainWindow()).toggleMaximize();
+}
+
+export async function closeWindow(): Promise<void> {
+  if (inTauri()) await (await mainWindow()).close();
+}
+
+/** Calls back with whether the window is maximised, now and on every resize. */
+export async function onMaximized(cb: (maximized: boolean) => void): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  const win = await mainWindow();
+  const check = () => void win.isMaximized().then(cb, () => {});
+  check();
+  return win.onResized(check);
 }
 
 export async function appVersion(): Promise<string> {

@@ -1,61 +1,46 @@
-//! The native title bar, blended into the interface (Windows).
+//! The window frame, blended into the interface (Windows).
 //!
-//! The bar stays the system's own, so snapping, Snap Layouts on the maximise
-//! button, double-click, dragging and the system menu all keep working. We
-//! only paint it the sidebar's colour and drop its caption and icon (the
-//! sidebar already shows both), so it reads as the top of the window rather
-//! than a separate strip. The caption colour needs Windows 11; on Windows 10
-//! the bar keeps its system colour and only loses the caption.
+//! A native caption is one colour across the whole width, so it could only
+//! ever match the sidebar or the content, never both. On Windows the page
+//! draws the bar instead (src/lib/ui/TitleBar.svelte): the sidebar runs to the
+//! top edge and the caption buttons sit on the content. The window keeps its
+//! system shadow, rounded corners, resize edges and Aero Snap (dragging goes
+//! through the system); we only paint its one-pixel border the hairline
+//! colour. Elsewhere the system's own bar stays.
 
 use tauri::{Theme, WebviewWindow};
 
-/// The sidebar and the hairline colours of `src/styles/app.css`, in sRGB:
-/// `--sidebar` and `--line` for light and dark. Keep them in step.
+/// The hairline colour of `src/styles/app.css` (`--line`), in sRGB, for light
+/// and dark. Keep it in step.
 #[cfg(windows)]
-const LIGHT: (u32, u32) = (0xee_ee_ee, 0xde_de_de);
+const LIGHT: u32 = 0xde_de_de;
 #[cfg(windows)]
-const DARK: (u32, u32) = (0x12_12_12, 0x30_30_30);
+const DARK: u32 = 0x30_30_30;
 
-/// Paints the title bar for the theme the window now shows.
+/// Drops the system caption. Called once, before the window first shows.
+pub fn own(win: &WebviewWindow) {
+    #[cfg(windows)]
+    let _ = win.set_decorations(false);
+    #[cfg(not(windows))]
+    let _ = win;
+}
+
+/// Paints the window border for the theme the window now shows.
 #[cfg(windows)]
 pub fn paint(win: &WebviewWindow, theme: Theme) {
     use std::ffi::c_void;
     use windows::Win32::Foundation::{COLORREF, HWND};
-    use windows::Win32::Graphics::Dwm::{
-        DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DwmSetWindowAttribute,
-    };
-    use windows::Win32::UI::Controls::{
-        SetWindowThemeAttribute, WTA_NONCLIENT, WTA_OPTIONS, WTNCA_NODRAWCAPTION, WTNCA_NODRAWICON,
-    };
+    use windows::Win32::Graphics::Dwm::{DWMWA_BORDER_COLOR, DwmSetWindowAttribute};
 
     let Ok(hwnd) = win.hwnd() else { return };
-    let hwnd = HWND(hwnd.0);
-    let (caption, border) = if theme == Theme::Dark { DARK } else { LIGHT };
-    // Greys, so the 0x00BBGGRR order of a COLORREF does not matter.
-    let set = |attribute, color: u32| unsafe {
-        let color = COLORREF(color);
+    // A grey, so the 0x00BBGGRR order of a COLORREF does not matter.
+    let color = COLORREF(if theme == Theme::Dark { DARK } else { LIGHT });
+    let _ = unsafe {
         DwmSetWindowAttribute(
-            hwnd,
-            attribute,
+            HWND(hwnd.0),
+            DWMWA_BORDER_COLOR,
             &color as *const COLORREF as *const c_void,
             size_of::<COLORREF>() as u32,
-        )
-    };
-    let _ = set(DWMWA_CAPTION_COLOR, caption);
-    let _ = set(DWMWA_BORDER_COLOR, border);
-
-    // Title and icon off in the bar only: the taskbar and Alt+Tab keep them.
-    let flags = WTNCA_NODRAWCAPTION | WTNCA_NODRAWICON;
-    let options = WTA_OPTIONS {
-        dwFlags: flags,
-        dwMask: flags,
-    };
-    let _ = unsafe {
-        SetWindowThemeAttribute(
-            hwnd,
-            WTA_NONCLIENT,
-            &options as *const WTA_OPTIONS as *const c_void,
-            size_of::<WTA_OPTIONS>() as u32,
         )
     };
 }
@@ -63,7 +48,7 @@ pub fn paint(win: &WebviewWindow, theme: Theme) {
 #[cfg(not(windows))]
 pub fn paint(_win: &WebviewWindow, _theme: Theme) {}
 
-/// Applies a forced theme (None follows the OS) and repaints the bar for it.
+/// Applies a forced theme (None follows the OS) and repaints the border for it.
 pub fn set_theme(win: &WebviewWindow, theme: Option<Theme>) {
     let _ = win.set_theme(theme);
     if let Ok(shown) = win.theme() {

@@ -3,9 +3,10 @@
   import { app, bootstrap, fail, notify, refreshStatus, reloadStates, sleepChanged, toggleEffect, type View } from "./lib/state.svelte";
   import { lang, t, tn } from "./lib/i18n";
   import { onAutoStarted, onEffectChanged, onLightsChanged, onSleepChanged, onUpdateReady, setUiLanguage, setWindowTheme, updateReady } from "./lib/ipc";
-  import { MOD_KEY } from "./lib/platform";
+  import { MOD_KEY, OWN_TITLEBAR } from "./lib/platform";
   import Icon, { type IconName } from "./lib/ui/Icon.svelte";
   import Logo from "./lib/ui/Logo.svelte";
+  import TitleBar from "./lib/ui/TitleBar.svelte";
   import Toasts from "./lib/ui/Toasts.svelte";
   import UpdateButton from "./lib/ui/UpdateButton.svelte";
   import Lighting from "./lib/views/Lighting.svelte";
@@ -20,8 +21,14 @@
     { id: "settings", label: () => t("nav_settings"), icon: "sliders", key: "4" },
   ];
 
-  // True while a view plays its entrance animation.
+  // True while a view plays its entrance animation. Set before the new view
+  // reaches the page: waiting for its animationstart would let one frame
+  // paint the overhang with a scrollbar.
   let settling = $state(false);
+  $effect.pre(() => {
+    void app.view;
+    settling = true;
+  });
 
   onMount(() => {
     void bootstrap();
@@ -98,7 +105,7 @@
 
 <div class="shell">
   <aside class="sidebar">
-    <div class="brand">
+    <div class="brand" data-tauri-drag-region={OWN_TITLEBAR || undefined}>
       <Logo size={22} />
       Lueur
     </div>
@@ -151,15 +158,16 @@
   </aside>
 
   <main class="content">
-    <!-- Only there while an installed update waits for a restart, so the views keep their full height otherwise. -->
-    {#if app.updateReady}
+    {#if OWN_TITLEBAR}
+      <TitleBar />
+    {:else if app.updateReady}
+      <!-- Only there while an installed update waits for a restart, so the views keep their full height otherwise. -->
       <div class="topbar"><UpdateButton /></div>
     {/if}
     <div class="scroll" class:settling>
       {#key app.view}
         <div
           class="view view-enter"
-          onanimationstart={(e) => e.target === e.currentTarget && (settling = true)}
           onanimationend={(e) => e.target === e.currentTarget && (settling = false)}
         >
           {#if app.view === "lighting"}
@@ -202,6 +210,10 @@
     padding: var(--s-1) var(--s-2) var(--s-4);
     font-size: var(--t-lg);
     font-weight: 600;
+  }
+  /* The whole row drags the window, logo included. */
+  .brand[data-tauri-drag-region] :global(svg) {
+    pointer-events: none;
   }
 
   nav {

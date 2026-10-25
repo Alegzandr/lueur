@@ -72,6 +72,7 @@ pub(crate) fn start(app: &AppHandle) {
     // A forced theme applies before the window first paints, or it would
     // open in the OS colours and switch once the page reads the config.
     if let Some(win) = app.get_webview_window(MAIN_WINDOW) {
+        titlebar::own(&win);
         titlebar::set_theme(
             &win,
             match appearance {
