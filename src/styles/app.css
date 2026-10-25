@@ -466,6 +466,16 @@ select {
     right 9px center,
     0 0;
 }
+/* The open list is drawn by the system, which ignores the select's gradient
+   but keeps its inherited text colour: light text on a white list. */
+select option,
+select optgroup {
+  background: var(--surface);
+  color: var(--text);
+}
+select optgroup {
+  color: var(--text-3);
+}
 
 input[type="range"] {
   -webkit-appearance: none;
