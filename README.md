@@ -26,27 +26,26 @@ around you follows what's on screen.
 
 ## Why Lueur
 
-- 🎮 **Follows the game, without lag.** The colours on screen reach your bulbs
-  many times a second. Yeelight bulbs run in *music mode*, so there is no
-  rate limit and no visible delay.
-- 🛋️ **Made for your room, not a strip behind the monitor.** Sketch the room,
-  place the screen and drop each light where it really is. A lamp right
-  behind the screen mirrors its own slice of the picture; one across the room
-  glows softly with the whole scene.
-- 🤖 **Starts by itself.** On Windows the ambilight turns on when a game or a
-  video goes fullscreen, and gives every light back what it was showing when
-  it ends.
-- 🎵 **Effects and moods.** Music (your lights play the track like a stage:
-  punches and chases on the beat, builds and drops, at any volume), Rainbow, Sunset, Ocean and Candle, plus everyday moods: Natural
-  light, Daylight, Reading, Relax and Night light. One click, nothing to tune,
-  on the whole room or on just the lights you pick.
-- 💡 **Every light, one window.** Power, brightness, warm-to-cool white and
-  colour for each bulb, from the app or the tray menu, so the phone app can
-  stay in your pocket. A sleep timer fades everything off when you're done.
-- 🛡️ **Safe next to anti-cheat.** Lueur only reads the screen, the way OBS or
-  Discord do. [More below](#competitive-games-and-anti-cheat).
-- 🪶 **Light and quiet.** A ~10 MB app that sits in the tray, installs
-  without admin rights and keeps itself up to date.
+The colours on screen reach your bulbs many times a second. Yeelight bulbs
+run in *music mode*, which has no rate limit, so there is no visible delay.
+
+You sketch your room, place the screen and drop each light where it really
+stands. A lamp right behind the screen mirrors its own slice of the picture;
+one across the room glows softly with the whole scene. On Windows the
+ambilight turns on by itself when a game or a video goes fullscreen, and
+gives every light back what it was showing when it ends.
+
+When you aren't playing, the same window runs effects (Music, which plays
+the track on your lights like a stage, Rainbow, Sunset, Ocean and Candle)
+and moods (Natural light, Daylight, Reading, Relax and Night light), on the
+whole room or on the lights you pick. Each bulb also has its power,
+brightness, white and colour, here or in the tray menu, and a sleep timer
+fades everything off at night.
+
+Lueur only reads the screen, the way OBS or Discord do, so it is safe to run
+next to anti-cheat ([details below](#competitive-games-and-anti-cheat)). It
+is a ~10 MB tray app that installs without admin rights and keeps itself up
+to date.
 
 ## A look around
 
@@ -210,7 +209,7 @@ each light Lueur reads three things off the plan:
 - **Distance** widens that region: tucked behind the panel, a light mirrors a
   tight slice; out across the room, the whole picture. Far lights are also
   dimmer and calmer, because a far wall that flickers at 60 Hz reads as a
-  glitch, not as atmosphere.
+  fault.
 
 Neighbouring lights hand over gradually when something bright crosses between
 them, and colours are mixed the way light mixes, so reds and blues stay vivid

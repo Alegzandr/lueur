@@ -290,7 +290,6 @@
           {#if shareOf("ambilight") > 0 && !playsAll("ambilight")}
             <span class="share">{t("share_of", { n: shareOf("ambilight"), total: targets.length })}</span>
           {/if}
-          {#if shareOf("ambilight") > 0}<span class="on-dot" aria-hidden="true"></span>{/if}
         </button>
         {#each SHOWS as s (s.id)}
           <button
@@ -310,7 +309,6 @@
                 <span class="tile-sub">{t("share_of", { n: shareOf(s.id), total: targets.length })}</span>
               {/if}
             </span>
-            {#if shareOf(s.id) > 0}<span class="on-dot" aria-hidden="true"></span>{/if}
           </button>
         {/each}
       </div>
@@ -461,8 +459,7 @@
                 class="swatch"
                 class:lit={b && isOn(l.id)}
                 class:off={b && !isOn(l.id)}
-                class:live={driven}
-                style="--c:{b && !driven ? tintCss(s.tint) : 'var(--line-strong)'}"
+                style="--c:{b && !driven ? tintCss(s.tint) : 'var(--line-strong)'}{driven ? `;background:${modeSwatch(lm, s)}` : ''}"
                 aria-hidden="true"
               ></span>
               <button
@@ -685,10 +682,10 @@
     text-align: left;
     transition:
       box-shadow 200ms var(--ease),
-      transform 200ms var(--spring);
+      background var(--dur) var(--ease);
   }
   .tile:hover:not(:disabled) {
-    transform: translateY(-1px);
+    background: var(--surface-hover);
   }
   .tile:disabled:not(.pending) {
     opacity: 0.55;
@@ -715,9 +712,7 @@
     white-space: nowrap;
   }
   .tile.active {
-    box-shadow:
-      inset 0 0 0 2px var(--glow),
-      0 6px 22px -8px var(--glow);
+    box-shadow: inset 0 0 0 2px var(--glow);
   }
   .preview {
     flex: 1;
@@ -787,18 +782,6 @@
     font-size: var(--t-sm);
     color: var(--text-3);
   }
-  .on-dot {
-    position: absolute;
-    top: calc(var(--s-2) + 7px);
-    right: calc(var(--s-2) + 7px);
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--glow);
-    box-shadow:
-      0 0 0 2px var(--surface),
-      0 0 8px var(--glow);
-  }
   .tune {
     margin-top: var(--s-3);
   }
@@ -851,9 +834,7 @@
     border-radius: 50%;
     background: var(--c);
     opacity: var(--a);
-    box-shadow:
-      inset 0 0 0 0.5px oklch(0 0 0 / 0.15),
-      0 0 8px color-mix(in oklab, var(--c) 70%, transparent);
+    box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.15);
   }
 
   .for {
@@ -863,8 +844,7 @@
 
   /* --- Lights --- */
   .light.targeted {
-    background: color-mix(in oklab, var(--glow) 7%, transparent);
-    box-shadow: inset 2px 0 0 var(--glow);
+    background: color-mix(in oklab, var(--glow) 8%, transparent);
   }
   .light:first-child {
     border-radius: var(--r-lg) var(--r-lg) 0 0;
@@ -894,21 +874,11 @@
   }
   .swatch.lit {
     box-shadow:
-      0 0 0 3px color-mix(in oklab, var(--c) 22%, transparent),
-      0 0 10px 2px color-mix(in oklab, var(--c) 55%, transparent);
+      0 0 0 3px color-mix(in oklab, var(--c) 28%, transparent);
   }
   .swatch.off {
     background: transparent;
     box-shadow: inset 0 0 0 1.5px var(--line-strong);
-  }
-  .swatch.live {
-    background: conic-gradient(#ff3b30, #ffb800, #34c759, #0a84ff, #bf5af2, #ff3b30);
-    animation: spin 4s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(1turn);
-    }
   }
   .light-text {
     flex: 1;
@@ -1094,7 +1064,7 @@
     background: var(--c);
     box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.18);
     cursor: pointer;
-    transition: transform var(--dur) var(--spring);
+    transition: transform var(--dur) var(--ease);
   }
   .dot:hover {
     transform: scale(1.08);
@@ -1127,8 +1097,7 @@
   /* Reduced motion: the loops stand still. A pending choice dims instead of
      breathing; a light the effect drives shows the spectrum without turning. */
   @media (prefers-reduced-motion: reduce) {
-    .active .preview,
-    .swatch.live {
+    .active .preview {
       animation: none;
     }
     .pending .preview,

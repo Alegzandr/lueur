@@ -80,7 +80,6 @@
 
   --dur: 140ms;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --spring: cubic-bezier(0.34, 1.4, 0.64, 1);
 
   color-scheme: light;
 }
@@ -286,7 +285,7 @@ button {
 }
 
 /* A lit dot: something giving light now, or waiting on you, in the one
-   colour the chrome allows. Its glow scales with its size (--lamp). */
+   colour the chrome allows, at the size --lamp asks for. */
 .lamp {
   --lamp: 7px;
   width: var(--lamp);
@@ -294,7 +293,6 @@ button {
   flex: none;
   border-radius: 50%;
   background: var(--glow);
-  box-shadow: 0 0 var(--lamp) var(--glow);
 }
 
 /* --- Buttons --- */
@@ -440,7 +438,7 @@ input[type="range"]::-webkit-slider-thumb {
     0 0 0 0.5px oklch(0 0 0 / 0.22),
     0 1px 3px oklch(0 0 0 / 0.22);
   transition:
-    transform var(--dur) var(--spring),
+    transform var(--dur) var(--ease),
     box-shadow var(--dur) var(--ease);
 }
 input[type="range"]:hover::-webkit-slider-thumb {

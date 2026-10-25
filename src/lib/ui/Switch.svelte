@@ -60,7 +60,7 @@
     box-shadow:
       0 0 0 0.5px oklch(0 0 0 / 0.08),
       0 1px 2.5px oklch(0 0 0 / 0.28);
-    transition: transform 220ms var(--spring);
+    transition: transform 220ms var(--ease);
   }
   .switch:active:not(:disabled) .knob {
     width: 18px;

@@ -1201,7 +1201,7 @@
     border-radius: 50%;
     background: var(--c);
     box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.18);
-    transition: transform var(--dur) var(--spring);
+    transition: transform var(--dur) var(--ease);
   }
   .wall:hover {
     transform: scale(1.08);

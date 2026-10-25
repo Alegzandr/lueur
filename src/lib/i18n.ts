@@ -255,7 +255,7 @@ const en = {
   imported: "Configuration imported.",
 
   // Errors from the backend, by code (see src-tauri/src/error.rs)
-  e_internal: "Something went wrong.",
+  e_internal: "Lueur couldn't do that because of an internal error.",
   e_no_monitors: "No display found.",
   e_monitor_missing: "Display {subject} is no longer connected. Pick another in Settings.",
   e_monitors_unavailable: "Displays cannot be read right now.",
@@ -527,7 +527,7 @@ const fr: Record<Key, string> = {
   exported: "Configuration exportée.",
   imported: "Configuration importée.",
 
-  e_internal: "Une erreur inattendue s'est produite.",
+  e_internal: "Lueur n'a pas pu le faire à cause d'une erreur interne.",
   e_no_monitors: "Aucun écran détecté.",
   e_monitor_missing: "L'écran {subject} n'est plus branché. Choisissez-en un autre dans les Réglages.",
   e_monitors_unavailable: "Impossible de lire les écrans pour le moment.",
