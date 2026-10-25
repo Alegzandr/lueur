@@ -1,5 +1,6 @@
 //! Light shows that need no screen: a rainbow, a sunset, the sea, a candle,
-//! and lights that dance to the music.
+//! and lights that dance to the music (the music has a module of its own,
+//! [`crate::stage`]).
 //!
 //! Everything here is pure: given the time step (and, for music, the sound
 //! levels the shell measured) a [`Show`] says what every light shows. The
@@ -13,6 +14,7 @@
 //! even level as it travels.
 
 use crate::color::{BulbOutput, MAX_BRIGHT, MIN_BRIGHT, Rgb, full_chroma};
+use crate::stage::{Fixture, Levels, Stage};
 use serde::{Deserialize, Serialize};
 use std::f32::consts::TAU;
 
@@ -21,7 +23,7 @@ use std::f32::consts::TAU;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ShowKind {
-    /// Colours change on the beat, brightness follows the loudness.
+    /// The lights play the track like a stage: punches, chases and drops.
     #[default]
     Music,
     /// The whole colour wheel, turning slowly through the room.
@@ -74,8 +76,8 @@ impl ShowKind {
     }
 }
 
-/// The show the window and the tray start, how bright it plays, and how fast
-/// the colour shows move.
+/// The show the window and the tray start, how bright it plays, how fast the
+/// colour shows move, and whether the music may flash white.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ShowSettings {
@@ -84,6 +86,9 @@ pub struct ShowSettings {
     pub bright: u8,
     /// 1..=100; 50 is each show's natural pace.
     pub speed: u8,
+    /// The music may flash white on drops and snares, never more than three
+    /// times a second.
+    pub flashes: bool,
 }
 
 impl Default for ShowSettings {
@@ -92,12 +97,13 @@ impl Default for ShowSettings {
             kind: ShowKind::default(),
             bright: 80,
             speed: 50,
+            flashes: true,
         }
     }
 }
 
 impl ShowSettings {
-    fn bright(&self) -> f32 {
+    pub(crate) fn bright(&self) -> f32 {
         f32::from(self.bright.clamp(MIN_BRIGHT, MAX_BRIGHT)) / 100.0
     }
 
@@ -167,7 +173,7 @@ const HARMONIES: &[[Rgb; 3]] = &[
 /// Which colour of a harmony light `i` plays. Two lights side by side never
 /// share one, and the first and last of a harmony, the furthest apart, are
 /// never neighbours.
-fn column(i: usize) -> usize {
+pub(crate) fn column(i: usize) -> usize {
     [0, 1, 2, 1][i % 4]
 }
 
@@ -192,7 +198,7 @@ const OCEAN: &[Rgb] = &[
 /// The music's harmonies: bolder than the rainbow's, three colours each that
 /// still sit well side by side. Every way round a harmony steers clear of the
 /// yellow-greens, so even its drift between beats stays clean.
-const PARTY: &[[Rgb; 3]] = &[
+pub(crate) const PARTY: &[[Rgb; 3]] = &[
     // Neon: hot pink, violet, cyan.
     [
         Rgb::new(255, 0, 110),
@@ -225,15 +231,12 @@ const PARTY: &[[Rgb; 3]] = &[
     ],
 ];
 
-/// How many beats the music stays on one harmony: two bars of four.
-const BEATS_PER_HARMONY: u32 = 8;
-
 /// A candle at its dimmest (reddest) and brightest (yellowest).
 const EMBER: Rgb = Rgb::new(255, 78, 4);
 const FLAME: Rgb = Rgb::new(255, 152, 42);
 
 /// A bulb output for a colour at a 0..=1 brightness.
-fn output(rgb: Rgb, level: f32) -> BulbOutput {
+pub(crate) fn output(rgb: Rgb, level: f32) -> BulbOutput {
     let pct = (level.clamp(0.0, 1.0) * 100.0).round() as u8;
     BulbOutput::Color {
         rgb: full_chroma(rgb),
@@ -247,7 +250,7 @@ fn output(rgb: Rgb, level: f32) -> BulbOutput {
 /// reads far brighter than a full blue. Holding the light ones back a little
 /// keeps a show's level steady as it travels round the wheel; blue, the
 /// darkest, plays at exactly the brightness asked for.
-fn even(rgb: Rgb) -> f32 {
+pub(crate) fn even(rgb: Rgb) -> f32 {
     const PULL: f32 = 0.3;
     let c = full_chroma(rgb);
     let y = (0.2126 * f32::from(c.r) + 0.7152 * f32::from(c.g) + 0.0722 * f32::from(c.b)) / 255.0;
@@ -317,7 +320,7 @@ pub fn blend(a: Rgb, b: Rgb, t: f32) -> Rgb {
 
 /// The colour at `pos` round a looping palette (1.0 = one colour further on),
 /// moving at an even pace: no colour holds, so nothing ever seems to stall.
-fn palette_at(colors: &[Rgb], pos: f32) -> Rgb {
+pub(crate) fn palette_at(colors: &[Rgb], pos: f32) -> Rgb {
     let len = colors.len();
     let pos = pos.rem_euclid(len as f32);
     let i = (pos.floor() as usize).min(len - 1);
@@ -492,229 +495,6 @@ impl Candle {
     }
 }
 
-/// Levels measured from one slice of sound.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct Levels {
-    /// Loudness relative to what has been playing lately, 0..=1.
-    pub energy: f32,
-    /// A kick or a strong onset just landed.
-    pub beat: bool,
-    /// How hard it landed, 0..=1 (0 without a beat).
-    pub strength: f32,
-}
-
-/// Length of one analysis step: short enough to place a beat within a few
-/// milliseconds whatever the frame rate, long enough to measure the bass.
-const HOP_SECS: f32 = 0.01;
-
-/// Turns raw samples into [`Levels`]: how loud it is now compared with the
-/// last few seconds, and where the beats fall.
-///
-/// The bass carries the beat, so onsets are read from a low-passed signal,
-/// in decibels so a kick stands out the same at any volume: a beat is the
-/// bass jumping above its own recent level by more than the music usually
-/// does. That bar adapts to the track, so a busy bass line does not fire on
-/// every note and a sparse one is not missed. Loudness is self-normalising
-/// too, so the show looks the same with the volume at 10% or at 100%.
-#[derive(Debug, Clone)]
-pub struct Analyzer {
-    rate: f32,
-    hop: usize,
-    /// Low-pass coefficient, and its two stages.
-    alpha: f32,
-    lp1: f32,
-    lp2: f32,
-    /// The hop being gathered: sum of squares, of the bass too, and count.
-    sum: f32,
-    bass: f32,
-    count: usize,
-    env: f32,
-    peak: f32,
-    bass_peak: f32,
-    /// The bass's recent level, in dB (NaN until the first hop).
-    slow_db: f32,
-    /// How far the bass usually rises above it: mean and mean deviation.
-    rise_mean: f32,
-    rise_dev: f32,
-    since_beat: f32,
-    heard: f32,
-}
-
-impl Analyzer {
-    pub fn new(sample_rate: u32) -> Self {
-        let rate = sample_rate.max(1) as f32;
-        Analyzer {
-            rate,
-            hop: ((rate * HOP_SECS) as usize).max(1),
-            // One-pole low-pass at ~150 Hz; two in a row isolate the kick
-            // and the bass line from the vocals.
-            alpha: 1.0 - (-TAU * 150.0 / rate).exp(),
-            lp1: 0.0,
-            lp2: 0.0,
-            sum: 0.0,
-            bass: 0.0,
-            count: 0,
-            env: 0.0,
-            peak: 1e-4,
-            bass_peak: 1e-4,
-            slow_db: f32::NAN,
-            rise_mean: 0.0,
-            rise_dev: 1.0,
-            since_beat: 1.0,
-            heard: 0.0,
-        }
-    }
-
-    /// Read the mono samples captured since the last call.
-    pub fn feed(&mut self, samples: &[f32]) -> Levels {
-        let mut levels = Levels {
-            energy: self.energy(),
-            ..Levels::default()
-        };
-        for &s in samples {
-            let s = if s.is_finite() {
-                s.clamp(-1.0, 1.0)
-            } else {
-                0.0
-            };
-            self.lp1 += (s - self.lp1) * self.alpha;
-            self.lp2 += (self.lp1 - self.lp2) * self.alpha;
-            self.sum += s * s;
-            self.bass += self.lp2 * self.lp2;
-            self.count += 1;
-            if self.count == self.hop {
-                if let Some(strength) = self.step() {
-                    levels.beat = true;
-                    levels.strength = levels.strength.max(strength);
-                }
-                levels.energy = self.energy();
-            }
-        }
-        levels
-    }
-
-    fn energy(&self) -> f32 {
-        (self.env / self.peak).clamp(0.0, 1.0)
-    }
-
-    /// Close one hop. The strength of the beat it holds, if any.
-    fn step(&mut self) -> Option<f32> {
-        let n = self.count as f32;
-        let rms = (self.sum / n).sqrt();
-        let bass = (self.bass / n).sqrt();
-        (self.sum, self.bass, self.count) = (0.0, 0.0, 0);
-        let dt = n / self.rate;
-        let k = |tau: f32| 1.0 - (-dt / tau).exp();
-
-        // Fast attack, slower release: lights jump with the music and settle.
-        let tau = if rms > self.env { 0.01 } else { 0.25 };
-        self.env += (rms - self.env) * k(tau);
-        // The loudest of the last few seconds sets the scale.
-        self.peak = (self.peak * (1.0 - k(6.0))).max(self.env).max(1e-4);
-        self.bass_peak = (self.bass_peak * (1.0 - k(6.0))).max(bass).max(1e-4);
-
-        let db = 20.0 * bass.max(1e-6).log10();
-        if self.slow_db.is_nan() {
-            // The first hop sets the level: music already playing is not a beat.
-            self.slow_db = db;
-        }
-        let rise = (db - self.slow_db).max(0.0);
-        self.slow_db += (db - self.slow_db) * k(0.25);
-        self.since_beat += dt;
-        self.heard += dt;
-
-        // A beat clears both a fixed bar and what this track usually does,
-        // carries real bass (not hiss in a pause), and is not the tail of the
-        // last one. The first half second only learns the level.
-        let bar = (self.rise_mean + 1.8 * self.rise_dev).max(4.0);
-        let beat = self.heard > 0.5
-            && rise > bar
-            && bass > 0.06 * self.bass_peak
-            && bass > 3e-4
-            && self.since_beat > 0.22;
-        self.rise_mean += (rise - self.rise_mean) * k(1.5);
-        self.rise_dev += ((rise - self.rise_mean).abs() - self.rise_dev) * k(1.5);
-        if !beat {
-            return None;
-        }
-        self.since_beat = 0.0;
-        Some((0.55 + (rise - bar) / 12.0).clamp(0.55, 1.0))
-    }
-}
-
-/// Lights that dance: a beat flashes them and moves them on to the next
-/// colour, loudness sets how bright they burn in between.
-///
-/// The colours always come from one harmony at a time: each beat passes them
-/// round its three colours, from light to light, and every two bars the room
-/// moves on to the next harmony. A beat changes colour outright rather than
-/// gliding, since it is sent sharp anyway and a glide would flash the colours
-/// in between.
-///
-/// Between beats the level stays well short of full, so even a loud,
-/// compressed track keeps a visible pulse. When nothing marks a beat (a
-/// quiet passage, speech, silence) the colours drift round their harmony on
-/// their own so the room never freezes.
-#[derive(Debug, Clone, Default)]
-pub struct Dance {
-    /// Beats so far: they choose the harmony.
-    beats: u32,
-    /// Where the lights are round their harmony: a whole number on the beat.
-    step: f32,
-    flash: f32,
-    level: f32,
-    /// Seconds since the last beat.
-    quiet: f32,
-    /// A beat landed this frame.
-    accent: bool,
-}
-
-impl Dance {
-    pub fn frame(
-        &mut self,
-        settings: &ShowSettings,
-        levels: Levels,
-        dt: f32,
-        n: usize,
-    ) -> Vec<BulbOutput> {
-        self.flash *= (-dt / 0.16).exp();
-        self.accent = levels.beat;
-        if levels.beat {
-            self.beats = self.beats.wrapping_add(1);
-            self.step = (self.step.floor() + 1.0).rem_euclid(3.0);
-            self.flash = self.flash.max(levels.strength.clamp(0.0, 1.0));
-            self.quiet = 0.0;
-        } else {
-            self.quiet += dt;
-            if self.quiet > 1.5 {
-                self.step = (self.step + dt * 0.12).rem_euclid(3.0);
-            }
-        }
-        let tau = if levels.energy > self.level {
-            0.04
-        } else {
-            0.25
-        };
-        self.level += (levels.energy - self.level) * (1.0 - (-dt / tau).exp());
-
-        // Silence keeps a low glow rather than going dark.
-        let base = 0.14 + 0.5 * self.level.clamp(0.0, 1.0).powf(1.6);
-        let level = (base + (1.0 - base) * self.flash) * settings.bright();
-        let harmony = &PARTY[(self.beats / BEATS_PER_HARMONY) as usize % PARTY.len()];
-        (0..n)
-            .map(|i| {
-                let rgb = palette_at(harmony, self.step + column(i) as f32);
-                output(rgb, level * even(rgb))
-            })
-            .collect()
-    }
-
-    /// A beat landed on the last frame: send it sharp, not faded in.
-    pub fn accent(&self) -> bool {
-        self.accent
-    }
-}
-
 /// One running show, whatever its kind.
 #[derive(Debug, Clone)]
 pub struct Show {
@@ -722,17 +502,22 @@ pub struct Show {
     lights: usize,
     t: f32,
     candle: Candle,
-    dance: Dance,
+    stage: Stage,
+    /// What [`Show::sharp`] answers for the shows that only ever glide.
+    smooth: Vec<bool>,
 }
 
 impl Show {
-    pub fn new(kind: ShowKind, lights: usize) -> Self {
+    /// A show on these lights, in the order its frames list them.
+    pub fn new(kind: ShowKind, fixtures: &[Fixture]) -> Self {
+        let lights = fixtures.len();
         Show {
             kind,
             lights,
             t: 0.0,
             candle: Candle::new(lights),
-            dance: Dance::default(),
+            stage: Stage::new(fixtures),
+            smooth: vec![false; lights],
         }
     }
 
@@ -748,7 +533,7 @@ impl Show {
         }
         let (t, n, bright) = (self.t, self.lights, settings.bright());
         match self.kind {
-            ShowKind::Music => self.dance.frame(settings, levels, dt, n),
+            ShowKind::Music => self.stage.frame(settings, levels, dt),
             ShowKind::Candle => self.candle.frame(settings, dt),
             ShowKind::Rainbow => (0..n).map(|i| rainbow(t, i, bright)).collect(),
             ShowKind::Sunset => (0..n).map(|i| sunset(t, i, n, bright)).collect(),
@@ -756,9 +541,14 @@ impl Show {
         }
     }
 
-    /// Whether the last frame should be sent sharp rather than faded in.
-    pub fn accent(&self) -> bool {
-        self.kind == ShowKind::Music && self.dance.accent()
+    /// Which lights the last frame should reach sharp rather than faded in:
+    /// the ones a beat just struck.
+    pub fn sharp(&self) -> &[bool] {
+        if self.kind == ShowKind::Music {
+            self.stage.sharp()
+        } else {
+            &self.smooth
+        }
     }
 }
 
@@ -776,8 +566,7 @@ mod tests {
     fn settings(kind: ShowKind) -> ShowSettings {
         ShowSettings {
             kind,
-            bright: 80,
-            speed: 50,
+            ..ShowSettings::default()
         }
     }
 
@@ -788,7 +577,7 @@ mod tests {
 
     fn play_at(s: ShowSettings, n: usize, secs: f32) -> Vec<Vec<BulbOutput>> {
         let kind = s.kind;
-        let mut show = Show::new(kind, n);
+        let mut show = Show::new(kind, &Fixture::row(n));
         let dt = kind.frame_ms() as f32 / 1000.0;
         (0..(secs / dt) as usize)
             .map(|_| show.frame(&s, dt, Levels::default()))
@@ -961,55 +750,6 @@ mod tests {
     }
 
     #[test]
-    fn the_music_stays_in_one_harmony() {
-        let s = ShowSettings::default();
-        let mut d = Dance::default();
-        let beat = Levels {
-            energy: 0.8,
-            beat: true,
-            strength: 1.0,
-        };
-        let mut seen = Vec::new();
-        for k in 0..(BEATS_PER_HARMONY * PARTY.len() as u32 * 2) {
-            let frame = d.frame(&s, beat, 0.025, 3);
-            let harmony = &PARTY[((k + 1) / BEATS_PER_HARMONY) as usize % PARTY.len()];
-            let colours: Vec<Rgb> = frame.iter().map(|o| rgb(*o)).collect();
-            for c in &colours {
-                let ok = harmony.iter().any(|h| full_chroma(*h) == *c);
-                assert!(ok, "{c:?} is not in {harmony:?}");
-            }
-            // Three lights, the three colours of the harmony.
-            assert!(
-                colours[0] != colours[1] && colours[1] != colours[2] && colours[0] != colours[2]
-            );
-            seen.push(colours[0]);
-        }
-        // A single light still walks round all of them.
-        assert!(
-            PARTY
-                .iter()
-                .flatten()
-                .all(|c| seen.contains(&full_chroma(*c)))
-        );
-    }
-
-    #[test]
-    fn the_music_drifts_cleanly_between_beats() {
-        let s = ShowSettings::default();
-        for (h, harmony) in PARTY.iter().enumerate() {
-            let mut d = Dance {
-                beats: h as u32 * BEATS_PER_HARMONY,
-                ..Dance::default()
-            };
-            for _ in 0..1200 {
-                for o in d.frame(&s, Levels::default(), 0.025, 2) {
-                    assert!(!sickly(rgb(o)), "{harmony:?} drifts through {:?}", rgb(o));
-                }
-            }
-        }
-    }
-
-    #[test]
     fn the_sunset_stays_warm() {
         for frame in play(ShowKind::Sunset, 4, 180.0) {
             for o in frame {
@@ -1075,131 +815,5 @@ mod tests {
         let low = blend(EMBER, FLAME, 0.0);
         let high = blend(EMBER, FLAME, 1.0);
         assert!(low.g < high.g);
-    }
-
-    fn tone(rate: u32, freq: f32, amp: f32, secs: f32) -> Vec<f32> {
-        let n = (rate as f32 * secs) as usize;
-        (0..n)
-            .map(|i| amp * (TAU * freq * i as f32 / rate as f32).sin())
-            .collect()
-    }
-
-    #[test]
-    fn a_kick_after_quiet_is_a_beat() {
-        let rate = 48_000;
-        let mut a = Analyzer::new(rate);
-        let quiet = tone(rate, 60.0, 0.02, 0.04);
-        for _ in 0..50 {
-            assert!(!a.feed(&quiet).beat);
-        }
-        let kick = tone(rate, 60.0, 0.8, 0.04);
-        let l = a.feed(&kick);
-        assert!(l.beat);
-        assert!(l.strength > 0.9, "{}", l.strength);
-        assert!(l.energy > 0.9);
-    }
-
-    #[test]
-    fn a_steady_tone_is_not_a_beat() {
-        let rate = 44_100;
-        let mut a = Analyzer::new(rate);
-        let hum = tone(rate, 80.0, 0.5, 0.04);
-        let beats = (0..200).filter(|_| a.feed(&hum).beat).count();
-        assert!(beats <= 1, "{beats} beats in a hum");
-    }
-
-    #[test]
-    fn a_steady_kick_is_followed() {
-        // Four to the floor at 120 bpm over a quiet pad.
-        let rate = 48_000;
-        let mut a = Analyzer::new(rate);
-        let mut beats = 0;
-        for bar in 0..16 {
-            let kick = tone(rate, 55.0, 0.7, 0.08);
-            let pad = tone(rate, 55.0, 0.03, 0.42);
-            let hit = a.feed(&kick).beat;
-            a.feed(&pad);
-            if bar > 0 && hit {
-                beats += 1;
-            }
-        }
-        assert!(beats >= 13, "followed {beats} of 15 kicks");
-    }
-
-    #[test]
-    fn silence_is_calm() {
-        let mut a = Analyzer::new(44_100);
-        let l = a.feed(&vec![0.0; 1764]);
-        assert!(!l.beat);
-        assert_eq!(l.energy, 0.0);
-        let mut d = Dance::default();
-        let out = d.frame(&ShowSettings::default(), l, 0.025, 1);
-        assert!(out[0].bright() < 20);
-    }
-
-    #[test]
-    fn loud_music_still_pulses() {
-        // Compressed music never leaves the top of its range; the beat
-        // must still stand out against it.
-        let s = ShowSettings::default();
-        let mut d = Dance::default();
-        let loud = Levels {
-            energy: 1.0,
-            beat: false,
-            strength: 0.0,
-        };
-        let mut between = 0;
-        for _ in 0..40 {
-            between = d.frame(&s, loud, 0.025, 1)[0].bright();
-        }
-        let hit = Levels {
-            energy: 1.0,
-            beat: true,
-            strength: 1.0,
-        };
-        let flash = d.frame(&s, hit, 0.025, 1)[0].bright();
-        // Full, give or take the evening of the colour.
-        assert!(flash >= s.bright - 5 && flash <= s.bright, "{flash}");
-        assert!(flash - between >= 20, "{between} -> {flash}");
-        assert!(d.accent());
-    }
-
-    #[test]
-    fn a_beat_moves_the_colour_on() {
-        let s = ShowSettings::default();
-        let mut d = Dance::default();
-        let calm = Levels {
-            energy: 0.5,
-            ..Levels::default()
-        };
-        let before = rgb(d.frame(&s, calm, 0.025, 1)[0]);
-        d.frame(
-            &s,
-            Levels {
-                energy: 1.0,
-                beat: true,
-                strength: 1.0,
-            },
-            0.025,
-            1,
-        );
-        let mut after = before;
-        for _ in 0..20 {
-            after = rgb(d.frame(&s, calm, 0.025, 1)[0]);
-        }
-        assert!(jump(before, after) > 100, "{before:?} -> {after:?}");
-        assert!(!d.accent());
-    }
-
-    #[test]
-    fn without_beats_the_colours_drift() {
-        let s = ShowSettings::default();
-        let mut d = Dance::default();
-        let first = rgb(d.frame(&s, Levels::default(), 0.025, 1)[0]);
-        let mut last = first;
-        for _ in 0..400 {
-            last = rgb(d.frame(&s, Levels::default(), 0.025, 1)[0]);
-        }
-        assert_ne!(first, last);
     }
 }

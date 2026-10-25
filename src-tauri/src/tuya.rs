@@ -219,6 +219,10 @@ pub fn open_stream(ep: &Endpoint) -> io::Result<Box<dyn LightStream>> {
 }
 
 impl LightStream for TuyaStream {
+    fn interval(&self) -> Duration {
+        self.pace.interval()
+    }
+
     fn push(&mut self, output: BulbOutput, effect: Effect, _: u32) -> io::Result<()> {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());

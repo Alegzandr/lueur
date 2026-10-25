@@ -73,6 +73,10 @@ impl WizStream {
 }
 
 impl LightStream for WizStream {
+    fn interval(&self) -> Duration {
+        self.pace.interval()
+    }
+
     fn push(&mut self, output: BulbOutput, _: Effect, _: u32) -> io::Result<()> {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());

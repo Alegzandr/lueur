@@ -214,6 +214,10 @@ impl NanoleafStream {
 }
 
 impl LightStream for NanoleafStream {
+    fn interval(&self) -> Duration {
+        self.pace.interval()
+    }
+
     fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());

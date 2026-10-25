@@ -3,7 +3,7 @@
 //! The engine produces one [`BulbOutput`] per light per frame; how that reaches
 //! a bulb differs wildly between brands (a Yeelight music-mode socket, a WiZ
 //! UDP datagram, a Hue REST call…). This module hides
-//! that behind three operations — stream, power, identify — keyed on a
+//! that behind three operations (stream, power, identify) keyed on a
 //! [`DeviceKind`] that also carries whatever credential the family needs.
 //!
 //! Families whose bulbs only speak to paired clients (Hue, Nanoleaf)
@@ -201,6 +201,12 @@ pub trait LightStream: Send {
     /// shows and pace themselves to what the device tolerates, so calling this
     /// every frame is always fine.
     fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()>;
+
+    /// The shortest gap it leaves between two commands: how fast the bulb
+    /// can follow. Nothing for a stream that takes every frame.
+    fn interval(&self) -> Duration {
+        Duration::ZERO
+    }
 
     /// Leave the bulb on a gentle warm glow when the effect stops, so the room
     /// stays cosy rather than snapping to black (or to the last dark frame).

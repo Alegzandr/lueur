@@ -4,14 +4,14 @@
 
 # Lueur
 
-**A low-latency ambilight for your smart bulbs — made for cosy night gaming.**
+**A low-latency ambilight for your smart bulbs, made for cosy night gaming.**
 
 Draw your room, place your screen and lights, pick your bulbs, and the light
 around you follows what's on screen.
 
 [**Download the latest version**](https://github.com/Alegzandr/lueur/releases/latest)
 
-*Windows · macOS · Linux — free and open source*
+*Windows · macOS · Linux, free and open source*
 
 <br>
 
@@ -36,8 +36,8 @@ around you follows what's on screen.
 - 🤖 **Starts by itself.** On Windows the ambilight turns on when a game or a
   video goes fullscreen, and gives every light back what it was showing when
   it ends.
-- 🎵 **Effects and moods.** Music (colours on the beat, brightness with the
-  volume), Rainbow, Sunset, Ocean and Candle, plus everyday moods: Natural
+- 🎵 **Effects and moods.** Music (your lights play the track like a stage:
+  punches and chases on the beat, builds and drops, at any volume), Rainbow, Sunset, Ocean and Candle, plus everyday moods: Natural
   light, Daylight, Reading, Relax and Night light. One click, nothing to tune.
 - 💡 **Every light, one window.** Power, brightness, warm-to-cool white and
   colour for each bulb, from the app or the tray menu, so the phone app can
@@ -56,7 +56,7 @@ around you follows what's on screen.
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/lighting-light.png">
         <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: screen ambilight, five effects, five moods, a sleep timer and every light with its brightness.">
       </picture>
-      <p><b>Lighting</b> — start the screen ambilight, pick an effect or a mood,
+      <p><b>Lighting</b>: start the screen ambilight, pick an effect or a mood,
       and adjust each light.</p>
     </td>
     <td width="50%">
@@ -64,7 +64,7 @@ around you follows what's on screen.
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/room-light.png">
         <img src="docs/screenshots/room-dark.png" alt="The Room page: a floor plan with the screen, the seat and the lights.">
       </picture>
-      <p><b>Room</b> — a floor plan you draw on. Drag the lights, the corners
+      <p><b>Room</b>: a floor plan you draw on. Drag the lights, the corners
       and the screen; the glows show what each light will mirror.</p>
     </td>
   </tr>
@@ -74,7 +74,7 @@ around you follows what's on screen.
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/bulbs-light.png">
         <img src="docs/screenshots/bulbs-dark.png" alt="The Bulbs page: a bulb found on the network, and the lights in the room with their addresses.">
       </picture>
-      <p><b>Bulbs</b> — Lueur finds the bulbs on your network. Identify one
+      <p><b>Bulbs</b>: Lueur finds the bulbs on your network. Identify one
       to see which is which, then give it a place in the room.</p>
     </td>
     <td width="50%">
@@ -82,7 +82,7 @@ around you follows what's on screen.
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/settings-light.png">
         <img src="docs/screenshots/settings-dark.png" alt="The Settings page: ambilight in fullscreen, language, appearance, startup and configuration export.">
       </picture>
-      <p><b>Settings</b> — automatic ambilight, English or French, light or
+      <p><b>Settings</b>: automatic ambilight, English or French, light or
       dark, start at login, and a backup of your setup.</p>
     </td>
   </tr>
@@ -185,7 +185,15 @@ owner to add you to their home instead.
   *Apply now*.
 - **Music.** On Windows the Music effect listens to the computer's own sound,
   so it follows any song or game. On macOS and Linux it listens to the
-  microphone.
+  microphone. It hears the kick, the snare and the hi-hats apart, finds the
+  tempo and sends each beat a touch early so it lands with the sound, and
+  plays the same whatever the volume. Each light gets a part from where it
+  stands: the quick ones near the screen punch the beat in patterns that
+  travel across the room, slow bulbs (Hue) and lamps out in the room wash
+  it in colour, and a light at the ceiling answers the snare. A breakdown
+  dims the room, a build climbs to white, and the drop lands on every light
+  at once. White flashes can be turned off, and never come more than three
+  a second.
 - **Backup.** **Settings → Configuration** exports your setup to a file and
   imports it back, to keep a copy or move to another computer. The file holds
   no password or key, so it is safe to share; on another computer, pair the
@@ -258,4 +266,4 @@ Building from source, the architecture and the release process are in
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

@@ -157,6 +157,8 @@ export interface ShowSettings {
   bright: number;
   /** 1..=100; 50 is each show's natural pace. */
   speed: number;
+  /** The music may flash white on drops and snares, at most three a second. */
+  flashes: boolean;
 }
 
 export interface Rgb {
@@ -296,7 +298,7 @@ export function defaultConfig(): AppConfig {
     },
     interface: { appearance: "system", language: "system", room_arranged: false },
     states: {},
-    show: { kind: "music", bright: 80, speed: 50 },
+    show: { kind: "music", bright: 80, speed: 50, flashes: true },
     natural: false,
   };
 }

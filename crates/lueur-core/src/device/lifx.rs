@@ -1,6 +1,6 @@
 //! LIFX LAN protocol: small little-endian binary frames over UDP 56700.
 //!
-//! Open by design — no pairing, no key. Colours are HSBK (hue, saturation,
+//! Open by design: no pairing, no key. Colours are HSBK (hue, saturation,
 //! brightness, kelvin), with a transition time per command, so the bulb does
 //! its own interpolation between frames.
 
@@ -171,6 +171,10 @@ impl LifxStream {
 }
 
 impl LightStream for LifxStream {
+    fn interval(&self) -> Duration {
+        self.pace.interval()
+    }
+
     fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());

@@ -2,7 +2,7 @@
 //!
 //! [`start`] snapshots the current config, opens a stream to every light it is
 //! given (music mode for a Yeelight, whatever the family uses otherwise), then
-//! spins a dedicated thread that computes and pushes colours every frame —
+//! spins a dedicated thread that computes and pushes colours every frame:
 //! from the screen for the ambilight, from the clock or the sound for a show.
 //! Engine and show settings are read from a shared cell each frame so the UI's
 //! sliders take effect instantly without a restart; changing the *topology*
@@ -21,7 +21,8 @@ use lueur_core::config::AppConfig;
 use lueur_core::device::LightStream;
 use lueur_core::engine::{Ambilight, EngineSettings};
 use lueur_core::geometry::{LightMapping, map_light};
-use lueur_core::show::{Analyzer, Levels, Show, ShowKind, ShowSettings};
+use lueur_core::show::{Show, ShowKind, ShowSettings};
+use lueur_core::stage::{Analyzer, Fixture, Levels};
 use lueur_core::yeelight::Effect;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -127,6 +128,8 @@ impl Drop for Handle {
 /// One connected, ready-to-drive light.
 struct ConnectedLight {
     mapping: LightMapping,
+    /// Where it stands and how fast it answers, for the music show.
+    fixture: Fixture,
     conn: Box<dyn LightStream>,
 }
 
@@ -209,7 +212,12 @@ fn connect(
     for ((mapping, binding, light), result) in targets.into_iter().zip(opened) {
         match result {
             Ok(conn) => {
-                connected.push(ConnectedLight { mapping, conn });
+                let fixture = Fixture::place(&config.room.screen, light, conn.interval());
+                connected.push(ConnectedLight {
+                    mapping,
+                    fixture,
+                    conn,
+                });
                 light_ids.push(light.id.clone());
             }
             Err(e) => {
@@ -409,21 +417,21 @@ impl Effects {
     }
 }
 
-/// Push one frame to every light still answering, corrected for the walls.
-/// False once none is.
+/// Push one frame to every light still answering, corrected for the walls,
+/// each with the transition `pace` gives it. False once none is.
 fn push_all(
     lights: &mut [ConnectedLight],
     alive: &mut [bool],
     outputs: &[BulbOutput],
     wall: Rgb,
-    effect: Effect,
-    duration_ms: u32,
+    pace: impl Fn(usize) -> (Effect, u32),
 ) -> bool {
     for (i, light) in lights.iter_mut().enumerate() {
         let Some(&output) = outputs.get(i) else {
             continue;
         };
         // A bulb that drops is retired rather than killing the whole effect.
+        let (effect, duration_ms) = pace(i);
         if alive[i]
             && light
                 .conn
@@ -457,7 +465,8 @@ fn run_show(
 ) {
     let n = lights.len();
     let mut alive = vec![true; n];
-    let mut show = Show::new(kind, n);
+    let fixtures: Vec<Fixture> = lights.iter().map(|l| l.fixture).collect();
+    let mut show = Show::new(kind, &fixtures);
     let tap = if kind == ShowKind::Music {
         match AudioTap::open() {
             Ok(tap) => Some(tap),
@@ -472,7 +481,8 @@ fn run_show(
     let mut analyzer = Analyzer::new(tap.as_ref().map_or(48_000, |t| t.sample_rate));
     let frame = Duration::from_millis(kind.frame_ms());
     // Each frame fades into the next over the time it has, so the bulbs glide
-    // rather than step; a beat is the exception, sent sharp.
+    // rather than step; a light a beat just struck is the exception, sent
+    // sharp.
     let glide = pace(Effect::Smooth, frame.as_millis() as u32, frame);
     // Room for the tap's whole second, so the audio thread never grows it.
     let mut samples = Vec::with_capacity(tap.as_ref().map_or(0, |t| t.sample_rate as usize));
@@ -495,12 +505,15 @@ fn run_show(
             None => Levels::default(),
         };
         let outputs = show.frame(&settings, dt, levels);
-        let (effect, duration_ms) = if show.accent() {
-            (Effect::Sudden, 0)
-        } else {
-            glide
+        let sharp = show.sharp();
+        let pace = |i: usize| {
+            if sharp.get(i).copied().unwrap_or(false) {
+                (Effect::Sudden, 0)
+            } else {
+                glide
+            }
         };
-        if !push_all(lights, &mut alive, &outputs, wall, effect, duration_ms) {
+        if !push_all(lights, &mut alive, &outputs, wall, pace) {
             break;
         }
     }
@@ -570,7 +583,7 @@ fn run_ambilight(
         // A bulb transition must finish before the next command replaces it.
         // Left unclamped, a 300 ms fade issued every 17 ms is overwritten 18
         // times before it lands, and the bulb ends up chasing a target it never
-        // reaches — which reads as fast, erratic colour swings.
+        // reaches, which reads as fast, erratic colour swings.
         let (effect, duration_ms) = pace(settings.effect, settings.duration_ms, frame_budget);
 
         match source.grab(frame_budget) {
@@ -587,7 +600,9 @@ fn run_ambilight(
                 engine.set_settings(tuned);
                 let outputs = engine.process_outputs(frame, &mappings);
                 let wall = settings.wall;
-                if !push_all(lights, &mut alive, &outputs, wall, effect, duration_ms) {
+                if !push_all(lights, &mut alive, &outputs, wall, |_| {
+                    (effect, duration_ms)
+                }) {
                     break; // every bulb is gone; nothing left to do
                 }
             }

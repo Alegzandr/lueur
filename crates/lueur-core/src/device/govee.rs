@@ -2,7 +2,7 @@
 //! device in the Govee Home app.
 //!
 //! The search is a multicast to port 4001 whose answers come back to port
-//! 4002 — a fixed port, so only one program on the machine can search at a
+//! 4002, a fixed port, so only one program on the machine can search at a
 //! time. Commands go to the device on port 4003.
 
 use super::common::{LastSent, Throttle, udp_to};
@@ -80,6 +80,10 @@ impl GoveeStream {
 }
 
 impl LightStream for GoveeStream {
+    fn interval(&self) -> Duration {
+        self.pace.interval()
+    }
+
     fn push(&mut self, output: BulbOutput, _: Effect, _: u32) -> io::Result<()> {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());

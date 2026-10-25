@@ -45,6 +45,7 @@
   import Slider from "../ui/Slider.svelte";
   import Segmented from "../ui/Segmented.svelte";
   import Row from "../ui/Row.svelte";
+  import Switch from "../ui/Switch.svelte";
   import RestartBanner from "../ui/RestartBanner.svelte";
 
   const DEF = defaultConfig();
@@ -56,6 +57,7 @@
   const live = $derived(app.status.running);
   const showPlaying = $derived(app.status.groups.some((g) => g.mode !== "ambilight"));
   const pacedPlaying = $derived(app.status.groups.some((g) => (PACED_SHOWS as Mode[]).includes(g.mode)));
+  const musicPlaying = $derived(app.status.groups.some((g) => g.mode === "music"));
 
   const feelOptions = $derived(
     FEEL_ORDER.map((f) => ({ value: f, label: t(`feel_${f}`), title: t(`feel_${f}_tip`) })),
@@ -298,6 +300,15 @@
                 format={(v) => times(showPace(v))}
                 ends={[t("speed_slow"), t("speed_fast")]}
                 onchange={(v) => edit((c) => (c.show.speed = v))}
+              />
+            </Row>
+          {/if}
+          {#if musicPlaying}
+            <Row label={t("flashes")} tip={t("flashes_tip")}>
+              <Switch
+                checked={app.config.show.flashes}
+                label={t("flashes")}
+                onchange={(v) => edit((c) => (c.show.flashes = v))}
               />
             </Row>
           {/if}
