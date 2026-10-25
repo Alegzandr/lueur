@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { app, bootstrap, fail, refreshStatus, reloadStates, sleepChanged, toggleEffect, type View } from "./lib/state.svelte";
+  import { app, bootstrap, fail, notify, refreshStatus, reloadStates, sleepChanged, toggleEffect, type View } from "./lib/state.svelte";
   import { lang, t, tn } from "./lib/i18n";
-  import { onEffectChanged, onLightsChanged, onSleepChanged, onUpdateReady, setUiLanguage, setWindowTheme, updateReady } from "./lib/ipc";
+  import { onAutoStarted, onEffectChanged, onLightsChanged, onSleepChanged, onUpdateReady, setUiLanguage, setWindowTheme, updateReady } from "./lib/ipc";
   import { MOD_KEY } from "./lib/platform";
   import Icon, { type IconName } from "./lib/ui/Icon.svelte";
   import Logo from "./lib/ui/Logo.svelte";
@@ -45,6 +45,8 @@
       }),
       // The tray or automatic mode changed what the lights show.
       onLightsChanged(() => void reloadStates()),
+      // A game went fullscreen and the ambilight took over by itself.
+      onAutoStarted(() => notify("info", t("auto_started"))),
       // The sleep timer was set from the tray, or ran out.
       onSleepChanged(sleepChanged),
       // An update installed in the background waits for a restart.

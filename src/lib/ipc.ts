@@ -17,6 +17,7 @@ import {
   type PowerResult,
   type SleepStatus,
   type TuyaLogin,
+  type UnverifiedDevice,
 } from "./types";
 
 /** True when we're running inside the Tauri webview. */
@@ -26,8 +27,9 @@ export function inTauri(): boolean {
 
 /** Browser preview: `?demo` gives a furnished room to design against, `?fresh`
  *  a first launch with bulbs waiting on the network, `?update` an installed
- *  update waiting for a restart. */
-function preview(flag: "demo" | "fresh" | "update"): boolean {
+ *  update waiting for a restart, `?unverified` a paired bridge heard at a new
+ *  address, `?unsealed` credentials kept unencrypted for want of a keyring. */
+function preview(flag: "demo" | "fresh" | "update" | "unverified" | "unsealed"): boolean {
   return typeof location !== "undefined" && new URLSearchParams(location.search).has(flag);
 }
 const demo = () => preview("demo");
@@ -131,10 +133,31 @@ export async function discoverDevices(timeoutMs = 2500): Promise<DiscoveredDevic
       fw_ver: "26",
       kind: { family: "yeelight" as const },
       paired: true,
-    }));
+    }) as DiscoveredDevice).concat(
+      // A first launch also meets a Hue bridge, to try pairing against.
+      preview("fresh")
+        ? [
+            {
+              id: "hue-bridge",
+              ip: "192.168.1.30",
+              port: 443,
+              model: "BSB002",
+              name: "Philips Hue",
+              support: [],
+              fw_ver: "",
+              kind: { family: "hue", username: "", light: "" },
+              paired: previewPairedAt !== null && Date.now() >= previewPairedAt,
+            },
+          ]
+        : [],
+    );
   }
   return invoke<DiscoveredDevice[]>("discover_devices", { timeoutMs });
 }
+
+/** Browser preview: when the bridge's button counts as pressed, 8 seconds
+ *  after pairing first asked (a little sooner than most people manage). */
+let previewPairedAt: number | null = null;
 
 export async function testDevice(
   endpoint: Endpoint,
@@ -150,7 +173,11 @@ export async function testDevice(
 /** Pair with a Hue bridge or Nanoleaf controller. Rejects with
  *  `pair_waiting` until its button has been pressed. */
 export async function pairDevice(device: DiscoveredDevice): Promise<void> {
-  if (!inTauri()) return;
+  if (!inTauri()) {
+    previewPairedAt ??= Date.now() + 8000;
+    if (Date.now() < previewPairedAt) throw { code: "pair_waiting" };
+    return;
+  }
   return invoke<void>("pair_device", { device });
 }
 
@@ -234,6 +261,7 @@ const previewStatus = (): EffectStatus => {
     mode: groups.length === 1 ? groups[0].mode : null,
     light_ids,
     groups,
+    reconnecting: [],
   };
 };
 
@@ -332,6 +360,11 @@ export function onEffectChanged(cb: (error: unknown) => void): Promise<() => voi
   return subscribe("effect-changed", cb);
 }
 
+/** Called when automatic mode started the ambilight for a fullscreen game. */
+export function onAutoStarted(cb: () => void): Promise<() => void> {
+  return subscribe("auto-started", () => cb());
+}
+
 /** The version installed in the background and waiting for a restart. */
 export async function updateReady(): Promise<string | null> {
   if (!inTauri()) return preview("update") ? "9.9.9" : null;
@@ -347,4 +380,47 @@ export function onUpdateReady(cb: (version: string) => void): Promise<() => void
 export async function restartApp(): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>("restart_app");
+}
+
+/** Paired bridges and controllers the last search heard where nothing
+ *  proves they are the ones paired. `?unverified` previews one. */
+export async function unverifiedDevices(): Promise<UnverifiedDevice[]> {
+  if (!inTauri()) {
+    if (!preview("unverified")) return [];
+    return [
+      { id: "hue:demo", family: "hue", name: "Hue Bridge", ip: "192.168.1.31", known_ip: "192.168.1.30", changed: false, needs_pairing: false },
+    ];
+  }
+  return invoke<UnverifiedDevice[]>("unverified_devices");
+}
+
+/** Called when a search heard such devices. */
+export function onDeviceUnverified(cb: (devices: UnverifiedDevice[]) => void): Promise<() => void> {
+  return subscribe("device-unverified", cb);
+}
+
+/** The user says the device `id` is theirs: its pairing moves to where it
+ *  was heard. */
+export async function confirmDevice(id: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("confirm_device", { id });
+}
+
+/** Forget the bridge `id`, which no longer shows its pinned certificate,
+ *  so it can be paired again with its button. */
+export async function forgetDevice(id: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("forget_device", { id });
+}
+
+/** Whether the credentials are encrypted on disk (false: no keyring). */
+export async function credentialsSealed(): Promise<boolean> {
+  if (!inTauri()) return !preview("unsealed");
+  return invoke<boolean>("credentials_sealed");
+}
+
+/** Show the folder Lueur writes its logs to in the file manager. */
+export async function openLogsFolder(): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("open_logs_folder");
 }

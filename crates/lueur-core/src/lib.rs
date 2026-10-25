@@ -16,6 +16,8 @@
 //! * [`show`]: light shows without a screen: palette fades, a candle, music.
 //! * [`stage`]: the music show: listening to the track, and playing it on
 //!   the lights like a stage.
+//! * [`safety`]: the photosensitivity protection every mode's output goes
+//!   through: no light flashes more than three times a second.
 //! * [`config`]: persisted settings, read from and written to the data
 //!   directory the shell picks.
 //!
@@ -28,6 +30,7 @@ pub mod config;
 pub mod device;
 pub mod engine;
 pub mod geometry;
+pub mod safety;
 pub mod scene;
 pub mod show;
 pub mod stage;

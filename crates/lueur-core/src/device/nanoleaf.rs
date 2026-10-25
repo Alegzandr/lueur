@@ -7,8 +7,10 @@
 
 use super::common::{LastSent, Throttle, kelvin_to_rgb, udp_to};
 use super::http::{self, Response};
+use super::wire::Wire;
 use super::{
-    DeviceKind, DiscoveredDevice, LightStream, NanoleafPairing, REST_BRIGHT, REST_KELVIN, mdns,
+    Approach, DeviceKind, DiscoveredDevice, LightStream, NanoleafPairing, REST_BRIGHT, REST_KELVIN,
+    mdns,
 };
 use crate::color::{BulbOutput, Rgb};
 use crate::yeelight::Effect;
@@ -97,24 +99,38 @@ fn norm_id(raw: &str) -> String {
         .to_ascii_lowercase()
 }
 
+/// Find controllers, with the token of those Lueur is paired with.
+///
+/// The API is HTTP only and anything can claim a controller's id, so the
+/// token is only ever handed out for the address it was granted at. A
+/// paired controller heard elsewhere is listed unpaired: whether it moved
+/// is the user's call (or a new pairing's), never discovery's.
 pub fn discover(timeout: Duration, known: &[NanoleafPairing]) -> io::Result<Vec<DiscoveredDevice>> {
+    let heard: Vec<(String, mdns::Instance)> = mdns::browse("_nanoleafapi._tcp.local", timeout)?
+        .into_iter()
+        .filter_map(|inst| {
+            let raw_id = inst.txt.get("id").map(String::as_str).unwrap_or(&inst.ip);
+            let id = norm_id(raw_id);
+            (!id.is_empty()).then_some((id, inst))
+        })
+        .collect();
     let mut out = Vec::new();
-    for inst in mdns::browse("_nanoleafapi._tcp.local", timeout)? {
-        let raw_id = inst.txt.get("id").map(String::as_str).unwrap_or(&inst.ip);
-        let id = norm_id(raw_id);
-        if id.is_empty() {
-            continue;
-        }
-        let paired = known.iter().find(|k| k.id == id);
-        // As with Hue bridges: the token is for the controller at the address
-        // it was granted, unless nothing answers there any more.
-        if let Some(k) = paired
-            && k.ip != inst.ip
-            && answers(&k.ip)
-        {
-            continue;
-        }
-        let token = paired.map(|k| k.token.clone()).unwrap_or_default();
+    for (id, inst) in &heard {
+        let paired = known.iter().find(|k| k.id == *id);
+        let home_answers = || {
+            paired.is_some_and(|k| {
+                heard.iter().any(|(other, at)| other == id && at.ip == k.ip) || answers(&k.ip)
+            })
+        };
+        let token = match paired {
+            Some(k) => match super::approach(&inst.ip, Some((&k.ip, false)), home_answers()) {
+                Approach::Home => k.token.clone(),
+                Approach::Ignore => continue,
+                _ => String::new(),
+            },
+            None => String::new(),
+        };
+        let inst = inst.clone();
         out.push(DiscoveredDevice {
             id: format!("{ID_PREFIX}{id}"),
             ip: inst.ip,
@@ -187,10 +203,11 @@ pub struct NanoleafStream {
     socket: UdpSocket,
     last: LastSent,
     pace: Throttle,
+    wire: Wire,
 }
 
 impl NanoleafStream {
-    pub fn open(ip: &str, port: u16, token: &str) -> io::Result<Self> {
+    pub fn open(ip: &str, port: u16, token: &str, wire: Wire) -> io::Result<Self> {
         let path = format!("/api/v1/{}/panelLayout/layout", safe(token)?);
         let layout = check(http::request("GET", ip, port, &path, None, TIMEOUT)?)?;
         let layout: Value = serde_json::from_str(&layout.body)
@@ -222,6 +239,7 @@ impl NanoleafStream {
             socket: udp_to(ip, STREAM_PORT)?,
             last: LastSent::default(),
             pace: Throttle::new(FRAME_INTERVAL),
+            wire,
         })
     }
 }
@@ -240,21 +258,20 @@ impl LightStream for NanoleafStream {
         } else {
             0
         };
-        self.socket
-            .send(&frame(&self.panels, panel_rgb(output), transition))?;
+        let frame = frame(&self.panels, panel_rgb(output), transition);
+        self.wire.bytes(&frame);
+        self.socket.send(&frame)?;
         self.last.mark(output);
         Ok(())
     }
 
     fn rest(&mut self) {
         // Setting a temperature leaves External Control on its own.
-        let _ = put(
-            &self.ip,
-            self.port,
-            &self.token,
-            "state",
-            &json!({"ct": {"value": REST_KELVIN}, "brightness": {"value": REST_BRIGHT, "duration": 1}}),
-        );
+        let body = json!({"ct": {"value": REST_KELVIN}, "brightness": {"value": REST_BRIGHT, "duration": 1}});
+        if Wire::enabled() {
+            self.wire.request("PUT", "state", Some(&body.to_string()));
+        }
+        let _ = put(&self.ip, self.port, &self.token, "state", &body);
     }
 }
 

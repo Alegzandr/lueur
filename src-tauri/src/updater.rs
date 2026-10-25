@@ -15,6 +15,16 @@
 //! without downloading it again, and the running app tries it again only
 //! after the usual wait between checks, not after the short network retry.
 //!
+//! Never an older version, nor the same one again. `latest.json` itself is
+//! not signed, only each update file is, so the version it announces proves
+//! nothing on its own: a doctored manifest could pair a high number with an
+//! old, validly signed file. Each signature therefore carries the version it
+//! was made for in its trusted comment (the release signs with
+//! `--app-version`), and `requireSignedVersion` in `tauri.conf.json` makes
+//! the plugin refuse a file whose signed version is not the announced one.
+//! The announced version must be strictly newer than this one
+//! ([`is_upgrade`]), so the signed one is too.
+//!
 //! The only network traffic this adds is HTTPS to github.com.
 
 use std::path::PathBuf;
@@ -111,11 +121,11 @@ impl Failure {
     fn wait(&self) -> Duration {
         match self {
             Failure::Fetch(e) => {
-                eprintln!("lueur: update: {e}");
+                log::warn!("update: {e}");
                 RETRY_AFTER
             }
             Failure::Install(e) => {
-                eprintln!("lueur: update install: {e}");
+                log::error!("update install: {e}");
                 CHECK_EVERY
             }
         }
@@ -157,8 +167,15 @@ fn set_failed(app: &AppHandle, version: Option<&str>) {
         },
     };
     if let Err(e) = result {
-        eprintln!("lueur: update: {}: {e}", path.display());
+        log::warn!("update: {}: {e}", path.display());
     }
+}
+
+/// Whether `offered` may replace `current`: only a strictly newer version.
+/// (The plugin's default, kept here so no setting can turn it into "any
+/// other version".)
+fn is_upgrade<V: PartialOrd>(current: &V, offered: &V) -> bool {
+    offered > current
 }
 
 /// Development builds never replace themselves and start right away.
@@ -264,6 +281,7 @@ async fn check_and_install(app: &AppHandle, splash: bool) -> Result<Option<Strin
     let update = app
         .updater_builder()
         .timeout(CHECK_TIMEOUT)
+        .version_comparator(|current, release| is_upgrade(&current, &release.version))
         .build()
         .map_err(|e| Failure::Fetch(e.to_string()))?
         .check()
@@ -273,7 +291,7 @@ async fn check_and_install(app: &AppHandle, splash: bool) -> Result<Option<Strin
         return Ok(None);
     };
     if splash && failed_version(app).as_deref() == Some(update.version.as_str()) {
-        eprintln!("lueur: update: {} failed to install before", update.version);
+        log::warn!("update: {} failed to install before", update.version);
         return Ok(None);
     }
     update.timeout = Some(DOWNLOAD_TIMEOUT);
@@ -346,4 +364,42 @@ fn install(update: &Update, bytes: &[u8]) -> Result<(), String> {
 #[cfg(not(windows))]
 fn install(update: &Update, bytes: &[u8]) -> Result<(), String> {
     update.install(bytes).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use semver::Version;
+
+    fn v(s: &str) -> Version {
+        Version::parse(s).unwrap()
+    }
+
+    #[test]
+    fn only_a_newer_version_is_an_update() {
+        assert!(is_upgrade(&v("0.7.4"), &v("0.8.0")));
+        assert!(is_upgrade(&v("0.9.0"), &v("0.10.0")));
+        assert!(!is_upgrade(&v("0.8.0"), &v("0.8.0")));
+        assert!(!is_upgrade(&v("0.8.0"), &v("0.7.4")));
+        assert!(!is_upgrade(&v("0.8.0"), &v("0.8.0-beta.1")));
+    }
+
+    /// The version a manifest announces only counts because the signature
+    /// binds it: the config must keep requiring that, and never allow going
+    /// back.
+    #[test]
+    fn updates_require_a_signed_version_and_never_go_back() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let updater = &conf["plugins"]["updater"];
+        assert_eq!(updater["requireSignedVersion"], true);
+        assert_ne!(updater["allowDowngrades"], true);
+        assert!(
+            updater["endpoints"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e.as_str().unwrap().starts_with("https://"))
+        );
+    }
 }

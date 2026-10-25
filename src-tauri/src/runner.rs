@@ -18,9 +18,10 @@ use crate::devices;
 use crate::error::{AppError, AppResult};
 use lueur_core::color::{BulbOutput, Rgb};
 use lueur_core::config::AppConfig;
-use lueur_core::device::LightStream;
+use lueur_core::device::relink::{OnChange, Opener, Relink};
 use lueur_core::engine::{Ambilight, EngineSettings};
 use lueur_core::geometry::{LightMapping, map_light};
+use lueur_core::safety::{FlashGuard, SafetySettings};
 use lueur_core::show::{Show, ShowKind, ShowSettings};
 use lueur_core::stage::{Analyzer, Fixture, Levels};
 use lueur_core::yeelight::Effect;
@@ -39,6 +40,10 @@ pub struct LiveSettings {
     pub show: ShowSettings,
     /// The room's wall colour, which every output is corrected for.
     pub wall: Rgb,
+    /// The photosensitivity protection every output goes through.
+    pub safety: SafetySettings,
+    /// The ambilight's updates per second.
+    pub target_fps: u32,
 }
 
 impl LiveSettings {
@@ -49,8 +54,20 @@ impl LiveSettings {
             duration_ms: config.transition.duration_ms,
             show: config.show,
             wall: config.room.wall,
+            safety: config.safety,
+            target_fps: config.capture.target_fps,
         }
     }
+
+    /// The time between two ambilight updates.
+    pub fn frame_budget(&self) -> Duration {
+        frame_budget(self.target_fps)
+    }
+}
+
+/// The time between two updates at `fps`, kept within 1 to 120 a second.
+fn frame_budget(fps: u32) -> Duration {
+    Duration::from_secs_f64(1.0 / f64::from(fps.clamp(1, 120)))
 }
 
 /// What a running loop plays.
@@ -90,6 +107,8 @@ pub struct Handle {
     pub connected_lights: usize,
     /// The room lights the effect drives, which nothing else may touch.
     pub light_ids: Vec<String>,
+    /// Each of those lights, and whether its bulb is reachable right now.
+    links: Vec<(String, Arc<AtomicBool>)>,
     pub mode: Mode,
 }
 
@@ -121,6 +140,14 @@ impl Handle {
     pub fn is_running(&self) -> bool {
         !self.stop.load(Ordering::SeqCst) && !self.done.load(Ordering::SeqCst)
     }
+
+    /// The lights it drives whose bulb dropped and is being reconnected.
+    pub fn reconnecting(&self) -> impl Iterator<Item = &String> {
+        self.links
+            .iter()
+            .filter(|(_, up)| !up.load(Ordering::SeqCst))
+            .map(|(id, _)| id)
+    }
 }
 
 impl Drop for Handle {
@@ -131,10 +158,12 @@ impl Drop for Handle {
 
 /// One connected, ready-to-drive light.
 struct ConnectedLight {
+    id: String,
     mapping: LightMapping,
     /// Where it stands and how fast it answers, for the music show.
     fixture: Fixture,
-    conn: Box<dyn LightStream>,
+    /// Its bulb, reconnected in the background whenever it drops.
+    link: Relink,
 }
 
 /// How many of `ids` sit behind each host: lights behind one Hue bridge share
@@ -191,15 +220,21 @@ fn connect(
         return Err(AppError::new("no_active_lights"));
     }
 
+    // How each bulb is opened, now and again whenever it drops.
+    let openers: Vec<Opener> = targets
+        .iter()
+        .map(|(_, binding, _)| {
+            let endpoint = binding.endpoint();
+            let siblings = hosts.get(&binding.ip).copied().unwrap_or(1);
+            Arc::new(move || devices::open_stream(&endpoint, siblings)) as Opener
+        })
+        .collect();
     // Open every bulb at once: an unplugged one costs its whole timeout, and
     // waiting on each in turn would make a few of them feel like a hang.
     let opened: Vec<_> = std::thread::scope(|scope| {
-        let handles: Vec<_> = targets
+        let handles: Vec<_> = openers
             .iter()
-            .map(|(_, binding, _)| {
-                let siblings = hosts.get(&binding.ip).copied().unwrap_or(1);
-                scope.spawn(move || devices::open_stream(&binding.endpoint(), siblings))
-            })
+            .map(|open| scope.spawn(move || open()))
             .collect();
         handles
             .into_iter()
@@ -213,14 +248,19 @@ fn connect(
     let mut light_ids = Vec::new();
     let mut failed = Vec::new();
     let mut details = Vec::new();
-    for ((mapping, binding, light), result) in targets.into_iter().zip(opened) {
+    let changed: OnChange = Arc::new(links_changed);
+    for (((mapping, binding, light), result), open) in targets.into_iter().zip(opened).zip(openers)
+    {
         match result {
             Ok(conn) => {
                 let fixture = Fixture::place(&config.room.screen, light, conn.interval());
                 connected.push(ConnectedLight {
+                    id: light.id.clone(),
                     mapping,
                     fixture,
-                    conn,
+                    link: Relink::new(conn, open)
+                        .named(light.id.as_str())
+                        .on_change(Arc::clone(&changed)),
                 });
                 light_ids.push(light.id.clone());
             }
@@ -248,8 +288,26 @@ pub fn on_end(f: impl Fn() + Send + Sync + 'static) {
     let _ = ON_END.set(Box::new(f));
 }
 
+/// Called when a light's bulb drops or comes back, set once at launch.
+static ON_LINKS: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+/// What to do when a driven light's bulb drops or comes back (see
+/// [`Handle::reconnecting`]). It runs on the frame loop, so it must return
+/// at once: anything slower belongs on another thread.
+pub fn on_links(f: impl Fn() + Send + Sync + 'static) {
+    let _ = ON_LINKS.set(Box::new(f));
+}
+
+fn links_changed() {
+    if let Some(changed) = ON_LINKS.get() {
+        changed();
+    }
+}
+
 /// Run `body` on its own thread over the connected lights; when it returns
-/// (stopped, or every bulb gone) the bulbs settle, unless handed over.
+/// (stopped, or the capture or the sound gone) the bulbs settle, unless
+/// handed over. A bulb that drops meanwhile does not end it: it is
+/// reconnected while the others play on.
 fn spawn(
     config: &AppConfig,
     mode: Mode,
@@ -262,6 +320,10 @@ fn spawn(
     let settle = Arc::new(AtomicBool::new(true));
     let done = Arc::new(AtomicBool::new(false));
     let connected_lights = lights.len();
+    let links = lights
+        .iter()
+        .map(|l| (l.id.clone(), l.link.up_flag()))
+        .collect();
     let thread = {
         let live = Arc::clone(&live);
         let stop = Arc::clone(&stop);
@@ -276,8 +338,8 @@ fn spawn(
                     rest(&mut lights);
                 }
                 done.store(true, Ordering::SeqCst);
-                // Nobody asked it to stop: every bulb went, or the capture
-                // could not start. What shows it running must hear of it.
+                // Nobody asked it to stop: the capture or the sound could
+                // not start. What shows it running must hear of it.
                 if !stop.load(Ordering::SeqCst)
                     && let Some(ended) = ON_END.get()
                 {
@@ -294,6 +356,7 @@ fn spawn(
         thread: Some(thread),
         connected_lights,
         light_ids,
+        links,
         mode,
     })
 }
@@ -326,8 +389,6 @@ fn start_ambilight(
     let monitor_index = config.capture.monitor_index;
     check_monitor_index(monitor_index)?;
     let (lights, ids) = connect(config, ids, hosts)?;
-    let target_fps = config.capture.target_fps.clamp(1, 120);
-    let frame_budget = Duration::from_secs_f64(1.0 / target_fps as f64);
     spawn(
         config,
         Mode::Ambilight,
@@ -335,10 +396,11 @@ fn start_ambilight(
         ids,
         move |lights, live, stop| {
             // Opened here, not in `start`: the capture handle stays on this
-            // thread for its whole life.
-            match ScreenSource::for_index(monitor_index) {
-                Ok(source) => run_ambilight(source, lights, live, stop, frame_budget),
-                Err(e) => eprintln!("lueur: capture unavailable: {e}"),
+            // thread for its whole life. A stop asked meanwhile (the user
+            // still looking at Wayland's screen sharing dialog) cancels it.
+            match ScreenSource::for_index(monitor_index, stop) {
+                Ok(source) => run_ambilight(source, lights, live, stop),
+                Err(e) => log::error!("capture unavailable: {e}"),
             }
         },
     )
@@ -375,7 +437,7 @@ pub struct Effects {
 
 impl Effects {
     fn lock(&self) -> MutexGuard<'_, Vec<Handle>> {
-        // A loop that ended by itself (every bulb gone) is forgotten here,
+        // A loop that ended by itself (no capture, no sound) is forgotten here,
         // once it has settled the bulbs: dropping it then waits for nothing.
         let mut running = self.running.lock().unwrap_or_else(|p| p.into_inner());
         running.retain(Handle::is_running);
@@ -420,6 +482,14 @@ impl Effects {
             .collect()
     }
 
+    /// Every driven light whose bulb dropped and is being reconnected.
+    pub fn reconnecting_ids(&self) -> Vec<String> {
+        self.lock()
+            .iter()
+            .flat_map(|h| h.reconnecting().cloned())
+            .collect()
+    }
+
     /// Take the loops `which` picks out of the running set, still running.
     pub fn take(&self, which: impl Fn(&Handle) -> bool) -> Vec<Handle> {
         let mut running = self.lock();
@@ -442,31 +512,23 @@ impl Effects {
     }
 }
 
-/// Push one frame to every light still answering, corrected for the walls,
-/// each with the transition `pace` gives it. False once none is.
+/// Push one frame to every light, corrected for the walls, each with the
+/// transition `pace` gives it.
 fn push_all(
     lights: &mut [ConnectedLight],
-    alive: &mut [bool],
     outputs: &[BulbOutput],
     wall: Rgb,
     pace: impl Fn(usize) -> (Effect, u32),
-) -> bool {
+) {
     for (i, light) in lights.iter_mut().enumerate() {
         let Some(&output) = outputs.get(i) else {
             continue;
         };
-        // A bulb that drops is retired rather than killing the whole effect.
+        // A bulb that drops is reconnected in the background, without
+        // holding up the others, and picks up the frame of the moment.
         let (effect, duration_ms) = pace(i);
-        if alive[i]
-            && light
-                .conn
-                .push(output.on_wall(wall), effect, duration_ms)
-                .is_err()
-        {
-            alive[i] = false;
-        }
+        light.link.push(output.on_wall(wall), effect, duration_ms);
     }
-    alive.iter().any(|&a| a)
 }
 
 /// On stop, fade the bulbs to a gentle warm glow and leave them on, so the
@@ -477,7 +539,7 @@ fn push_all(
 fn rest(lights: &mut [ConnectedLight]) {
     std::thread::scope(|scope| {
         for light in lights.iter_mut() {
-            scope.spawn(move || light.conn.rest());
+            scope.spawn(move || light.link.rest());
         }
     });
 }
@@ -488,15 +550,14 @@ fn run_show(
     live: &Mutex<LiveSettings>,
     stop: &AtomicBool,
 ) {
-    let n = lights.len();
-    let mut alive = vec![true; n];
     let fixtures: Vec<Fixture> = lights.iter().map(|l| l.fixture).collect();
     let mut show = Show::new(kind, &fixtures);
+    let mut guard = FlashGuard::show(fixtures.len());
     let tap = if kind == ShowKind::Music {
         match AudioTap::open() {
             Ok(tap) => Some(tap),
             Err(e) => {
-                eprintln!("lueur: audio unavailable: {e}");
+                log::error!("audio unavailable: {e}");
                 return;
             }
         }
@@ -519,7 +580,7 @@ fn run_show(
         // the show.
         let dt = last.elapsed().as_secs_f32().min(0.25);
         last = Instant::now();
-        let Ok((settings, wall)) = live.lock().map(|g| (g.show, g.wall)) else {
+        let Ok((settings, wall, safety)) = live.lock().map(|g| (g.show, g.wall, g.safety)) else {
             break;
         };
         let levels = match &tap {
@@ -529,18 +590,18 @@ fn run_show(
             }
             None => Levels::default(),
         };
-        let outputs = show.frame(&settings, dt, levels);
+        let mut outputs = show.frame(&settings, dt, levels);
+        guard.apply(&mut outputs, dt, safety.flash_guard);
         let sharp = show.sharp();
+        // A hit the guard held back glides in like the rest.
         let pace = |i: usize| {
-            if sharp.get(i).copied().unwrap_or(false) {
+            if sharp.get(i).copied().unwrap_or(false) && !guard.held(i) {
                 (Effect::Sudden, 0)
             } else {
                 glide
             }
         };
-        if !push_all(lights, &mut alive, &outputs, wall, pace) {
-            break;
-        }
+        push_all(lights, &outputs, wall, pace);
     }
 }
 
@@ -579,18 +640,21 @@ fn run_ambilight(
     lights: &mut [ConnectedLight],
     live: &Mutex<LiveSettings>,
     stop: &AtomicBool,
-    frame_budget: Duration,
 ) {
     let Ok(initial) = live.lock().map(|g| *g) else {
         return;
     };
     let mut engine = Ambilight::new(lights.len(), initial.engine);
+    let mut guard = FlashGuard::ambilight(lights.len());
     let mappings: Vec<LightMapping> = lights.iter().map(|l| l.mapping).collect();
-    let mut alive = vec![true; lights.len()];
     let mut last_tick: Option<Instant> = None;
     let mut last_frame: Option<Instant> = None;
 
     while !stop.load(Ordering::SeqCst) {
+        // Read first: the rate itself is live, a new one paces this frame.
+        let settings = live.lock().map(|g| *g).unwrap_or(initial);
+        let frame_budget = settings.frame_budget();
+
         // Cap bulb updates at the target rate. Whatever the screen presents
         // meanwhile piles up in the capture source, so the grab below returns
         // it at once; on a still screen it waits for the next present instead
@@ -602,8 +666,6 @@ fn run_ambilight(
             }
         }
         last_tick = Some(Instant::now());
-
-        let settings = live.lock().map(|g| *g).unwrap_or(initial);
 
         // A bulb transition must finish before the next command replaces it.
         // Left unclamped, a 300 ms fade issued every 17 ms is overwritten 18
@@ -619,17 +681,15 @@ fn run_ambilight(
                 let now = Instant::now();
                 let dt = last_frame.map_or(frame_budget, |t| now - t);
                 last_frame = Some(now);
-                engine.set_frame_time(dt.as_secs_f32().min(0.25));
+                let dt = dt.as_secs_f32().min(0.25);
+                engine.set_frame_time(dt);
                 let mut tuned = settings.engine;
                 tuned.sample_step = scaled_step(tuned.sample_step, frame.width);
                 engine.set_settings(tuned);
-                let outputs = engine.process_outputs(frame, &mappings);
+                let mut outputs = engine.process_outputs(frame, &mappings);
+                guard.apply(&mut outputs, dt, settings.safety.flash_guard);
                 let wall = settings.wall;
-                if !push_all(lights, &mut alive, &outputs, wall, |_| {
-                    (effect, duration_ms)
-                }) {
-                    break; // every bulb is gone; nothing left to do
-                }
+                push_all(lights, &outputs, wall, |_| (effect, duration_ms));
             }
             Err(_) => {
                 // Transient capture hiccup (e.g. a display mode switch). Back off
@@ -646,6 +706,18 @@ mod tests {
 
     fn fps(n: u64) -> Duration {
         Duration::from_secs_f64(1.0 / n as f64)
+    }
+
+    #[test]
+    fn the_frame_rate_follows_the_live_settings() {
+        let mut config = AppConfig::default();
+        config.capture.target_fps = 60;
+        assert_eq!(LiveSettings::of(&config).frame_budget(), fps(60));
+        config.capture.target_fps = 30;
+        assert_eq!(LiveSettings::of(&config).frame_budget(), fps(30));
+        // Out-of-range rates from a hand-edited config are kept sane.
+        assert_eq!(frame_budget(0), fps(1));
+        assert_eq!(frame_budget(1000), fps(120));
     }
 
     #[test]

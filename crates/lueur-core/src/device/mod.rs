@@ -17,21 +17,26 @@ pub mod hue;
 pub mod lifx;
 pub mod mdns;
 pub mod nanoleaf;
+pub mod relink;
 pub mod tuya;
+pub mod wire;
 pub mod wiz;
 
 use crate::color::{BulbOutput, Rgb};
 use crate::yeelight::{self, Effect, MusicConnection, YeelightControl};
 use common::{Driver, Mailbox};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::io;
 use std::time::Duration;
+use wire::Wire;
 
 /// Which protocol a bulb speaks, plus what that protocol needs to be spoken.
 ///
 /// Serialised with a `family` tag so a binding written before families
 /// existed (no `kind` at all) reads back as the Yeelight it always was.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Its `Debug` form masks the credential (see [`Masked`]).
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "family", rename_all = "lowercase")]
 pub enum DeviceKind {
     #[default]
@@ -50,6 +55,10 @@ pub enum DeviceKind {
         username: String,
         #[serde(default)]
         light: String,
+        /// The bridge's pinned certificate (see [`HueBridge::cert`]): when
+        /// set, the username only goes over TLS to that certificate.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        cert: String,
     },
     Nanoleaf {
         #[serde(default)]
@@ -84,7 +93,9 @@ impl DeviceKind {
     /// Whether this kind carries what it needs to be controlled.
     pub fn is_ready(&self) -> bool {
         match self {
-            DeviceKind::Hue { username, light } => !username.is_empty() && !light.is_empty(),
+            DeviceKind::Hue {
+                username, light, ..
+            } => !username.is_empty() && !light.is_empty(),
             DeviceKind::Nanoleaf { token } => !token.is_empty(),
             DeviceKind::Tuya { key, .. } => !key.is_empty(),
             _ => true,
@@ -153,26 +164,70 @@ impl From<yeelight::DiscoveredDevice> for DiscoveredDevice {
 }
 
 /// A Hue bridge Lueur holds a username for.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HueBridge {
     /// Bridge id, lower-case hex.
     pub id: String,
-    /// Last address it was seen at.
+    /// The address it was paired at, or last proved itself at.
     pub ip: String,
     pub username: String,
+    /// SHA-256 of the certificate its HTTPS server showed, lower-case hex:
+    /// pinned at pairing, or at the first visit for a pairing older than
+    /// that. Empty for a bridge without HTTPS, which is then spoken to in
+    /// the clear, and only at `ip`.
+    #[serde(default)]
+    pub cert: String,
 }
 
-/// A Nanoleaf controller Lueur holds a token for.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A Nanoleaf controller Lueur holds a token for. Its API is HTTP only, so
+/// the token only goes to `ip`, where it was granted, until the user says
+/// the controller moved.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NanoleafPairing {
+    /// The controller's own id, from its mDNS record.
     pub id: String,
     pub ip: String,
     pub token: String,
 }
 
+/// What Lueur may send to a bridge or controller that discovery heard at an
+/// address, given the pairing it holds for that device's id.
+///
+/// Anything on the network can claim a device's id, so the id alone opens
+/// nothing: the credential goes to the address it was granted at, or to one
+/// the device proves itself at with its pinned certificate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Approach {
+    /// No pairing: it is only offered for pairing.
+    Unpaired,
+    /// At its paired address: its credential goes there.
+    Home,
+    /// Elsewhere, with a pinned certificate: the credential goes only over
+    /// TLS to that certificate, and the pairing follows if it is shown.
+    Prove,
+    /// Elsewhere, with nothing to prove it is the same device: nothing is
+    /// sent until the user says it is theirs.
+    Ask,
+    /// Elsewhere while the paired device still answers at home: someone else.
+    Ignore,
+}
+
+/// The [`Approach`] for a device heard at `found_ip`. `paired` is its
+/// pairing's address and whether a certificate is pinned for it;
+/// `home_answers` whether the paired device answered at that address.
+pub fn approach(found_ip: &str, paired: Option<(&str, bool)>, home_answers: bool) -> Approach {
+    match paired {
+        None => Approach::Unpaired,
+        Some((home, _)) if home == found_ip => Approach::Home,
+        Some(_) if home_answers => Approach::Ignore,
+        Some((_, true)) => Approach::Prove,
+        Some((_, false)) => Approach::Ask,
+    }
+}
+
 /// A Tuya bulb imported from the user's Smart Life account. Only what local
 /// control needs is kept; the account's tokens are discarded after import.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TuyaDevice {
     /// Tuya device id, as the cloud reports it (no family prefix).
     pub id: String,
@@ -193,6 +248,84 @@ pub struct Pairings {
     pub nanoleaf: Vec<NanoleafPairing>,
     #[serde(default)]
     pub tuya: Vec<TuyaDevice>,
+}
+
+/// A credential as `Debug` shows it: whether there is one, never what it
+/// is, so a credential cannot reach a log through `{:?}`.
+pub struct Masked<'a>(pub &'a str);
+
+impl fmt::Debug for Masked<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(if self.0.is_empty() {
+            "\"\""
+        } else {
+            wire::MASK
+        })
+    }
+}
+
+impl fmt::Debug for DeviceKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DeviceKind::Yeelight => f.write_str("Yeelight"),
+            DeviceKind::Wiz => f.write_str("Wiz"),
+            DeviceKind::Lifx { target } => f.debug_struct("Lifx").field("target", target).finish(),
+            DeviceKind::Govee => f.write_str("Govee"),
+            DeviceKind::Hue {
+                username,
+                light,
+                cert,
+            } => f
+                .debug_struct("Hue")
+                .field("username", &Masked(username))
+                .field("light", light)
+                .field("cert", cert)
+                .finish(),
+            DeviceKind::Nanoleaf { token } => f
+                .debug_struct("Nanoleaf")
+                .field("token", &Masked(token))
+                .finish(),
+            DeviceKind::Tuya { key, version, dps } => f
+                .debug_struct("Tuya")
+                .field("key", &Masked(key))
+                .field("version", version)
+                .field("dps", dps)
+                .finish(),
+        }
+    }
+}
+
+impl fmt::Debug for HueBridge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HueBridge")
+            .field("id", &self.id)
+            .field("ip", &self.ip)
+            .field("username", &Masked(&self.username))
+            .field("cert", &self.cert)
+            .finish()
+    }
+}
+
+impl fmt::Debug for NanoleafPairing {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NanoleafPairing")
+            .field("id", &self.id)
+            .field("ip", &self.ip)
+            .field("token", &Masked(&self.token))
+            .finish()
+    }
+}
+
+impl fmt::Debug for TuyaDevice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TuyaDevice")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("key", &Masked(&self.key))
+            .field("product", &self.product)
+            .field("dps", &self.dps)
+            .finish()
+    }
 }
 
 /// A live, per-frame channel to one bulb.
@@ -254,23 +387,33 @@ pub const CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
 /// bridge), so families with a shared command budget can split it fairly.
 pub fn open_stream(ep: &Endpoint, siblings: usize) -> io::Result<Box<dyn LightStream>> {
     require_ready(ep)?;
+    log::debug!(family = ep.kind.family(), id = ep.id.as_str(), ip = ep.ip.as_str(); "opening a stream");
+    let wire = Wire::of(ep);
     Ok(match &ep.kind {
         DeviceKind::Yeelight => Box::new(YeelightStream(Mailbox::spawn(
             "yeelight",
-            MusicConnection::establish(&ep.ip, ep.port, CONTROL_TIMEOUT)?,
+            MusicConnection::establish(&ep.ip, ep.port, CONTROL_TIMEOUT)?.traced(wire),
         )?)),
-        DeviceKind::Wiz => Box::new(wiz::WizStream::open(&ep.ip)?),
-        DeviceKind::Lifx { target } => Box::new(lifx::LifxStream::open(&ep.ip, ep.port, target)?),
-        DeviceKind::Govee => Box::new(govee::GoveeStream::open(&ep.ip)?),
-        DeviceKind::Hue { username, light } => Box::new(hue::HueStream::open(
+        DeviceKind::Wiz => Box::new(wiz::WizStream::open(&ep.ip, wire)?),
+        DeviceKind::Lifx { target } => {
+            Box::new(lifx::LifxStream::open(&ep.ip, ep.port, target, wire)?)
+        }
+        DeviceKind::Govee => Box::new(govee::GoveeStream::open(&ep.ip, wire)?),
+        DeviceKind::Hue {
+            username,
+            light,
+            cert,
+        } => Box::new(hue::HueStream::open(
             &ep.ip,
             username,
             light,
+            cert,
             siblings.max(1),
+            wire,
         )?),
-        DeviceKind::Nanoleaf { token } => {
-            Box::new(nanoleaf::NanoleafStream::open(&ep.ip, ep.port, token)?)
-        }
+        DeviceKind::Nanoleaf { token } => Box::new(nanoleaf::NanoleafStream::open(
+            &ep.ip, ep.port, token, wire,
+        )?),
         DeviceKind::Tuya { .. } => return Err(shell_only()),
     })
 }
@@ -278,6 +421,7 @@ pub fn open_stream(ep: &Endpoint, siblings: usize) -> io::Result<Box<dyn LightSt
 /// Turn a bulb on or off.
 pub fn set_power(ep: &Endpoint, on: bool) -> io::Result<()> {
     require_ready(ep)?;
+    log::debug!(family = ep.kind.family(), id = ep.id.as_str(), ip = ep.ip.as_str(), on = on; "power");
     match &ep.kind {
         DeviceKind::Yeelight => {
             YeelightControl::connect(&ep.ip, ep.port, CONTROL_TIMEOUT)?.set_power(on)
@@ -285,7 +429,11 @@ pub fn set_power(ep: &Endpoint, on: bool) -> io::Result<()> {
         DeviceKind::Wiz => wiz::set_power(&ep.ip, on),
         DeviceKind::Lifx { target } => lifx::set_power(&ep.ip, ep.port, target, on),
         DeviceKind::Govee => govee::set_power(&ep.ip, on),
-        DeviceKind::Hue { username, light } => hue::set_power(&ep.ip, username, light, on),
+        DeviceKind::Hue {
+            username,
+            light,
+            cert,
+        } => hue::set_power(&ep.ip, username, light, cert, on),
         DeviceKind::Nanoleaf { token } => nanoleaf::set_power(&ep.ip, ep.port, token, on),
         DeviceKind::Tuya { .. } => Err(shell_only()),
     }
@@ -299,6 +447,7 @@ pub fn identify(ep: &Endpoint, color: Rgb) -> io::Result<()> {
         rgb: crate::color::full_chroma(color),
         bright: 100,
     };
+    log::debug!(family = ep.kind.family(), id = ep.id.as_str(), ip = ep.ip.as_str(); "identify");
     match &ep.kind {
         DeviceKind::Yeelight => {
             let mut ctrl = YeelightControl::connect(&ep.ip, ep.port, CONTROL_TIMEOUT)?;
@@ -340,27 +489,41 @@ fn require_ready(ep: &Endpoint) -> io::Result<()> {
 /// when every family fails is the error returned.
 pub fn discover(timeout: Duration, pairings: &Pairings) -> io::Result<Vec<DiscoveredDevice>> {
     type Search<'a> = Box<dyn FnOnce() -> io::Result<Vec<DiscoveredDevice>> + Send + 'a>;
-    let searches: Vec<Search> = vec![
-        Box::new(move || {
-            Ok(yeelight::discover(timeout)?
-                .into_iter()
-                .map(DiscoveredDevice::from)
-                .collect())
-        }),
-        Box::new(move || wiz::discover(timeout)),
-        Box::new(move || lifx::discover(timeout)),
-        Box::new(move || govee::discover(timeout)),
-        Box::new(move || hue::discover(timeout, &pairings.hue)),
-        Box::new(move || nanoleaf::discover(timeout, &pairings.nanoleaf)),
+    let searches: Vec<(&str, Search)> = vec![
+        (
+            "yeelight",
+            Box::new(move || {
+                Ok(yeelight::discover(timeout)?
+                    .into_iter()
+                    .map(DiscoveredDevice::from)
+                    .collect())
+            }),
+        ),
+        ("wiz", Box::new(move || wiz::discover(timeout))),
+        ("lifx", Box::new(move || lifx::discover(timeout))),
+        ("govee", Box::new(move || govee::discover(timeout))),
+        (
+            "hue",
+            Box::new(move || hue::discover(timeout, &pairings.hue)),
+        ),
+        (
+            "nanoleaf",
+            Box::new(move || nanoleaf::discover(timeout, &pairings.nanoleaf)),
+        ),
     ];
 
-    let results: Vec<io::Result<Vec<DiscoveredDevice>>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = searches.into_iter().map(|s| scope.spawn(s)).collect();
+    let results: Vec<(&str, io::Result<Vec<DiscoveredDevice>>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = searches
+            .into_iter()
+            .map(|(family, s)| (family, scope.spawn(s)))
+            .collect();
         handles
             .into_iter()
-            .map(|h| {
-                h.join()
-                    .unwrap_or_else(|_| Err(io::Error::other("search panicked")))
+            .map(|(family, h)| {
+                let r = h
+                    .join()
+                    .unwrap_or_else(|_| Err(io::Error::other("search panicked")));
+                (family, r)
             })
             .collect()
     });
@@ -368,13 +531,17 @@ pub fn discover(timeout: Duration, pairings: &Pairings) -> io::Result<Vec<Discov
     let mut found = Vec::new();
     let mut last_err = None;
     let mut any_ok = false;
-    for r in results {
+    for (family, r) in results {
         match r {
             Ok(devices) => {
+                log::debug!(family = family; "search found {}", devices.len());
                 any_ok = true;
                 found.extend(devices);
             }
-            Err(e) => last_err = Some(e),
+            Err(e) => {
+                log::warn!(family = family; "search failed: {e}");
+                last_err = Some(e);
+            }
         }
     }
     if !any_ok && let Some(e) = last_err {
@@ -402,6 +569,7 @@ mod tests {
         let kind = DeviceKind::Hue {
             username: "u".into(),
             light: "3".into(),
+            cert: String::new(),
         };
         let json = serde_json::to_string(&kind).unwrap();
         assert_eq!(json, r#"{"family":"hue","username":"u","light":"3"}"#);
@@ -417,7 +585,8 @@ mod tests {
         assert!(
             !DeviceKind::Hue {
                 username: String::new(),
-                light: String::new()
+                light: String::new(),
+                cert: String::new(),
             }
             .is_ready()
         );
@@ -441,9 +610,95 @@ mod tests {
             kind: DeviceKind::Hue {
                 username: String::new(),
                 light: String::new(),
+                cert: String::new(),
             },
         };
         let err = set_power(&ep, true).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn a_credential_only_goes_where_it_was_granted_or_proved() {
+        let home = "192.168.1.2";
+        let away = "192.168.1.66";
+        assert_eq!(approach(away, None, false), Approach::Unpaired);
+        // At home, pinned or not.
+        assert_eq!(approach(home, Some((home, false)), true), Approach::Home);
+        assert_eq!(approach(home, Some((home, true)), false), Approach::Home);
+        // Elsewhere: only a pinned certificate can vouch for it.
+        assert_eq!(approach(away, Some((home, true)), false), Approach::Prove);
+        assert_eq!(approach(away, Some((home, false)), false), Approach::Ask);
+        // Elsewhere while the real one answers at home: someone else.
+        assert_eq!(approach(away, Some((home, true)), true), Approach::Ignore);
+        assert_eq!(approach(away, Some((home, false)), true), Approach::Ignore);
+    }
+
+    #[test]
+    fn debug_forms_never_show_a_credential() {
+        let kinds = [
+            DeviceKind::Hue {
+                username: "hue-secret".into(),
+                light: "1".into(),
+                cert: String::new(),
+            },
+            DeviceKind::Nanoleaf {
+                token: "nano-secret".into(),
+            },
+            DeviceKind::Tuya {
+                key: "tuya-secret".into(),
+                version: "3.3".into(),
+                dps: tuya::TuyaDps::default(),
+            },
+        ];
+        for kind in kinds {
+            let ep = Endpoint {
+                id: "x".into(),
+                ip: "192.168.1.2".into(),
+                port: 80,
+                kind,
+            };
+            let shown = format!("{ep:?}");
+            assert!(
+                !shown.contains("secret") && shown.contains(wire::MASK),
+                "{shown}"
+            );
+        }
+        let pairings = Pairings {
+            hue: vec![HueBridge {
+                id: "b".into(),
+                ip: "192.168.1.2".into(),
+                username: "hue-secret".into(),
+                cert: String::new(),
+            }],
+            nanoleaf: vec![NanoleafPairing {
+                id: "n".into(),
+                ip: "192.168.1.3".into(),
+                token: "nano-secret".into(),
+            }],
+            tuya: vec![TuyaDevice {
+                id: "t".into(),
+                name: "Lamp".into(),
+                key: "tuya-secret".into(),
+                product: String::new(),
+                dps: tuya::TuyaDps::default(),
+            }],
+        };
+        let shown = format!("{pairings:?}");
+        assert!(!shown.contains("secret"), "{shown}");
+        // No credential reads as none, not as a masked one.
+        let bare = DeviceKind::Nanoleaf {
+            token: String::new(),
+        };
+        assert_eq!(format!("{bare:?}"), r#"Nanoleaf { token: "" }"#);
+    }
+
+    #[test]
+    fn older_pairings_read_back_without_a_certificate() {
+        let b: HueBridge =
+            serde_json::from_str(r#"{"id":"b1","ip":"192.168.1.2","username":"u"}"#).unwrap();
+        assert!(b.cert.is_empty());
+        let k: DeviceKind =
+            serde_json::from_str(r#"{"family":"hue","username":"u","light":"1"}"#).unwrap();
+        assert!(matches!(k, DeviceKind::Hue { cert, .. } if cert.is_empty()));
     }
 }

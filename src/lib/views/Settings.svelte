@@ -16,8 +16,12 @@
 
   let monitors = $state<MonitorInfo[]>([]);
   let version = $state("");
+  // False when no keyring is available: the credentials are then kept
+  // unencrypted in the config, and the page says so.
+  let sealed = $state(true);
 
   onMount(async () => {
+    sealed = await ipc.credentialsSealed().catch(() => false);
     try {
       monitors = await ipc.listMonitors();
     } catch (e) {
@@ -54,6 +58,15 @@
     { value: "dark", label: t("theme_dark") },
   ]);
 
+  // Updates per second of the ambilight. A rate set by hand in the config
+  // file is offered too, so the control never shows nothing chosen.
+  const FPS_CHOICES = [30, 45, 60];
+  const fpsOptions = $derived(
+    [...new Set([...FPS_CHOICES, c.capture.target_fps])]
+      .sort((a, b) => a - b)
+      .map((n) => ({ value: String(n), label: String(n) })),
+  );
+
   // Language names are written in their own language, so anyone can find theirs.
   const languageOptions = $derived<{ value: Language; label: string }[]>([
     { value: "system", label: t("automatic") },
@@ -67,34 +80,53 @@
     <h1 class="page-title">{t("nav_settings")}</h1>
   </header>
 
-  {#if DETECTS_FULLSCREEN || monitors.length > 1}
-    <section class="group">
-      <div class="group-head"><h2 class="group-title">{t("mode_ambilight")}</h2></div>
-      <div class="card rows">
-        {#if DETECTS_FULLSCREEN}
-          <Row label={t("auto_mode")} tip={t("auto_mode_tip")}>
-            <Switch
-              checked={c.behavior.auto_fullscreen}
-              label={t("auto_mode")}
-              onchange={(v) => edit((x) => (x.behavior.auto_fullscreen = v))}
-            />
-          </Row>
-        {/if}
-        {#if monitors.length > 1}
-          <Row label={t("display")}>
-            <select
-              value={c.capture.monitor_index}
-              onchange={(e) => edit((x) => (x.capture.monitor_index = +e.currentTarget.value))}
-            >
-              {#each monitors as m (m.index)}
-                <option value={m.index}>{m.name} · {m.width}×{m.height}{m.is_primary ? ` · ${t("display_main")}` : ""}</option>
-              {/each}
-            </select>
-          </Row>
-        {/if}
-      </div>
-    </section>
-  {/if}
+  <section class="group">
+    <div class="group-head"><h2 class="group-title">{t("mode_ambilight")}</h2></div>
+    <div class="card rows">
+      {#if DETECTS_FULLSCREEN}
+        <Row label={t("auto_mode")} tip={t("auto_mode_tip")}>
+          <Switch
+            checked={c.behavior.auto_fullscreen}
+            label={t("auto_mode")}
+            onchange={(v) => edit((x) => (x.behavior.auto_fullscreen = v))}
+          />
+        </Row>
+      {/if}
+      {#if monitors.length > 1}
+        <Row label={t("display")}>
+          <select
+            value={c.capture.monitor_index}
+            onchange={(e) => edit((x) => (x.capture.monitor_index = +e.currentTarget.value))}
+          >
+            {#each monitors as m (m.index)}
+              <option value={m.index}>{m.name} · {m.width}×{m.height}{m.is_primary ? ` · ${t("display_main")}` : ""}</option>
+            {/each}
+          </select>
+        </Row>
+      {/if}
+      <Row label={t("frame_rate")} tip={t("frame_rate_tip")}>
+        <Segmented
+          label={t("frame_rate")}
+          value={String(c.capture.target_fps)}
+          options={fpsOptions}
+          onchange={(v: string) => edit((x) => (x.capture.target_fps = +v))}
+        />
+      </Row>
+    </div>
+  </section>
+
+  <section class="group">
+    <div class="group-head"><h2 class="group-title">{t("accessibility")}</h2></div>
+    <div class="card rows">
+      <Row label={t("flash_guard")} tip={t("flash_guard_tip")}>
+        <Switch
+          checked={c.safety.flash_guard}
+          label={t("flash_guard")}
+          onchange={(v) => edit((x) => (x.safety.flash_guard = v))}
+        />
+      </Row>
+    </div>
+  </section>
 
   <section class="group">
     <div class="group-head"><h2 class="group-title">{t("application")}</h2></div>
@@ -126,7 +158,15 @@
           <button class="btn sm" disabled={!ipc.inTauri()} onclick={importConfig}>{t("import")}</button>
         </div>
       </Row>
+      <Row label={t("logs")} tip={t("logs_tip")}>
+        <button class="btn sm" disabled={!ipc.inTauri()} onclick={() => ipc.openLogsFolder().catch((e) => fail(e))}>
+          {t("open_logs")}
+        </button>
+      </Row>
     </div>
+    {#if !sealed}
+      <p class="unsealed" role="status">{t("credentials_unsealed")}</p>
+    {/if}
   </section>
 
   <footer class="about">
@@ -135,6 +175,12 @@
 </div>
 
 <style>
+  .unsealed {
+    margin-top: var(--s-2);
+    padding: 0 var(--s-4);
+    font-size: var(--t-sm);
+    color: var(--text-3);
+  }
   .about {
     margin-top: var(--s-6);
     text-align: center;

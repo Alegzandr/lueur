@@ -27,6 +27,8 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       release: ${{ steps.v.outputs.release }}
+      macos_sign: ${{ steps.apple.outputs.sign }}
+      macos_notarize: ${{ steps.apple.outputs.notarize }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,6 +60,22 @@ jobs:
           fi
           echo "Releasing v$version"
           echo "release=true" >> "$GITHUB_OUTPUT"
+      # Only whether Apple's secrets are set leaves this step, never their
+      # values: the Mac app is signed when the certificate is, and notarized
+      # when the Apple account is too. See docs/DEVELOPMENT.md.
+      - id: apple
+        name: Apple signing
+        env:
+          SIGN: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+          NOTARIZE: ${{ secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+        run: |
+          echo "sign=$SIGN" >> "$GITHUB_OUTPUT"
+          echo "notarize=$NOTARIZE" >> "$GITHUB_OUTPUT"
+          if [ "$SIGN" != true ]; then
+            echo "::warning::No Apple certificate: the Mac app is not signed nor notarized"
+          elif [ "$NOTARIZE" != true ]; then
+            echo "::warning::No Apple account: the Mac app is signed but not notarized"
+          fi
 
   # The CI skips release commits and leaves them to this job, so it runs for
   # one even when its version is already tagged.
@@ -68,7 +86,7 @@ jobs:
 
   # Builds run every dependency's build script and never see the signing
   # key, and they restore no cache another workflow could have written:
-  # what they produce is signed as is.
+  # what they produce is signed as is (the Mac app too, by its own job).
   build:
     name: Build (${{ matrix.name }})
     needs: [verify, tests]
@@ -137,11 +155,107 @@ jobs:
           path: release/*
           if-no-files-found: error
 
+  # The only job that sees Apple's certificate and account, on a fresh Mac
+  # that runs nothing from the repository or npm: Apple's own tools sign the
+  # app the build made (hardened runtime, src-tauri/Entitlements.plist),
+  # notarize it and staple the ticket, then the two archives are made again
+  # from it and replace the build's.
+  macos-sign:
+    name: Sign the Mac app
+    needs: [verify, build]
+    if: needs.verify.outputs.macos_sign == 'true'
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      NOTARIZE: ${{ needs.verify.outputs.macos_notarize }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: src-tauri/Entitlements.plist
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-macos
+          path: release
+      - name: Sign
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/app"
+          mkdir -p "$work"
+          tar -xzf "release/Lueur_${VERSION}_macos_universal.app.tar.gz" -C "$work"
+          app="$work/Lueur.app"
+          # A keychain of its own, holding only the certificate.
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -base64 32)
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          # The executables inside first, then the bundle that seals them.
+          find "$app/Contents/MacOS" -type f -perm -u+x -print0 |
+            while IFS= read -r -d '' exe; do
+              codesign --force --timestamp --options runtime \
+                --entitlements src-tauri/Entitlements.plist \
+                --keychain "$keychain" --sign "$APPLE_SIGNING_IDENTITY" "$exe"
+            done
+          codesign --force --timestamp --options runtime \
+            --entitlements src-tauri/Entitlements.plist \
+            --keychain "$keychain" --sign "$APPLE_SIGNING_IDENTITY" "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+      - name: Notarize
+        if: env.NOTARIZE == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/app/Lueur.app"
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/notarize.zip"
+          status=$(xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+            --wait --output-format json | jq -r .status)
+          if [ "$status" != Accepted ]; then
+            echo "::error::Notarization ended with status: $status"
+            exit 1
+          fi
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+      - name: Archives
+        run: |
+          set -euo pipefail
+          base="release/Lueur_${VERSION}_macos_universal"
+          rm -f "$base.app.tar.gz" "$base.zip"
+          COPYFILE_DISABLE=1 tar -czf "$base.app.tar.gz" -C "$RUNNER_TEMP/app" "Lueur.app"
+          ditto -c -k --keepParent "$RUNNER_TEMP/app/Lueur.app" "$base.zip"
+      - name: Remove the keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-macos
+          path: release/*
+          if-no-files-found: error
+          overwrite: true
+
   # The only job that sees the signing key: a fresh runner that compiles
-  # nothing and runs only the Tauri CLI from the lockfile.
+  # nothing and runs only the Tauri CLI from the lockfile. It waits for the
+  # Mac app to be signed, when it is.
   sign:
     name: Sign updates
-    needs: [verify, build]
+    needs: [verify, build, macos-sign]
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.macos-sign.result == 'success' || needs.macos-sign.result == 'skipped') }}
     runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.verify.outputs.version }}
@@ -162,10 +276,20 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        # Each signature names the version it was made for, in its signed
+        # trusted comment: the app (`requireSignedVersion`) refuses a file
+        # whose signed version is not the one latest.json announces, so an
+        # old release can never be passed off as a new one.
         run: |
-          npx tauri signer sign "release/Lueur_${VERSION}_windows_x64_setup.exe"
-          npx tauri signer sign "release/Lueur_${VERSION}_linux_x86_64.AppImage"
-          npx tauri signer sign "release/Lueur_${VERSION}_macos_universal.app.tar.gz"
+          for f in "Lueur_${VERSION}_windows_x64_setup.exe" \
+                   "Lueur_${VERSION}_linux_x86_64.AppImage" \
+                   "Lueur_${VERSION}_macos_universal.app.tar.gz"; do
+            npx tauri signer sign --app-version "$VERSION" "release/$f"
+            if ! base64 -d "release/$f.sig" | grep '^trusted comment:' | tr '\t' '\n' | grep -qx "version:$VERSION"; then
+              echo "::error::The signature of $f does not name version $VERSION"
+              exit 1
+            fi
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signed
@@ -175,6 +299,9 @@ jobs:
   publish:
     name: Publish release
     needs: [verify, sign]
+    # Explicit, since a skipped macos-sign upstream would otherwise skip this
+    # job too, even with sign done.
+    if: ${{ !cancelled() && needs.sign.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

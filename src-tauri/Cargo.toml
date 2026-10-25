@@ -58,10 +58,16 @@ xcap = "0.9"
 # The local time of day, for the natural light (src/natural.rs).
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 cpal = "0.18"
+# Logs (src/logging.rs): the facade most of the tree already logs through,
+# with a small logger of our own instead of a logging framework.
+log = { version = "0.4.29", features = ["kv"] }
+# Opens the logs folder in the file manager (src/logging.rs), from Rust
+# only (no frontend permission).
+tauri-plugin-opener = "2"
 
-# Desktop Duplication capture (see src/capture/dxgi.rs) and the per-user
-# install (src/install.rs). Same `windows` version xcap already pulls in, so it
-# adds no second copy.
+# Desktop Duplication and GDI capture (see src/capture/dxgi.rs, gdi.rs), the
+# capture benchmark's CPU time and the per-user install (src/install.rs). Same
+# `windows` version xcap already pulls in, so it adds no second copy.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_Graphics_Direct3D",
@@ -73,11 +79,24 @@ windows = { version = "0.62", features = [
     "Win32_System_Com",
     "Win32_System_LibraryLoader",
     "Win32_System_SystemInformation",
+    "Win32_System_Threading",
     "Win32_UI_Controls",
     "Win32_UI_Shell",
 ] }
 self-replace = "1.5"
 winreg = "0.56"
+
+# Wayland capture through the ScreenCast portal (see src/capture/screencast.rs):
+# the portal over D-Bus, its video over PipeWire. The versions xcap already
+# pulls in on Linux, so neither adds a second copy.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "5.17"
+pipewire = "0.10"
+
+[dev-dependencies]
+# The versions the updater compares (src/updater.rs tests); already built
+# for Tauri.
+semver = "1"
 
 [features]
 # Tauri's custom-protocol is enabled for production builds by the CLI.

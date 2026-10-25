@@ -2,6 +2,7 @@
 
 use crate::auto;
 use crate::error::{AppError, AppResult};
+use crate::identity::Unverified;
 use crate::manual::Manual;
 use crate::runner;
 use crate::sleep;
@@ -17,6 +18,9 @@ pub struct AppState {
     pub config: Mutex<AppConfig>,
     /// Where the credentials are kept on disk.
     vault: Mutex<Vault>,
+    /// Paired bridges and controllers the last search heard where Lueur
+    /// cannot vouch for them, waiting for the user's word.
+    pub unverified: Mutex<Vec<Unverified>>,
     /// The running effects, one per mode.
     pub effects: runner::Effects,
     /// Lights being set by hand.
@@ -34,7 +38,7 @@ impl AppState {
     /// Load state from disk (or defaults) for the given data directory.
     pub fn load(data_dir: PathBuf) -> Self {
         let config = config::load(&data_dir).unwrap_or_else(|e| {
-            eprintln!("lueur: failed to load config ({e}); using defaults");
+            log::error!("failed to load config ({e}); using defaults");
             // The next save would overwrite it: keep the unreadable file
             // beside, where the room and the keys can still be recovered.
             if matches!(e, config::ConfigError::Parse(_)) {
@@ -49,18 +53,21 @@ impl AppState {
         let mut config = config;
         let vault = Vault::open(&data_dir, &mut config);
         let migrate = plain && matches!(vault, Vault::Ready { .. });
+        let manual = Manual::default();
+        manual.protect(config.safety.flash_guard);
         let state = AppState {
             data_dir,
             config: Mutex::new(config),
             vault: Mutex::new(vault),
+            unverified: Mutex::new(Vec::new()),
             effects: runner::Effects::default(),
-            manual: Manual::default(),
+            manual,
             auto_owner: Mutex::new(auto::Owner::default()),
             sleep: sleep::Timer::default(),
             ui_language: Mutex::new("en"),
         };
         if migrate && let Err(e) = state.persist() {
-            eprintln!("lueur: could not move the credentials into the vault ({e:?})");
+            log::error!("could not move the credentials into the vault: {e}");
         }
         state
     }
@@ -79,6 +86,12 @@ impl AppState {
             .map_err(|_| AppError::poisoned())?
             .seal(&self.data_dir, &cfg);
         config::save(&self.data_dir, &on_disk).map_err(|e| AppError::new("save_failed").detail(e))
+    }
+
+    /// Whether the credentials are sealed on disk this session, rather than
+    /// kept in `config.json` for want of a keyring.
+    pub fn credentials_sealed(&self) -> bool {
+        self.vault.lock().is_ok_and(|v| v.is_sealing())
     }
 
     /// Does any effect drive some light?

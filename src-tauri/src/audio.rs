@@ -120,7 +120,7 @@ impl Tap {
                     buf.drain(..extra);
                 }
             },
-            |e| eprintln!("lueur: audio: {e}"),
+            |e| log::warn!("audio: {e}"),
             None,
         )
     }

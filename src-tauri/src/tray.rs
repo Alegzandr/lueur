@@ -1,17 +1,20 @@
 //! System-tray icon and menu.
 //!
 //! The tray is how Lueur is used mid-game, and how the lights are switched
-//! without opening the window: the menu starts and stops the ambilight and
-//! the effects, applies the moods, sets the sleep timer and turns every
-//! light on or off. Its
-//! labels follow the interface language the frontend reports.
+//! without opening the window: the menu says what the lights show, starts
+//! and stops the Ambilight and the effects, applies the moods, sets the
+//! sleep timer and turns every light on or off. What plays and what the
+//! room shows are ticked. Its labels follow the interface language the
+//! frontend reports, in the interface's words.
 
 use crate::error::AppResult;
 use crate::lights;
 use crate::runner::Mode;
 use crate::state::AppState;
-use lueur_core::scene::{MOODS, NATURAL};
+use lueur_core::config::AppConfig;
+use lueur_core::scene::{LightState, MOODS, NATURAL};
 use lueur_core::show::{SHOWS, ShowKind};
+use std::sync::Mutex;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Wry};
@@ -35,6 +38,7 @@ struct Labels {
     start: &'static str,
     stop: &'static str,
     stop_show: &'static str,
+    stop_all: &'static str,
     shows: &'static str,
     scenes: &'static str,
     sleep: &'static str,
@@ -43,47 +47,54 @@ struct Labels {
     all_off: &'static str,
     open: &'static str,
     quit: &'static str,
-    on: &'static str,
-    off: &'static str,
+    /// Leads the status line while something plays.
+    playing: &'static str,
+    by_hand: &'static str,
+    dark: &'static str,
 }
 
 fn labels(lang: &str) -> Labels {
     match lang {
         "fr" => Labels {
-            start: "Démarrer l'ambilight",
-            stop: "Arrêter l'ambilight",
+            start: "Démarrer l'Ambilight",
+            stop: "Arrêter l'Ambilight",
             stop_show: "Arrêter l'effet",
+            stop_all: "Tout arrêter",
             shows: "Effets",
             scenes: "Ambiances",
-            sleep: "Minuteur de sommeil",
+            sleep: "Minuteur d'extinction",
             sleep_cancel: "Annuler le minuteur",
             all_on: "Tout allumer",
             all_off: "Tout éteindre",
             open: "Ouvrir Lueur",
-            quit: "Quitter",
-            on: "Lueur : allumé",
-            off: "Lueur : éteint",
+            quit: "Quitter Lueur",
+            playing: "En cours\u{a0}: ",
+            by_hand: "Lumières réglées à la main",
+            dark: "Toutes les lumières sont éteintes",
         },
         _ => Labels {
-            start: "Start ambilight",
-            stop: "Stop ambilight",
-            stop_show: "Stop effect",
+            start: "Start Ambilight",
+            stop: "Stop Ambilight",
+            stop_show: "Stop the effect",
+            stop_all: "Stop everything",
             shows: "Effects",
             scenes: "Moods",
             sleep: "Sleep timer",
-            sleep_cancel: "Cancel timer",
+            sleep_cancel: "Cancel the timer",
             all_on: "All on",
             all_off: "All off",
             open: "Open Lueur",
-            quit: "Quit",
-            on: "Lueur: on",
-            off: "Lueur: off",
+            quit: "Quit Lueur",
+            playing: "Playing: ",
+            by_hand: "Lights set by hand",
+            dark: "All lights are off",
         },
     }
 }
 
-/// What the built-in moods and the shows are called (see
-/// `lueur_core::scene::MOODS` and `lueur_core::show::SHOWS`).
+/// What the Ambilight, the built-in moods and the shows are called (see
+/// `lueur_core::scene::MOODS` and `lueur_core::show::SHOWS`), as in the
+/// interface.
 fn name(lang: &str, id: &str) -> &'static str {
     match (lang, id) {
         ("fr", "daylight") => "Lumière du jour",
@@ -96,6 +107,7 @@ fn name(lang: &str, id: &str) -> &'static str {
         ("fr", "sunset") => "Coucher de soleil",
         ("fr", "ocean") => "Océan",
         ("fr", "candle") => "Bougie",
+        (_, "ambilight") => "Ambilight",
         (_, "daylight") => "Daylight",
         (_, "reading") => "Reading",
         (_, "relax") => "Relax",
@@ -119,18 +131,122 @@ fn running_modes(state: &AppState) -> Vec<Mode> {
     state.effects.modes()
 }
 
-/// Build the menu for the current state and language.
-fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    let state = app.state::<AppState>();
-    let lang = language(&state);
+/// What the lights show, as the tray tells it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Now {
+    /// The effects playing: the Ambilight first, then the shows in menu
+    /// order.
+    modes: Vec<Mode>,
+    /// The mood every light no effect drives shows, when they all show the
+    /// same one.
+    mood: Option<&'static str>,
+    /// Whether a light no effect drives is on.
+    lit: bool,
+}
+
+impl Now {
+    fn of(cfg: &AppConfig, mut modes: Vec<Mode>, driven: &[String]) -> Self {
+        modes.sort_by_key(|m| match m {
+            Mode::Ambilight => 0,
+            Mode::Show(kind) => 1 + SHOWS.iter().position(|k| k == kind).unwrap_or(SHOWS.len()),
+        });
+        modes.dedup();
+        // The lights no effect drives, as last set (a light never set is on).
+        let free: Vec<(&String, LightState)> = cfg
+            .bindings
+            .iter()
+            .map(|b| &b.light_id)
+            .filter(|id| !driven.contains(id))
+            .map(|id| (id, cfg.states.get(id).copied().unwrap_or_default()))
+            .collect();
+        let natural = |id: &String| cfg.natural.contains(id);
+        let all_on = !free.is_empty() && free.iter().all(|(_, s)| s.on);
+        let mood = if !all_on {
+            None
+        } else if free.iter().all(|(id, _)| natural(id)) {
+            Some(NATURAL)
+        } else {
+            MOODS
+                .iter()
+                .find(|m| free.iter().all(|(id, s)| !natural(id) && *s == m.state()))
+                .map(|m| m.id)
+        };
+        Now {
+            modes,
+            mood,
+            lit: free.iter().any(|(_, s)| s.on),
+        }
+    }
+
+    /// The menu's first line: what plays and the mood the rest of the room
+    /// shows, or that the lights are set by hand, or off.
+    fn line(&self, lang: &str) -> String {
+        let l = labels(lang);
+        let parts: Vec<&str> = self
+            .modes
+            .iter()
+            .map(|m| name(lang, m.id()))
+            .chain(self.mood.map(|m| name(lang, m)))
+            .collect();
+        if !parts.is_empty() {
+            format!("{}{}", l.playing, parts.join(" + "))
+        } else if self.lit {
+            l.by_hand.to_string()
+        } else {
+            l.dark.to_string()
+        }
+    }
+}
+
+fn now(state: &AppState) -> Now {
+    let modes = running_modes(state);
+    let driven = state.effects.driven_ids();
+    match state.lock_config() {
+        Ok(cfg) => Now::of(&cfg, modes, &driven),
+        Err(_) => Now {
+            modes,
+            mood: None,
+            lit: false,
+        },
+    }
+}
+
+/// Everything the menu and the tooltip show, so they are rebuilt only when
+/// it changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Shown {
+    lang: &'static str,
+    now: Now,
+    has_lights: bool,
+    timer: Option<u32>,
+}
+
+/// What the tray showed when it was last brought up to date.
+static SHOWN: Mutex<Option<Shown>> = Mutex::new(None);
+
+fn shown(state: &AppState) -> Shown {
+    Shown {
+        lang: language(state),
+        now: now(state),
+        has_lights: state.lock_config().is_ok_and(|c| !c.bindings.is_empty()),
+        timer: crate::sleep::minutes(state),
+    }
+}
+
+/// Build the menu for what it shows.
+fn build_menu(app: &AppHandle, shown: &Shown) -> tauri::Result<Menu<Wry>> {
+    let (lang, now, has_lights, timer) = (shown.lang, &shown.now, shown.has_lights, shown.timer);
     let l = labels(lang);
-    let running = running_modes(&state);
-    let has_lights = state.lock_config().is_ok_and(|c| !c.bindings.is_empty());
+    let running = &now.modes;
+
+    // What the lights show, as a line that cannot be clicked.
+    let status = MenuItem::with_id(app, "status", now.line(lang), false, None::<&str>)?;
 
     let toggle_label = match running.as_slice() {
         [] => l.start,
         [Mode::Ambilight] => l.stop,
-        _ => l.stop_show,
+        [Mode::Show(_)] => l.stop_show,
+        _ => l.stop_all,
     };
     let toggle = MenuItem::with_id(
         app,
@@ -151,37 +267,34 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             None::<&str>,
         )?)?;
     }
-    // Ticked while the whole room follows it.
-    let natural = state.lock_config().is_ok_and(|c| {
-        !c.bindings.is_empty() && c.bindings.iter().all(|b| c.natural.contains(&b.light_id))
-    });
+    // A mood is ticked while every light no effect drives shows it.
     let scenes = Submenu::with_id(app, "scenes", l.scenes, has_lights)?;
     scenes.append(&CheckMenuItem::with_id(
         app,
         format!("{SCENE_PREFIX}{NATURAL}"),
         name(lang, NATURAL),
         true,
-        natural,
+        now.mood == Some(NATURAL),
         None::<&str>,
     )?)?;
     scenes.append(&PredefinedMenuItem::separator(app)?)?;
     for m in MOODS {
-        scenes.append(&MenuItem::with_id(
+        scenes.append(&CheckMenuItem::with_id(
             app,
             format!("{SCENE_PREFIX}{}", m.id),
             name(lang, m.id),
             true,
+            now.mood == Some(m.id),
             None::<&str>,
         )?)?;
     }
 
-    let timer = crate::sleep::minutes(&state);
     let sleep = Submenu::with_id(app, "sleep", l.sleep, has_lights)?;
     for m in SLEEP_PRESETS {
         sleep.append(&CheckMenuItem::with_id(
             app,
             format!("{SLEEP_PREFIX}{m}"),
-            format!("{m} min"),
+            format!("{m}\u{a0}min"),
             true,
             timer == Some(m),
             None::<&str>,
@@ -203,6 +316,8 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     Menu::with_items(
         app,
         &[
+            &status,
+            &PredefinedMenuItem::separator(app)?,
             &toggle,
             &shows,
             &scenes,
@@ -217,12 +332,18 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     )
 }
 
+/// The tooltip: the app's name and what its lights show.
+fn tooltip(shown: &Shown) -> String {
+    format!("Lueur\n{}", shown.now.line(shown.lang))
+}
+
 /// Build the tray icon and its menu.
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
+    let first = shown(&app.state::<AppState>());
     TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip(labels("en").off)
+        .tooltip(tooltip(&first))
         .icon(app.default_window_icon().cloned().expect("bundled icon"))
-        .menu(&build_menu(app)?)
+        .menu(&build_menu(app, &first)?)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "toggle" => in_background(app, |state| {
@@ -284,17 +405,34 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Bring the menu and tooltip in line with the effect state and the
+/// Bring the menu and tooltip in line with what the lights show and the
 /// language.
 pub fn refresh(app: &AppHandle) {
+    update(app, true);
+}
+
+/// [`refresh`], but only if what the tray shows changed: cheap enough for
+/// a light set by hand, which a slider does many times a second.
+pub fn sync(app: &AppHandle) {
+    update(app, false);
+}
+
+fn update(app: &AppHandle, always: bool) {
     let (Some(tray), Some(state)) = (app.tray_by_id(TRAY_ID), app.try_state::<AppState>()) else {
         return;
     };
-    let l = labels(language(&state));
-    if let Ok(menu) = build_menu(app) {
+    let shown = shown(&state);
+    {
+        let mut last = SHOWN.lock().unwrap_or_else(|p| p.into_inner());
+        if !always && last.as_ref() == Some(&shown) {
+            return;
+        }
+        *last = Some(shown.clone());
+    }
+    if let Ok(menu) = build_menu(app, &shown) {
         let _ = tray.set_menu(Some(menu));
     }
-    let _ = tray.set_tooltip(Some(if state.is_running() { l.on } else { l.off }));
+    let _ = tray.set_tooltip(Some(tooltip(&shown)));
 }
 
 /// Run a tray action off the event-loop thread (bulbs can take seconds to
@@ -319,5 +457,103 @@ pub fn focus_main(app: &AppHandle) {
         let _ = win.show();
         let _ = win.unminimize();
         let _ = win.set_focus();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn room(states: serde_json::Value, natural: &[&str]) -> AppConfig {
+        AppConfig {
+            bindings: serde_json::from_value(serde_json::json!([
+                { "light_id": "a", "device_id": "d1", "ip": "192.168.1.5" },
+                { "light_id": "b", "device_id": "d2", "ip": "192.168.1.6" },
+            ]))
+            .unwrap(),
+            states: serde_json::from_value(states).unwrap(),
+            natural: natural.iter().map(|s| s.to_string()).collect(),
+            ..AppConfig::default()
+        }
+    }
+
+    fn relax() -> serde_json::Value {
+        serde_json::to_value(lueur_core::scene::mood("relax").unwrap().state()).unwrap()
+    }
+
+    fn off() -> serde_json::Value {
+        serde_json::to_value(LightState {
+            on: false,
+            ..LightState::default()
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_mood_the_whole_room_shows_is_named() {
+        let cfg = room(serde_json::json!({ "a": relax(), "b": relax() }), &[]);
+        let now = Now::of(&cfg, vec![], &[]);
+        assert_eq!(now.mood, Some("relax"));
+        assert_eq!(now.line("en"), "Playing: Relax");
+        assert_eq!(now.line("fr"), "En cours\u{a0}: Détente");
+    }
+
+    #[test]
+    fn effects_come_first_then_the_mood_of_the_rest() {
+        let cfg = room(serde_json::json!({ "a": relax(), "b": relax() }), &[]);
+        let modes = vec![Mode::Show(ShowKind::Rainbow), Mode::Ambilight];
+        let now = Now::of(&cfg, modes, &["a".to_string()]);
+        assert_eq!(now.modes, [Mode::Ambilight, Mode::Show(ShowKind::Rainbow)]);
+        assert_eq!(now.line("en"), "Playing: Ambilight + Rainbow + Relax");
+    }
+
+    #[test]
+    fn mixed_lights_are_set_by_hand_and_dark_ones_are_off() {
+        let mixed = room(serde_json::json!({ "a": relax(), "b": off() }), &[]);
+        assert_eq!(Now::of(&mixed, vec![], &[]).mood, None);
+        assert_eq!(
+            Now::of(&mixed, vec![], &[]).line("en"),
+            "Lights set by hand"
+        );
+
+        let dark = room(serde_json::json!({ "a": off(), "b": off() }), &[]);
+        assert_eq!(
+            Now::of(&dark, vec![], &[]).line("fr"),
+            "Toutes les lumières sont éteintes"
+        );
+    }
+
+    #[test]
+    fn the_natural_light_is_a_mood_of_its_own() {
+        // Whatever white it shows now, a room that follows it shows it.
+        let cfg = room(
+            serde_json::json!({ "a": relax(), "b": relax() }),
+            &["a", "b"],
+        );
+        assert_eq!(Now::of(&cfg, vec![], &[]).mood, Some(NATURAL));
+        // Half of it does not: no mood at all.
+        let half = room(serde_json::json!({ "a": relax(), "b": relax() }), &["a"]);
+        assert_eq!(Now::of(&half, vec![], &[]).mood, None);
+    }
+
+    #[test]
+    fn a_room_the_ambilight_drives_whole_has_no_mood() {
+        let cfg = room(serde_json::json!({ "a": relax(), "b": relax() }), &[]);
+        let all = ["a".to_string(), "b".to_string()];
+        let now = Now::of(&cfg, vec![Mode::Ambilight], &all);
+        assert_eq!(now.mood, None);
+        assert_eq!(now.line("fr"), "En cours\u{a0}: Ambilight");
+    }
+
+    #[test]
+    fn everything_the_menu_names_has_a_name() {
+        for lang in ["en", "fr"] {
+            for id in MOODS.iter().map(|m| m.id).chain([NATURAL, "ambilight"]) {
+                assert!(!name(lang, id).is_empty(), "{lang} {id}");
+            }
+            for kind in SHOWS {
+                assert!(!name(lang, kind.id()).is_empty(), "{lang} {}", kind.id());
+            }
+        }
     }
 }

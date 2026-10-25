@@ -119,6 +119,20 @@ pub fn valid_code(s: &str) -> bool {
     (4..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
+/// A user code as typed or pasted, without the spaces and dashes people put
+/// in to read it more easily (pasting from a phone often brings no-break
+/// spaces and typographic dashes along). Letter case is kept: the codes mix
+/// both, and changing it would turn a good code into a wrong one.
+pub fn normalize_code(s: &str) -> String {
+    s.chars()
+        // Unicode whitespace covers no-break and narrow spaces too.
+        .filter(|c| {
+            !c.is_whitespace()
+                && !matches!(c, '-' | '_' | '.' | '\u{2010}'..='\u{2015}' | '\u{2212}')
+        })
+        .collect()
+}
+
 /// A sign-in waiting for its QR code to be scanned.
 pub struct Pending {
     pub token: String,
@@ -457,6 +471,30 @@ mod tests {
         assert!(!valid_code("ab"));
         assert!(!valid_code("abc/../def"));
         assert!(!valid_code("abc&x=1"));
+    }
+
+    #[test]
+    fn user_codes_lose_spaces_and_dashes() {
+        assert_eq!(normalize_code("CavB15p"), "CavB15p");
+        assert_eq!(normalize_code("  CavB 15p \n"), "CavB15p");
+        assert_eq!(normalize_code("Cav-B15-p"), "CavB15p");
+        assert_eq!(normalize_code("Cav_B.15p"), "CavB15p");
+        // Pasted from a phone: a no-break space, a narrow one, an en dash.
+        assert_eq!(normalize_code("Cav\u{00A0}B\u{202F}15\u{2013}p"), "CavB15p");
+        assert_eq!(normalize_code("Cav\tB\u{2212}15p"), "CavB15p");
+        // Case is part of the code.
+        assert_eq!(normalize_code("cAVb15P"), "cAVb15P");
+        assert!(valid_code(&normalize_code("Cav B15-p")));
+    }
+
+    #[test]
+    fn normalizing_never_lets_a_bad_code_through() {
+        // Only separators go; anything that could reach a URL still fails.
+        assert!(!valid_code(&normalize_code("abc/../def")));
+        assert!(!valid_code(&normalize_code("abc&x=1")));
+        assert!(!valid_code(&normalize_code("Cavé15p")));
+        assert!(!valid_code(&normalize_code(" - - ")));
+        assert!(!valid_code(&normalize_code("ab -")));
     }
 
     #[test]

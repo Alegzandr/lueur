@@ -53,11 +53,14 @@ pub struct EffectStatus {
     pub light_ids: Vec<String>,
     /// Each mode playing and its lights.
     pub groups: Vec<EffectGroup>,
+    /// The driven lights whose bulb dropped and is being reconnected.
+    pub reconnecting: Vec<String>,
 }
 
 fn status(state: &AppState) -> EffectStatus {
     let groups = state.effects.groups();
     EffectStatus {
+        reconnecting: state.effects.reconnecting_ids(),
         running: !groups.is_empty(),
         connected_lights: groups.iter().map(|g| g.2).sum(),
         mode: match groups.as_slice() {
@@ -166,6 +169,7 @@ fn persist_and_go_live(state: &AppState) -> AppResult<()> {
     state.persist()?;
     let live = LiveSettings::of(&*state.lock_config()?);
     state.effects.update_live(live);
+    state.manual.protect(live.safety.flash_guard);
     Ok(())
 }
 
@@ -267,6 +271,7 @@ pub fn list_monitors() -> AppResult<Vec<MonitorInfo>> {
 /// from Smart Life. `timeout_ms` is clamped to 500..=8000.
 #[tauri::command]
 pub async fn discover_devices(
+    app: AppHandle,
     state: State<'_, AppState>,
     timeout_ms: Option<u64>,
 ) -> AppResult<Vec<DiscoveredDevice>> {
@@ -280,11 +285,13 @@ pub async fn discover_devices(
             .map_err(|e| AppError::new("discovery_failed").detail(e))
     })
     .await?;
-    // Discovery only hands a credential to a bridge or controller found away
-    // from home once nothing answers there: it moved, and its pairing follows.
-    if secrets::follow_moves(&mut state.lock_config()?.pairings, &found) {
+    // Discovery only hands a credential to a bridge found away from home once
+    // its pinned certificate answered there: it moved, and its pairing
+    // follows. What nothing vouches for waits for the user (`identity.rs`).
+    if secrets::follow_moves(&mut *state.lock_config()?, &found) {
         state.persist()?;
     }
+    crate::identity::note(&app, &found)?;
     secrets::redact_devices(&mut found);
     Ok(found)
 }
@@ -303,9 +310,10 @@ enum Granted {
 pub async fn pair_device(state: State<'_, AppState>, device: DiscoveredDevice) -> AppResult<()> {
     validate_ip(&device.ip)?;
     let family = device.kind.family();
+    let bridges = state.lock_config()?.pairings.hue.clone();
     let granted = blocking(move || {
         match &device.kind {
-            DeviceKind::Hue { .. } => hue::pair(&device.ip).map(Granted::Hue),
+            DeviceKind::Hue { .. } => hue::pair(&device.ip, &bridges).map(Granted::Hue),
             DeviceKind::Nanoleaf { .. } => {
                 let id = device
                     .id
@@ -321,6 +329,8 @@ pub async fn pair_device(state: State<'_, AppState>, device: DiscoveredDevice) -
         .map_err(|e| {
             if e.kind() == io::ErrorKind::WouldBlock {
                 AppError::new("pair_waiting").subject(family)
+            } else if let Some(refusal) = hue::pair_refusal(&e) {
+                AppError::new(refusal.code())
             } else {
                 AppError::new("pair_failed").detail(e)
             }
@@ -341,9 +351,9 @@ pub async fn pair_device(state: State<'_, AppState>, device: DiscoveredDevice) -
                 p.nanoleaf.push(n);
             }
         }
-        // Bindings made before this pairing (an import) get its credential.
-        let before = cfg.bindings.clone();
-        secrets::restore_bindings(&mut cfg, &before);
+        // Bindings at the device's address get its credential; those left at
+        // another one lose theirs.
+        secrets::follow_pairings(&mut cfg);
     }
     state.persist()
 }
@@ -366,6 +376,7 @@ fn cloud_error(e: CloudError) -> AppError {
 /// Start a Smart Life sign-in for the account with `user_code`.
 #[tauri::command]
 pub async fn tuya_login_start(user_code: String) -> AppResult<TuyaLogin> {
+    let user_code = tuya_cloud::normalize_code(&user_code);
     if !tuya_cloud::valid_code(&user_code) {
         return Err(AppError::new("invalid_user_code"));
     }
@@ -388,6 +399,7 @@ pub async fn tuya_login_poll(
     token: String,
     user_code: String,
 ) -> AppResult<Option<usize>> {
+    let user_code = tuya_cloud::normalize_code(&user_code);
     if !tuya_cloud::valid_code(&token) || !tuya_cloud::valid_code(&user_code) {
         return Err(AppError::new("invalid_user_code"));
     }
@@ -428,16 +440,25 @@ pub async fn test_device(
     b: u8,
 ) -> AppResult<()> {
     validate_ip(&endpoint.ip)?;
+    // The error names the light the bulb drives, when it drives one.
+    let light = {
+        let cfg = state.lock_config()?;
+        lights::device_light_name(&cfg, &endpoint.id).map(str::to_string)
+    };
     if !secrets::restore(
         &endpoint.id,
         &endpoint.ip,
         &mut endpoint.kind,
         &state.lock_config()?.pairings,
     ) {
-        return Err(unreachable(&endpoint.ip, "not paired"));
+        return Err(lights::named(
+            unreachable(&endpoint.ip, "not paired"),
+            light.as_deref(),
+        ));
     }
     blocking(move || {
-        devices::identify(&endpoint, Rgb::new(r, g, b)).map_err(|e| unreachable(&endpoint.ip, e))
+        devices::identify(&endpoint, Rgb::new(r, g, b))
+            .map_err(|e| lights::named(unreachable(&endpoint.ip, e), light.as_deref()))
     })
     .await
 }
@@ -448,7 +469,11 @@ pub async fn test_device(
 /// backend acts on the one it persisted itself.
 #[tauri::command]
 pub async fn set_light_power(app: AppHandle, light_id: String, on: bool) -> AppResult<()> {
-    blocking(move || lights::set_light_power(&app.state::<AppState>(), &light_id, on)).await
+    let handle = app.clone();
+    let result =
+        blocking(move || lights::set_light_power(&handle.state::<AppState>(), &light_id, on)).await;
+    crate::tray::sync(&app);
+    result
 }
 
 /// Set a light by hand: on or off, brightness, white or colour. Called as a
@@ -457,12 +482,16 @@ pub async fn set_light_power(app: AppHandle, light_id: String, on: bool) -> AppR
 /// follows the natural light; the others still do.
 #[tauri::command]
 pub async fn set_light_state(app: AppHandle, light_id: String, state: LightState) -> AppResult<()> {
-    blocking(move || {
-        let s = app.state::<AppState>();
+    let handle = app.clone();
+    let result = blocking(move || {
+        let s = handle.state::<AppState>();
         lights::set_natural(&s, std::slice::from_ref(&light_id), false)?;
         lights::set_light(&s, &light_id, state)
     })
-    .await
+    .await;
+    // The tray's mood tick and status line follow; it rebuilds only when they change.
+    crate::tray::sync(&app);
+    result
 }
 
 /// Turn every bound bulb on or off at once. Off also stops the effect.

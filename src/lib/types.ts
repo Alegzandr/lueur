@@ -55,7 +55,7 @@ export type DeviceKind =
   | { family: "wiz" }
   | { family: "lifx"; target: string }
   | { family: "govee" }
-  | { family: "hue"; username: string; light: string }
+  | { family: "hue"; username: string; light: string; cert?: string }
   | { family: "nanoleaf"; token: string }
   | { family: "tuya"; key: string; version: string; dps: TuyaDps };
 
@@ -84,6 +84,24 @@ export interface HueBridge {
   id: string;
   ip: string;
   username: string;
+  cert?: string;
+}
+
+/** A paired bridge or controller the last search heard where nothing
+ *  proves it is the one paired (see src-tauri/src/identity.rs). */
+export interface UnverifiedDevice {
+  id: string;
+  family: "hue" | "nanoleaf";
+  name: string;
+  /** Where it was heard. */
+  ip: string;
+  /** Where it was paired. */
+  known_ip: string;
+  /** At its own address, but with another certificate. */
+  changed: boolean;
+  /** A bridge whose pinned certificate it no longer shows: it can only be
+   *  paired again, never confirmed. */
+  needs_pairing: boolean;
 }
 
 export interface NanoleafPairing {
@@ -178,6 +196,13 @@ export interface InterfaceSettings {
   room_arranged: boolean;
 }
 
+/** The photosensitivity protection (see lueur-core safety.rs). */
+export interface SafetySettings {
+  /** No light flashes more than three times a second, and the ambilight
+   *  brightens gently. */
+  flash_guard: boolean;
+}
+
 export interface AppConfig {
   version: number;
   room: Room;
@@ -198,6 +223,7 @@ export interface AppConfig {
   /** What each light plays, by room light id, as last chosen; the backend
    *  owns it. */
   modes?: Record<string, Mode>;
+  safety: SafetySettings;
 }
 
 /** A running sleep timer. */
@@ -254,6 +280,8 @@ export interface EffectStatus {
   light_ids: string[];
   /** Each mode playing and its lights. */
   groups: EffectGroup[];
+  /** The driven lights whose bulb dropped and is being reconnected. */
+  reconnecting: string[];
 }
 
 export interface PowerResult {
@@ -301,5 +329,6 @@ export function defaultConfig(): AppConfig {
     states: {},
     show: { kind: "music", bright: 80, speed: 50, flashes: true },
     natural: [],
+    safety: { flash_guard: true },
   };
 }

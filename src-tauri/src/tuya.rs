@@ -7,12 +7,13 @@
 //!
 //! Finding them: Tuya devices announce themselves over UDP broadcasts, but
 //! many PCs' firewalls drop those. So Lueur also knocks on TCP 6668 across
-//! the local /24 and asks each answering host for its status with every
-//! imported key: only the right key gets a readable answer.
+//! the local subnet (see [`lan_hosts`]) and asks each answering host for its
+//! status with every imported key: only the right key gets a readable answer.
 
 use lueur_core::color::{BulbOutput, Rgb};
 use lueur_core::device::common::{LastSent, Throttle, ipv4, lan_hosts};
 use lueur_core::device::tuya::{self as dps, ID_PREFIX, PORT, TuyaDps};
+use lueur_core::device::wire::Wire;
 use lueur_core::device::{
     DeviceKind, DiscoveredDevice, Endpoint, LightStream, REST_BRIGHT, REST_KELVIN, TuyaDevice,
 };
@@ -36,6 +37,9 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(2500);
 const VERSIONS: [Version; 3] = [Version::V3_4, Version::V3_3, Version::V3_5];
 /// Most hosts to try keys on, so a LAN full of Tuya plugs stays quick.
 const MAX_CANDIDATES: usize = 24;
+/// Most hosts knocked on at once. A /24 goes in one wave; a wider subnet
+/// takes a few, rather than a thousand connections opened in one burst.
+const MAX_KNOCKS: usize = 256;
 
 /// The runtime every Tuya connection lives on. Small: it only moves a few
 /// datagrams a second per bulb.
@@ -125,6 +129,14 @@ async fn connect_any(
     Err(last)
 }
 
+/// Trace the DPs about to be written. They go out encrypted with the local
+/// key, which is never part of them.
+fn trace(wire: &Wire, value: &Value) {
+    if Wire::enabled() {
+        wire.text(&value.to_string());
+    }
+}
+
 fn parts(ep: &Endpoint) -> io::Result<(&str, &str, &str, &TuyaDps)> {
     match &ep.kind {
         DeviceKind::Tuya { key, version, dps } if !key.is_empty() => {
@@ -143,6 +155,7 @@ fn parts(ep: &Endpoint) -> io::Result<(&str, &str, &str, &TuyaDps)> {
 fn write_once(ep: &Endpoint, value: impl FnOnce(&TuyaDps) -> Value) -> io::Result<()> {
     let (id, key, version, layout) = parts(ep)?;
     let value = value(layout);
+    trace(&Wire::of(ep), &value);
     rt().block_on(async {
         let (dev, _, _) = connect_any(id, key, &ep.ip, parse_version(version)).await?;
         let sent = dev.set_dps(value).await.map_err(io_err);
@@ -184,17 +197,19 @@ pub struct TuyaStream {
 pub fn open_stream(ep: &Endpoint) -> io::Result<Box<dyn LightStream>> {
     let (id, key, version, layout) = parts(ep)?;
     let layout = *layout;
+    let wire = Wire::of(ep);
+    // Opening writes nothing: the bulb is switched on with the first frame
+    // (see `push`), so a stream opened too late, after the effect was
+    // stopped, leaves it as it was.
     let dev = rt().block_on(async {
         let (dev, _, _) = connect_any(id, key, &ep.ip, parse_version(version)).await?;
-        dev.set_dps(dps::power_dps(&layout, true))
-            .await
-            .map_err(io_err)?;
         Ok::<_, io::Error>(dev)
     })?;
 
     let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
     let sender = dev.clone();
     let task = rt().spawn(async move {
+        let wire = wire;
         while let Some(mut next) = rx.recv().await {
             // Fold whatever else is waiting into one write.
             while let Ok(more) = rx.try_recv() {
@@ -202,7 +217,9 @@ pub fn open_stream(ep: &Endpoint) -> io::Result<Box<dyn LightStream>> {
                     a.extend(b);
                 }
             }
-            if sender.set_dps(next).await.is_err() {
+            trace(&wire, &next);
+            if let Err(e) = sender.set_dps(next).await {
+                log::debug!(family = wire.family(), id = wire.id(); "write failed: {}", io_err(e));
                 break;
             }
         }
@@ -228,7 +245,14 @@ impl LightStream for TuyaStream {
             return Ok(());
         }
         let set_mode = self.shown.is_none_or(|s| !dps::same_mode(s, output));
-        let value = dps::frame_dps(&self.layout, output, effect, set_mode);
+        let mut value = dps::frame_dps(&self.layout, output, effect, set_mode);
+        // The first frame also switches the bulb on.
+        if self.shown.is_none()
+            && let (Value::Object(frame), Value::Object(on)) =
+                (&mut value, dps::power_dps(&self.layout, true))
+        {
+            frame.extend(on);
+        }
         self.tx
             .as_ref()
             .and_then(|tx| tx.send(value).ok())
@@ -269,13 +293,18 @@ impl Drop for TuyaStream {
     }
 }
 
-/// Hosts with TCP 6668 open on the local /24.
+/// Hosts with TCP 6668 open on the local subnet.
 async fn open_hosts(timeout: Duration) -> Vec<Ipv4Addr> {
-    let probes = lan_hosts().into_iter().map(|ip| async move {
-        let addr = SocketAddr::from((ip, PORT));
-        match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await {
-            Ok(Ok(_)) => Some(ip),
-            _ => None,
+    let knocks = Arc::new(tokio::sync::Semaphore::new(MAX_KNOCKS));
+    let probes = lan_hosts().into_iter().map(|ip| {
+        let knocks = Arc::clone(&knocks);
+        async move {
+            let _turn = knocks.acquire_owned().await.ok()?;
+            let addr = SocketAddr::from((ip, PORT));
+            match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await {
+                Ok(Ok(_)) => Some(ip),
+                _ => None,
+            }
         }
     });
     let mut set = tokio::task::JoinSet::new();

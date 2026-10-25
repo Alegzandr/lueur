@@ -59,7 +59,7 @@ pub fn prepare() -> bool {
 
     if args.iter().any(|a| a == UNINSTALL_ARG) {
         if let Err(e) = uninstall(&dir) {
-            eprintln!("lueur: uninstall: {e}");
+            log::error!("uninstall: {e}");
         }
         return false;
     }
@@ -67,7 +67,7 @@ pub fn prepare() -> bool {
     if same_file(&current, &target) {
         let _ = fs::remove_file(dir.join(OLD_EXE_NAME));
         if let Err(e) = register(&dir, &target) {
-            eprintln!("lueur: install: {e}");
+            log::error!("install: {e}");
         }
         return true;
     }
@@ -77,7 +77,7 @@ pub fn prepare() -> bool {
         && installed_version().is_some_and(|v| parse(&v) > parse(env!("CARGO_PKG_VERSION")));
     if !keep_installed && let Err(e) = copy_to(&current, &dir, &target) {
         // Better to run from where it is than not at all.
-        eprintln!("lueur: install: {e}");
+        log::error!("install: {e}");
         return true;
     }
     // If the installed app is already running, single-instance shows its window.
@@ -111,7 +111,7 @@ fn system32() -> PathBuf {
 fn restrict_dll_search() {
     // SAFETY: plain flag setter, called before any other thread exists.
     if let Err(e) = unsafe { SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) } {
-        eprintln!("lueur: dll search: {e}");
+        log::warn!("dll search: {e}");
     }
 }
 
@@ -146,7 +146,7 @@ pub fn updated(version: &str) {
         .open_subkey_with_flags(UNINSTALL_KEY, KEY_SET_VALUE)
         .and_then(|k| k.set_value("DisplayVersion", &version));
     if let Err(e) = result {
-        eprintln!("lueur: install: {e}");
+        log::error!("install: {e}");
     }
 }
 

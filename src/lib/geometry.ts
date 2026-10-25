@@ -115,12 +115,21 @@ export function mapLight(screen: Screen, light: Light): Mapping {
 }
 
 // Design tokens, so the plan's only saturated colour stays in one place and
-// matches the legend. Equal lightness across the three, none dominates.
+// matches the legend. The three differ in lightness as well as hue, so they
+// stay apart for colour-blind eyes.
 export const EDGE_COLOR: Record<Edge, string> = {
   left: "var(--zone-left)",
   right: "var(--zone-right)",
   center: "var(--zone-center)",
 };
+
+/** A zone is never told by its colour alone: each has a letter, as a string
+ *  key for the interface (L, C, R in English; G, C, D in French). */
+export const EDGE_LETTER = {
+  left: "zone_letter_left",
+  center: "zone_letter_center",
+  right: "zone_letter_right",
+} as const satisfies Record<Edge, string>;
 
 export type MappingKind = "map_whole" | "map_broad" | "map_left" | "map_right" | "map_slice";
 

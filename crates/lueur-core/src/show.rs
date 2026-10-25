@@ -87,7 +87,8 @@ pub struct ShowSettings {
     /// 1..=100; 50 is each show's natural pace.
     pub speed: u8,
     /// The music may flash white on drops and snares, never more than three
-    /// times a second.
+    /// times a second: the show's guard ([`crate::safety::FlashGuard::show`])
+    /// holds them to that even with the protection off.
     pub flashes: bool,
 }
 

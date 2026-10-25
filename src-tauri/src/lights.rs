@@ -8,7 +8,7 @@ use crate::error::{AppError, AppResult};
 use crate::runner::{self, Mode};
 use crate::state::AppState;
 use lueur_core::color::Rgb;
-use lueur_core::config::DeviceBinding;
+use lueur_core::config::{AppConfig, DeviceBinding};
 use lueur_core::device::{Endpoint, common};
 use lueur_core::scene::{self, LightState};
 use std::collections::BTreeMap;
@@ -24,8 +24,49 @@ pub struct PowerResult {
     pub failures: Vec<String>,
 }
 
+/// The bulb at `ip` did not answer. Its address is the subject until
+/// [`named`] gives it the name of its light; the detail keeps the address
+/// for whoever digs further.
 pub fn unreachable(ip: &str, e: impl std::fmt::Display) -> AppError {
-    AppError::new("bulb_unreachable").subject(ip).detail(e)
+    AppError::new("bulb_unreachable")
+        .subject(ip)
+        .detail(format!("{ip}: {e}"))
+}
+
+/// Say which bulb did not answer by the name of the light it drives, which
+/// is what the user calls it, rather than by its address. Without a name
+/// (a bulb in no light, or a light left unnamed) the address stays.
+pub fn named(mut e: AppError, light_name: Option<&str>) -> AppError {
+    if e.code == "bulb_unreachable"
+        && let Some(name) = light_name.map(str::trim).filter(|n| !n.is_empty())
+    {
+        e.subject = Some(name.to_string());
+    }
+    e
+}
+
+/// The name of the light `light_id`.
+pub fn light_name<'a>(config: &'a AppConfig, light_id: &str) -> Option<&'a str> {
+    config
+        .room
+        .lights
+        .iter()
+        .find(|l| l.id == light_id)
+        .map(|l| l.name.as_str())
+}
+
+/// The name of the light the bulb `device_id` drives, if it drives one.
+pub fn device_light_name<'a>(config: &'a AppConfig, device_id: &str) -> Option<&'a str> {
+    let b = config.bindings.iter().find(|b| b.device_id == device_id)?;
+    light_name(config, &b.light_id)
+}
+
+/// [`named`] after the light `light_id`, from the config as it is now.
+fn named_for(state: &AppState, light_id: &str, e: AppError) -> AppError {
+    match state.lock_config() {
+        Ok(cfg) => named(e, light_name(&cfg, light_id)),
+        Err(_) => e,
+    }
 }
 
 /// Reject anything that isn't a bulb's address: a bare private or link-local
@@ -156,6 +197,67 @@ pub fn resume(state: &AppState) -> AppResult<usize> {
         }
     }
     let (_, errors) = launch(state, &config, &plan);
+    match errors.into_iter().next() {
+        Some((_, e)) if !state.effects.is_running() => Err(e),
+        _ => Ok(state.effects.groups().iter().map(|g| g.2).sum()),
+    }
+}
+
+/// What plays now: each mode and its lights, as [`give_back`] takes them.
+pub fn playing(state: &AppState) -> Vec<(Mode, Vec<String>)> {
+    state
+        .effects
+        .groups()
+        .into_iter()
+        .map(|(mode, ids, _)| (mode, ids))
+        .collect()
+}
+
+/// Stop what the app started by itself and play `before` again, which is
+/// what played when it took over (see [`playing`]). The lights `before`
+/// leaves out go back to what they were last set to by hand. Nothing
+/// recorded changes: what the app starts by itself is never recorded.
+///
+/// `still_ours` is asked once no other change can start: if the user chose
+/// something in the meantime, nothing is touched.
+pub fn give_back(
+    state: &AppState,
+    before: &[(Mode, Vec<String>)],
+    still_ours: impl FnOnce() -> bool,
+) -> AppResult<usize> {
+    let _change = state.effects.change();
+    if !still_ours() {
+        return Ok(0);
+    }
+    if before.is_empty() {
+        stop_taken(state, state.effects.take(|_| true), true);
+        return Ok(0);
+    }
+    let config = state.lock_config()?.clone();
+    // Lights removed or unbound since are left out.
+    let plan: Vec<(Mode, Vec<String>)> = before
+        .iter()
+        .map(|(mode, ids)| {
+            let ids = ids.iter().filter(|id| config.binding_for(id).is_some());
+            (*mode, ids.cloned().collect::<Vec<_>>())
+        })
+        .filter(|(_, ids)| !ids.is_empty())
+        .collect();
+    let planned = |id: &String| plan.iter().any(|(_, ids)| ids.contains(id));
+    let taken = state.effects.take(|_| true);
+    let mut idle: Vec<String> = taken
+        .iter()
+        .flat_map(|h| h.light_ids.iter())
+        .filter(|id| !planned(id))
+        .cloned()
+        .collect();
+    hand_over(taken);
+    for id in plan.iter().flat_map(|(_, ids)| ids) {
+        state.manual.release(id);
+    }
+    let (missed, errors) = launch(state, &config, &plan);
+    idle.extend(missed);
+    put_back(state, &idle, true);
     match errors.into_iter().next() {
         Some((_, e)) if !state.effects.is_running() => Err(e),
         _ => Ok(state.effects.groups().iter().map(|g| g.2).sum()),
@@ -299,11 +401,12 @@ fn move_lights(
     let ip = missed
         .and_then(|id| config.binding_for(id))
         .map_or("", |b| b.ip.as_str());
+    let name = missed.and_then(|id| light_name(&config, id));
     Err(errors
         .into_iter()
         .find(|(m, _)| Some(*m) == mode)
         .map(|(_, e)| e)
-        .unwrap_or_else(|| unreachable(ip, "no stream")))
+        .unwrap_or_else(|| named(unreachable(ip, "no stream"), name)))
 }
 
 /// Restart every effect, so it picks up a changed room, bulb or capture.
@@ -441,7 +544,7 @@ pub fn set_light(state: &AppState, light_id: &str, wish: LightState) -> AppResul
     let binding = manual_binding(state, light_id)?;
     let wish = wish.clamped();
     let wall = state.lock_config()?.room.wall;
-    apply_one(state, &binding, wish, wall)?;
+    apply_one(state, &binding, wish, wall).map_err(|e| named_for(state, light_id, e))?;
     state
         .lock_config()?
         .states
@@ -473,7 +576,7 @@ pub fn show_lights(state: &AppState, wishes: &[(String, LightState)]) {
 pub fn set_light_power(state: &AppState, light_id: &str, on: bool) -> AppResult<()> {
     let binding = binding(state, light_id)?;
     state.manual.release(light_id);
-    power_one(&binding.endpoint(), on)?;
+    power_one(&binding.endpoint(), on).map_err(|e| named_for(state, light_id, e))?;
     remember(state, |states| {
         states.entry(light_id.to_string()).or_default().on = on;
     })
@@ -671,4 +774,59 @@ pub fn rewall(state: &AppState) {
 fn remember(state: &AppState, f: impl FnOnce(&mut BTreeMap<String, LightState>)) -> AppResult<()> {
     f(&mut state.lock_config()?.states);
     state.persist()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> AppConfig {
+        let mut cfg = AppConfig::default();
+        cfg.room.lights = serde_json::from_value(serde_json::json!([
+            { "id": "a", "name": "Desk lamp", "pos": { "x": 1.0, "y": 1.0 } },
+            { "id": "b", "name": "  ", "pos": { "x": 2.0, "y": 1.0 } },
+        ]))
+        .unwrap();
+        cfg.bindings = serde_json::from_value(serde_json::json!([
+            { "light_id": "a", "device_id": "dev-a", "ip": "192.168.1.5" },
+            { "light_id": "b", "device_id": "dev-b", "ip": "192.168.1.6" },
+        ]))
+        .unwrap();
+        cfg
+    }
+
+    #[test]
+    fn an_unreachable_bulb_goes_by_its_light() {
+        let cfg = config();
+        let e = named(
+            unreachable("192.168.1.5", "timed out"),
+            device_light_name(&cfg, "dev-a"),
+        );
+        assert_eq!(e.subject.as_deref(), Some("Desk lamp"));
+        // The address is not lost: the detail keeps it.
+        assert_eq!(e.detail.as_deref(), Some("192.168.1.5: timed out"));
+    }
+
+    #[test]
+    fn without_a_name_the_address_stays() {
+        let cfg = config();
+        // A light left blank, a bulb in no light, a light that is gone.
+        for name in [
+            device_light_name(&cfg, "dev-b"),
+            device_light_name(&cfg, "dev-new"),
+            light_name(&cfg, "gone"),
+        ] {
+            let e = named(unreachable("192.168.1.6", "timed out"), name);
+            assert_eq!(e.subject.as_deref(), Some("192.168.1.6"));
+        }
+    }
+
+    #[test]
+    fn only_an_unreachable_bulb_is_renamed() {
+        let e = named(
+            AppError::new("invalid_ip").subject("8.8.8.8"),
+            Some("Desk lamp"),
+        );
+        assert_eq!(e.subject.as_deref(), Some("8.8.8.8"));
+    }
 }

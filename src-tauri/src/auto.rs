@@ -1,5 +1,7 @@
 //! Automatic mode: the ambilight starts by itself when a game or a video goes
-//! fullscreen, and stops when it ends, handing the lights back as they were.
+//! fullscreen, taking over from whatever effect played, and stops when it
+//! ends, handing the lights back as they were: the effects that played play
+//! again, the lights set by hand show what they were set to.
 //!
 //! Fullscreen is read from the shell's notification state, the same signal
 //! Windows uses to hold notifications during a game or a presentation. It
@@ -7,6 +9,7 @@
 //! in `clippy.toml`. Other systems have no equivalent: there the mode is off.
 
 use crate::lights;
+use crate::runner::Mode;
 use crate::state::AppState;
 use crate::tray;
 use std::time::{Duration, Instant};
@@ -21,6 +24,9 @@ const GRACE: Duration = Duration::from_secs(4);
 
 /// Whether this system can tell when something is fullscreen.
 pub const SUPPORTED: bool = cfg!(windows);
+
+/// Sent to the window when automatic mode started the ambilight.
+pub const AUTO_STARTED: &str = "auto-started";
 
 #[cfg(windows)]
 fn fullscreen() -> bool {
@@ -64,8 +70,40 @@ pub fn spawn(app: &AppHandle) {
         .spawn(move || watch(&app));
 }
 
+/// What the watcher does after one look at the screen.
+#[derive(Debug, PartialEq, Eq)]
+enum Step {
+    Wait,
+    /// Start the ambilight, replacing what plays.
+    TakeOver,
+    /// The session it started for is over: stop it, and play again what
+    /// played before.
+    GiveBack,
+}
+
+/// The step for a poll: whether a fullscreen session is on, automatic mode
+/// enabled, who owns what runs, and the modes playing.
+fn step(in_session: bool, enabled: bool, owner: Owner, playing: &[Mode]) -> Step {
+    if !in_session {
+        return if owner == Owner::Auto {
+            Step::GiveBack
+        } else {
+            Step::Wait
+        };
+    }
+    // The user has the ambilight going already: nothing to take over.
+    let ambilight_only = !playing.is_empty() && playing.iter().all(|m| *m == Mode::Ambilight);
+    if enabled && owner == Owner::Nobody && !ambilight_only {
+        Step::TakeOver
+    } else {
+        Step::Wait
+    }
+}
+
 fn watch(app: &AppHandle) {
     let mut last_seen: Option<Instant> = None;
+    // What played when automatic mode took over, to play again after.
+    let mut before: Vec<(Mode, Vec<String>)> = Vec::new();
     loop {
         std::thread::sleep(POLL);
         let state = app.state::<AppState>();
@@ -79,27 +117,44 @@ fn watch(app: &AppHandle) {
         let in_session = last_seen.is_some_and(|t| t.elapsed() < GRACE);
         let owner = *state.auto_owner.lock().unwrap_or_else(|p| p.into_inner());
 
-        if !in_session {
-            last_seen = None;
-            if owner == Owner::Auto && state.is_running() {
-                lights::suspend(&state, true);
+        match step(in_session, enabled, owner, &state.effects.modes()) {
+            Step::Wait => {}
+            Step::TakeOver => {
+                set_owner(&state, Owner::Auto);
+                before = lights::playing(&state);
+                if lights::start_effect(&state).is_ok() {
+                    let _ = app.emit(AUTO_STARTED, ());
+                } else {
+                    // Nothing to light (no light follows the screen, say):
+                    // put back what played, and stay out of the way until
+                    // the next fullscreen session.
+                    if !before.is_empty() {
+                        let before = std::mem::take(&mut before);
+                        let _ = lights::give_back(&state, &before, || owns(&state));
+                    }
+                    set_owner(&state, Owner::User);
+                }
                 changed(app);
             }
-            set_owner(&state, Owner::Nobody);
-            continue;
-        }
-
-        if enabled && owner == Owner::Nobody && !state.is_running() {
-            set_owner(&state, Owner::Auto);
-            let result = lights::start_effect(&state);
-            if result.is_err() {
-                // Nothing to light (no light follows the screen, say): stay
-                // out of the way until the next fullscreen session.
-                set_owner(&state, Owner::User);
+            // Had the user chosen anything meanwhile, they would own it:
+            // what they chose is never undone here. Asked again under the
+            // change lock, so a choice made just now wins too.
+            Step::GiveBack => {
+                let _ = lights::give_back(&state, &before, || owns(&state));
+                changed(app);
             }
-            changed(app);
+        }
+        if !in_session {
+            last_seen = None;
+            before.clear();
+            set_owner(&state, Owner::Nobody);
         }
     }
+}
+
+/// Whether automatic mode still owns what runs.
+fn owns(state: &AppState) -> bool {
+    *state.auto_owner.lock().unwrap_or_else(|p| p.into_inner()) == Owner::Auto
 }
 
 fn set_owner(state: &AppState, owner: Owner) {
@@ -118,4 +173,55 @@ fn changed(app: &AppHandle) {
     let _ = app.emit(tray::EFFECT_CHANGED, None::<crate::error::AppError>);
     let _ = app.emit(tray::LIGHTS_CHANGED, ());
     tray::refresh(app);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lueur_core::show::ShowKind;
+
+    const RAINBOW: Mode = Mode::Show(ShowKind::Rainbow);
+
+    #[test]
+    fn fullscreen_takes_over_from_an_effect() {
+        // The reported bug: Rainbow playing kept the ambilight from starting.
+        assert_eq!(step(true, true, Owner::Nobody, &[RAINBOW]), Step::TakeOver);
+        assert_eq!(step(true, true, Owner::Nobody, &[]), Step::TakeOver);
+        assert_eq!(
+            step(true, true, Owner::Nobody, &[Mode::Ambilight, RAINBOW]),
+            Step::TakeOver
+        );
+    }
+
+    #[test]
+    fn an_ambilight_already_playing_is_left_alone() {
+        assert_eq!(
+            step(true, true, Owner::Nobody, &[Mode::Ambilight]),
+            Step::Wait
+        );
+    }
+
+    #[test]
+    fn nothing_starts_when_disabled_or_once_owned() {
+        assert_eq!(step(true, false, Owner::Nobody, &[RAINBOW]), Step::Wait);
+        assert_eq!(
+            step(true, true, Owner::Auto, &[Mode::Ambilight]),
+            Step::Wait
+        );
+        // The user chose during the session: theirs until it ends.
+        assert_eq!(step(true, true, Owner::User, &[RAINBOW]), Step::Wait);
+        assert_eq!(step(true, true, Owner::User, &[]), Step::Wait);
+    }
+
+    #[test]
+    fn the_end_of_a_session_gives_back_only_what_auto_took() {
+        assert_eq!(
+            step(false, true, Owner::Auto, &[Mode::Ambilight]),
+            Step::GiveBack
+        );
+        // Even if its ambilight ended early, what played before comes back.
+        assert_eq!(step(false, true, Owner::Auto, &[]), Step::GiveBack);
+        assert_eq!(step(false, true, Owner::User, &[RAINBOW]), Step::Wait);
+        assert_eq!(step(false, true, Owner::Nobody, &[]), Step::Wait);
+    }
 }

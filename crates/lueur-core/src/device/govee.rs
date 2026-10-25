@@ -5,7 +5,8 @@
 //! 4002, a fixed port, so only one program on the machine can search at a
 //! time. Commands go to the device on port 4003.
 
-use super::common::{LastSent, Throttle, udp_to};
+use super::common::{LastSent, REFRESH, Throttle, udp_to};
+use super::wire::Wire;
 use super::{DeviceKind, DiscoveredDevice, LightStream, REST_BRIGHT, REST_KELVIN};
 use crate::color::BulbOutput;
 use crate::yeelight::Effect;
@@ -64,17 +65,20 @@ pub fn set_power(ip: &str, on: bool) -> io::Result<()> {
 pub struct GoveeStream {
     socket: UdpSocket,
     last: LastSent,
-    last_bright: Option<u8>,
+    /// The brightness last sent, and when.
+    last_bright: Option<(u8, Instant)>,
     pace: Throttle,
+    wire: Wire,
 }
 
 impl GoveeStream {
-    pub fn open(ip: &str) -> io::Result<Self> {
+    pub fn open(ip: &str, wire: Wire) -> io::Result<Self> {
         Ok(GoveeStream {
             socket: udp_to(ip, CONTROL_PORT)?,
             last: LastSent::default(),
             last_bright: None,
             pace: Throttle::new(FRAME_INTERVAL),
+            wire,
         })
     }
 }
@@ -88,12 +92,9 @@ impl LightStream for GoveeStream {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());
         }
-        let [colour, bright] = commands(output);
-        self.socket.send(colour.as_bytes())?;
-        // Brightness is its own command; skip it when only the hue moved.
-        if self.last_bright != Some(output.bright()) {
-            self.socket.send(bright.as_bytes())?;
-            self.last_bright = Some(output.bright());
+        for msg in frame_commands(&mut self.last_bright, output) {
+            self.wire.text(&msg);
+            self.socket.send(msg.as_bytes())?;
         }
         self.last.mark(output);
         Ok(())
@@ -104,9 +105,24 @@ impl LightStream for GoveeStream {
             kelvin: REST_KELVIN,
             bright: REST_BRIGHT,
         }) {
+            self.wire.text(&msg);
             let _ = self.socket.send(msg.as_bytes());
         }
     }
+}
+
+/// The commands that take the bulb to `output`, given the brightness it was
+/// last sent and when (updated here). Brightness is its own command, skipped
+/// when only the hue moved, but sent again with the colour once it has gone
+/// [`REFRESH`] unsent: a bulb cut at the wall comes back at full brightness.
+fn frame_commands(last_bright: &mut Option<(u8, Instant)>, output: BulbOutput) -> Vec<String> {
+    let [colour, bright] = commands(output);
+    let b = output.bright();
+    if last_bright.is_some_and(|(prev, at)| prev == b && at.elapsed() < REFRESH) {
+        return vec![colour];
+    }
+    *last_bright = Some((b, Instant::now()));
+    vec![colour, bright]
 }
 
 pub fn discover(timeout: Duration) -> io::Result<Vec<DiscoveredDevice>> {
@@ -188,6 +204,30 @@ mod tests {
         assert_eq!(c["msg"]["data"]["colorTemInKelvin"], 0);
         let b: Value = serde_json::from_str(&b).unwrap();
         assert_eq!(b["msg"]["data"]["value"], 42);
+    }
+
+    #[test]
+    fn brightness_is_sent_when_it_moves_and_with_each_refresh() {
+        let red = |bright| BulbOutput::Color {
+            rgb: Rgb::new(255, 0, 0),
+            bright,
+        };
+        let bright_cmd = |b| commands(red(b))[1].clone();
+        let mut last = None;
+        assert_eq!(frame_commands(&mut last, red(40)), commands(red(40)));
+        // Only the hue moved: the colour alone.
+        let blue = BulbOutput::Color {
+            rgb: Rgb::new(0, 0, 255),
+            bright: 40,
+        };
+        assert_eq!(frame_commands(&mut last, blue), [commands(blue)[0].clone()]);
+        assert_eq!(frame_commands(&mut last, red(60))[1], bright_cmd(60));
+        // A refresh, long after the last brightness: both again, so a bulb
+        // that came back at 100% returns to 60.
+        last = Some((60, Instant::now() - REFRESH));
+        let sent = frame_commands(&mut last, red(60));
+        assert_eq!(sent, commands(red(60)));
+        assert!(sent[1].contains(r#""value":60"#), "{}", sent[1]);
     }
 
     #[test]

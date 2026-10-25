@@ -1,14 +1,26 @@
 //! Just enough HTTP/1.1 to talk to a Hue bridge or a Nanoleaf controller on
-//! the LAN: plain text, bounded in size and time. One-off calls get a
-//! connection each; a [`Client`] keeps one open for a stream that sends a
-//! request every frame.
+//! the LAN: bounded in size and time. One-off calls get a connection each; a
+//! [`Client`] keeps one open for a stream that sends a request every frame.
 //!
-//! A general-purpose client would pull TLS, async and redirects into the core
-//! crate for devices that need none of it. Only bare IP addresses are
-//! accepted, so a request can never be steered to a name or a URL.
+//! A request goes in the clear, or over TLS to one certificate only
+//! ([`Trust::Pinned`]). A Hue bridge's certificate is not signed by a
+//! public authority, and Lueur ships no Signify root, so the certificate is
+//! pinned the first time it is seen (trust on first use): from then on only
+//! the holder of that certificate's key, which must sign the handshake, is
+//! taken for the bridge.
+//!
+//! A general-purpose client would pull async, redirects and the web's
+//! authorities into the core crate for devices that need none of it. Only
+//! bare IP addresses are accepted, so a request can never be steered to a
+//! name or a URL.
 
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureScheme};
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, SocketAddrV4, TcpStream};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Bodies larger than this are refused: a bulb's answer is a few kilobytes.
@@ -31,6 +43,42 @@ impl Response {
     }
 }
 
+/// What a host must prove before a request goes out to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trust {
+    /// Nothing: plain HTTP, read by anyone on the path.
+    Clear,
+    /// TLS, to the holder of the certificate with this SHA-256.
+    Pinned([u8; 32]),
+}
+
+/// The error a TLS connection fails with when the host shows another
+/// certificate than the pinned one. Nothing was sent to it.
+#[derive(Debug)]
+pub struct CertMismatch;
+
+impl std::fmt::Display for CertMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the host showed another certificate")
+    }
+}
+
+impl std::error::Error for CertMismatch {}
+
+/// Whether `e` is a [`CertMismatch`]: someone else, or the device with a new
+/// certificate.
+pub fn is_cert_mismatch(e: &io::Error) -> bool {
+    e.get_ref().is_some_and(|inner| inner.is::<CertMismatch>())
+}
+
+/// The SHA-256 of a DER certificate.
+pub fn fingerprint(der: &[u8]) -> [u8; 32] {
+    let digest = ring::digest::digest(&ring::digest::SHA256, der);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(digest.as_ref());
+    out
+}
+
 /// Send one request to `ip:port` on a fresh connection and read the whole
 /// response.
 pub fn request(
@@ -41,27 +89,81 @@ pub fn request(
     body: Option<&str>,
     timeout: Duration,
 ) -> io::Result<Response> {
+    request_with(Trust::Clear, method, ip, port, path, body, timeout)
+}
+
+/// [`request`], with what the host must prove first.
+pub fn request_with(
+    trust: Trust,
+    method: &str,
+    ip: &str,
+    port: u16,
+    path: &str,
+    body: Option<&str>,
+    timeout: Duration,
+) -> io::Result<Response> {
     let addr = address(ip, port)?;
     check_path(path)?;
-    let mut stream = connect(addr, timeout)?;
-    exchange(&mut stream, addr, method, path, body, false).map(|(response, _)| response)
+    let mut conn = connect(addr, trust, timeout)?;
+    exchange(&mut conn, addr, method, path, body, false).map(|(response, _)| response)
+}
+
+/// GET `path` from `ip:port` over TLS, whatever certificate the host shows,
+/// and return that certificate (DER) with the response.
+///
+/// This is how a certificate is learnt before it is pinned, so the request
+/// must carry no credential: whoever answers reads it.
+pub fn learn(
+    ip: &str,
+    port: u16,
+    path: &str,
+    timeout: Duration,
+) -> io::Result<(Response, Vec<u8>)> {
+    let addr = address(ip, port)?;
+    check_path(path)?;
+    let mut conn = connect_tls(addr, None, timeout)?;
+    let cert = match &conn {
+        Conn::Tls(tls) => tls
+            .conn
+            .peer_certificates()
+            .and_then(|chain| chain.first())
+            .map(|c| c.as_ref().to_vec()),
+        Conn::Clear(_) => None,
+    }
+    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no certificate"))?;
+    let (response, _) = exchange(&mut conn, addr, "GET", path, None, false)?;
+    Ok((response, cert))
 }
 
 /// One kept-alive connection to one host.
 ///
 /// A stream that sends a command every frame would otherwise pay a TCP
-/// handshake per command, on top of the request itself.
+/// handshake (and a TLS one) per command, on top of the request itself.
 pub struct Client {
     addr: SocketAddr,
+    trust: Trust,
     timeout: Duration,
-    stream: Option<TcpStream>,
+    /// Kept between connections, so a reconnection resumes the TLS session.
+    tls: Option<Arc<ClientConfig>>,
+    stream: Option<Conn>,
 }
 
 impl Client {
     pub fn new(ip: &str, port: u16, timeout: Duration) -> io::Result<Self> {
+        Self::with_trust(ip, port, Trust::Clear, timeout)
+    }
+
+    /// A client whose host must prove `trust` on every connection.
+    pub fn with_trust(ip: &str, port: u16, trust: Trust, timeout: Duration) -> io::Result<Self> {
+        let tls = match trust {
+            Trust::Clear => None,
+            Trust::Pinned(pin) => Some(tls_config(Some(pin))?),
+        };
         Ok(Client {
             addr: address(ip, port)?,
+            trust,
             timeout,
+            tls,
             stream: None,
         })
     }
@@ -87,7 +189,12 @@ impl Client {
             }
             return Ok(response);
         }
-        let mut stream = connect(self.addr, self.timeout)?;
+        let mut stream = match (&self.tls, self.trust) {
+            (Some(config), Trust::Pinned(_)) => handshake(self.addr, config.clone(), self.timeout)?,
+            (None, Trust::Clear) => Conn::Clear(tcp(self.addr, self.timeout)?),
+            // A pinned client always has its TLS config: never the clear.
+            _ => return Err(io::Error::other("TLS client without its configuration")),
+        };
         let (response, reusable) = exchange(&mut stream, self.addr, method, path, body, true)?;
         if reusable {
             self.stream = Some(stream);
@@ -110,7 +217,47 @@ fn check_path(path: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn connect(addr: SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
+/// A connection, in the clear or over TLS.
+enum Conn {
+    Clear(TcpStream),
+    Tls(Box<rustls::StreamOwned<ClientConnection, TcpStream>>),
+}
+
+impl Conn {
+    fn tcp(&self) -> &TcpStream {
+        match self {
+            Conn::Clear(s) => s,
+            Conn::Tls(tls) => &tls.sock,
+        }
+    }
+}
+
+impl Read for Conn {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Conn::Clear(s) => s.read(buf),
+            Conn::Tls(tls) => tls.read(buf),
+        }
+    }
+}
+
+impl Write for Conn {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Conn::Clear(s) => s.write(buf),
+            Conn::Tls(tls) => tls.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Conn::Clear(s) => s.flush(),
+            Conn::Tls(tls) => tls.flush(),
+        }
+    }
+}
+
+fn tcp(addr: SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
     let stream = TcpStream::connect_timeout(&addr, timeout)?;
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(timeout))?;
@@ -118,11 +265,134 @@ fn connect(addr: SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
     Ok(stream)
 }
 
+fn connect(addr: SocketAddr, trust: Trust, timeout: Duration) -> io::Result<Conn> {
+    match trust {
+        Trust::Clear => Ok(Conn::Clear(tcp(addr, timeout)?)),
+        Trust::Pinned(pin) => connect_tls(addr, Some(pin), timeout),
+    }
+}
+
+/// A TLS connection to `addr`, its handshake done: to the holder of the
+/// `pin` certificate, or with `None` to whoever answers.
+fn connect_tls(addr: SocketAddr, pin: Option<[u8; 32]>, timeout: Duration) -> io::Result<Conn> {
+    handshake(addr, tls_config(pin)?, timeout)
+}
+
+fn handshake(addr: SocketAddr, config: Arc<ClientConfig>, timeout: Duration) -> io::Result<Conn> {
+    let name = ServerName::from(addr.ip());
+    let conn = ClientConnection::new(config, name).map_err(io::Error::other)?;
+    let mut tls = rustls::StreamOwned::new(conn, tcp(addr, timeout)?);
+    // Done here, before any request is written, so a host with the wrong
+    // certificate never sees one; the whole handshake shares one deadline.
+    let deadline = Instant::now() + timeout * RESPONSE_TIMEOUTS;
+    while tls.conn.is_handshaking() {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "handshake too slow",
+            ));
+        }
+        if let Err(e) = tls.conn.complete_io(&mut tls.sock) {
+            return Err(if mismatch(&e) {
+                io::Error::new(io::ErrorKind::PermissionDenied, CertMismatch)
+            } else {
+                e
+            });
+        }
+    }
+    Ok(Conn::Tls(Box::new(tls)))
+}
+
+/// Whether a handshake failed on our own certificate check.
+fn mismatch(e: &io::Error) -> bool {
+    e.get_ref()
+        .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+        .is_some_and(|tls| {
+            matches!(
+                tls,
+                rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::ApplicationVerificationFailure
+                )
+            )
+        })
+}
+
+fn provider() -> Arc<CryptoProvider> {
+    Arc::new(rustls::crypto::ring::default_provider())
+}
+
+fn tls_config(pin: Option<[u8; 32]>) -> io::Result<Arc<ClientConfig>> {
+    let provider = provider();
+    let verifier = Arc::new(Pinned {
+        pin,
+        algorithms: provider.signature_verification_algorithms,
+    });
+    let config = ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(io::Error::other)?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    Ok(Arc::new(config))
+}
+
+/// Accepts the one certificate `pin` names, or with `None` any (to learn
+/// it). Either way the handshake must be signed by that certificate's key.
+#[derive(Debug)]
+struct Pinned {
+    pin: Option<[u8; 32]>,
+    algorithms: WebPkiSupportedAlgorithms,
+}
+
+impl ServerCertVerifier for Pinned {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        // Validity dates are not checked: the certificate is known by its
+        // fingerprint, and a bridge's clock is not to be relied on.
+        match self.pin {
+            Some(pin) if fingerprint(end_entity.as_ref()) != pin => {
+                Err(rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::ApplicationVerificationFailure,
+                ))
+            }
+            _ => Ok(ServerCertVerified::assertion()),
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.algorithms.supported_schemes()
+    }
+}
+
 /// Write one request on `stream` and read its response, plus whether the
 /// connection can carry another: only if we asked to keep it, the server
 /// framed its answer exactly and did not ask to close.
 fn exchange(
-    stream: &mut TcpStream,
+    stream: &mut Conn,
     addr: SocketAddr,
     method: &str,
     path: &str,
@@ -142,17 +412,20 @@ fn exchange(
     req.push_str(body);
     stream.write_all(req.as_bytes())?;
 
-    let timeout = stream.read_timeout()?.unwrap_or(Duration::from_secs(2));
+    let timeout = stream
+        .tcp()
+        .read_timeout()?
+        .unwrap_or(Duration::from_secs(2));
     let deadline = Instant::now() + timeout * RESPONSE_TIMEOUTS;
     let mut raw = Vec::new();
     let mut buf = [0u8; 8192];
     let framed = loop {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            stream.set_read_timeout(Some(timeout))?;
+            stream.tcp().set_read_timeout(Some(timeout))?;
             return Err(io::Error::new(io::ErrorKind::TimedOut, "response too slow"));
         }
-        stream.set_read_timeout(Some(left.min(timeout)))?;
+        stream.tcp().set_read_timeout(Some(left.min(timeout)))?;
         match stream.read(&mut buf) {
             Ok(0) => break None,
             Ok(n) => {
@@ -178,7 +451,7 @@ fn exchange(
             }
         }
     };
-    stream.set_read_timeout(Some(timeout))?;
+    stream.tcp().set_read_timeout(Some(timeout))?;
     let response = parse_response(&raw)?;
     let reusable = keep_alive && framed == Some(raw.len()) && !closing(&raw);
     Ok((response, reusable))
@@ -357,7 +630,7 @@ mod tests {
                 }
             }
         });
-        let mut stream = connect(addr, Duration::from_millis(100)).unwrap();
+        let mut stream = Conn::Clear(tcp(addr, Duration::from_millis(100)).unwrap());
         let started = Instant::now();
         // Whatever came by then is all there is: the call never waits longer.
         let _ = exchange(&mut stream, addr, "GET", "/", None, false);
@@ -379,5 +652,105 @@ mod tests {
         assert!(request("GET", "192.0.2.1", 80, "no-slash", None, t).is_err());
         assert!(request("GET", "192.0.2.1", 80, "/a b", None, t).is_err());
         assert!(request("GET", "192.0.2.1", 80, "/a\r\nX: y", None, t).is_err());
+    }
+
+    /// A bridge-like certificate: EC P-256, subject CN the bridge id, signed
+    /// by a CA named `root-bridge` (test material, made for these tests).
+    const TEST_CERT: &str = "-----BEGIN CERTIFICATE-----
+MIIBvjCCAWOgAwIBAgIUHzOhgKHM7qDOmui6BKRKDoWD1IswCgYIKoZIzj0EAwIw
+OTELMAkGA1UEBhMCTkwxFDASBgNVBAoMC1BoaWxpcHMgSHVlMRQwEgYDVQQDDAty
+b290LWJyaWRnZTAgFw0yNjEwMjUxNTA0MTVaGA8yMTI2MTAwMTE1MDQxNVowPjEL
+MAkGA1UEBhMCTkwxFDASBgNVBAoMC1BoaWxpcHMgSHVlMRkwFwYDVQQDDBAwMDE3
+ODhmZmZlMWEyYjNjMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEWXwCTe3QdaH1
+4IaF6olTAJVS/H57daDN3rffpFX0UQSiPM68cNuwoDs26chcjZhZ/RaiQZs6fjCz
+eXPUDNx17qNCMEAwHQYDVR0OBBYEFNTxgscfAd2tc2gLFM9V7XZPnL/sMB8GA1Ud
+IwQYMBaAFDKdPft/NJhVYWw3dq+2tBPhZBTEMAoGCCqGSM49BAMCA0kAMEYCIQC1
+u6DhGPeig+hovqCv/lLUKswaHWYJtnXdd+m6QINc8QIhAMqTFWh8a3JEkRVFdmuz
+RLQ1VMwgSg6P74fkAB4cLHyX
+-----END CERTIFICATE-----";
+    const TEST_KEY: &str = "-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgwvpa08ix0QUTLnVb
+ug5m8R0fmJf21i22EjzrmSj+slChRANCAARZfAJN7dB1ofXghoXqiVMAlVL8fnt1
+oM3et9+kVfRRBKI8zrxw27CgOzbpyFyNmFn9FqJBmzp+MLN5c9QM3HXu
+-----END PRIVATE KEY-----";
+
+    fn test_cert() -> CertificateDer<'static> {
+        use rustls::pki_types::pem::PemObject;
+        CertificateDer::from_pem_slice(TEST_CERT.as_bytes()).unwrap()
+    }
+
+    /// A TLS server on loopback answering one request with `reply`. Its
+    /// thread returns the request it read, or `None` if none arrived.
+    fn tls_server(reply: &'static [u8]) -> (SocketAddr, std::thread::JoinHandle<Option<Vec<u8>>>) {
+        use rustls::pki_types::PrivateKeyDer;
+        use rustls::pki_types::pem::PemObject;
+        use std::net::TcpListener;
+        let key = PrivateKeyDer::from_pem_slice(TEST_KEY.as_bytes()).unwrap();
+        let config = rustls::ServerConfig::builder_with_provider(provider())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![test_cert()], key)
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (sock, _) = listener.accept().ok()?;
+            sock.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
+            let conn = rustls::ServerConnection::new(Arc::new(config)).ok()?;
+            let mut tls = rustls::StreamOwned::new(conn, sock);
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 1024];
+            while find(&seen, b"\r\n\r\n").is_none() {
+                let n = tls.read(&mut buf).ok()?;
+                if n == 0 {
+                    return None;
+                }
+                seen.extend_from_slice(&buf[..n]);
+            }
+            tls.write_all(reply).ok()?;
+            tls.flush().ok()?;
+            Some(seen)
+        });
+        (addr, server)
+    }
+
+    const OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}";
+
+    #[test]
+    fn the_pinned_certificate_gets_the_request() {
+        let (addr, server) = tls_server(OK);
+        let pin = fingerprint(test_cert().as_ref());
+        let mut conn = connect_tls(addr, Some(pin), Duration::from_secs(2)).unwrap();
+        let (r, _) = exchange(&mut conn, addr, "GET", "/api/secret", None, false).unwrap();
+        assert_eq!(r.body, "{}");
+        drop(conn);
+        let seen = server.join().unwrap().unwrap();
+        assert!(seen.starts_with(b"GET /api/secret "));
+    }
+
+    #[test]
+    fn another_certificate_gets_nothing() {
+        let (addr, server) = tls_server(OK);
+        let err = match connect_tls(addr, Some([7u8; 32]), Duration::from_secs(2)) {
+            Err(e) => e,
+            Ok(_) => panic!("a foreign certificate was accepted"),
+        };
+        assert!(is_cert_mismatch(&err), "{err}");
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert!(server.join().unwrap().is_none(), "the host read a request");
+    }
+
+    #[test]
+    fn learning_reports_the_certificate_shown() {
+        let (addr, server) = tls_server(OK);
+        let conn = connect_tls(addr, None, Duration::from_secs(2)).unwrap();
+        let Conn::Tls(tls) = &conn else {
+            panic!("not TLS")
+        };
+        let shown = tls.conn.peer_certificates().unwrap()[0].clone();
+        assert_eq!(shown, test_cert());
+        drop(conn);
+        let _ = server.join();
     }
 }

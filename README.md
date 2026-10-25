@@ -32,7 +32,7 @@ run in *music mode*, which has no rate limit, so there is no visible delay.
 You sketch your room, place the screen and drop each light where it really
 stands. A lamp right behind the screen mirrors its own slice of the picture;
 one across the room glows softly with the whole scene. On Windows the
-ambilight turns on by itself when a game or a video goes fullscreen, and
+Ambilight turns on by itself when a game or a video goes fullscreen, and
 gives every light back what it was showing when it ends.
 
 When you aren't playing, the same window runs effects (Music, which plays
@@ -54,9 +54,9 @@ to date.
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/lighting-light.png">
-        <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: who effects and moods go to, the screen ambilight, five effects, five moods with Relax on, a sleep timer and every light with its mood and brightness.">
+        <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: who effects and moods go to, the Ambilight, five effects, five moods with Relax on, a sleep timer and every light with its mood and brightness.">
       </picture>
-      <p><b>Lighting</b>: start the screen ambilight, pick an effect or a mood,
+      <p><b>Lighting</b>: start the Ambilight, pick an effect or a mood,
       and adjust each light.</p>
     </td>
     <td width="50%">
@@ -80,9 +80,9 @@ to date.
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/settings-light.png">
-        <img src="docs/screenshots/settings-dark.png" alt="The Settings page: ambilight in fullscreen, language, appearance, startup and configuration export.">
+        <img src="docs/screenshots/settings-dark.png" alt="The Settings page: Ambilight in fullscreen, language, appearance, startup and configuration export.">
       </picture>
-      <p><b>Settings</b>: automatic ambilight, English or French, light or
+      <p><b>Settings</b>: automatic Ambilight, English or French, light or
       dark, start at login, and a backup of your setup.</p>
     </td>
   </tr>
@@ -102,7 +102,14 @@ Grab the file for your system from the
 | **Linux** | `Lueur_…_linux_x86_64.AppImage` | Make it executable (`chmod +x`) and run it. |
 
 From then on Lueur **updates itself**: each launch checks for a new version,
-verifies its signature and installs it before the app opens.
+verifies its signature and installs it before the app opens. It only ever
+moves forward: an older version is refused, even one properly signed.
+
+The release process can sign and notarize the Mac app once an Apple
+developer certificate is set up, but the Mac app published so far is not
+signed. The first launch needs your go-ahead in *System Settings → Privacy
+& Security*, and after an update macOS may ask again for the microphone
+(Music effect) and for the Keychain where Lueur keeps its key.
 
 ### 2. Add your bulbs
 
@@ -131,7 +138,7 @@ one on a shelf the top.
 
 ### 4. Start
 
-Back on **Lighting**, click the **Screen** tile (or press
+Back on **Lighting**, click the **Ambilight** tile (or press
 <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd>), then launch a game or a
 film. On Windows you can skip this step: with *Ambilight in fullscreen* on
 (the default, in **Settings**) it starts and stops by itself.
@@ -173,8 +180,8 @@ owner to add you to their home instead.
 - **Tray.** Closing the window keeps Lueur in the tray. Turn off *Keep
   running when closed* in Settings and closing quits instead, while
   minimising goes to the tray (on Windows and Linux; a Mac minimises to the
-  Dock). The tray menu starts and stops the ambilight, so you never have to
-  leave a game.
+  Dock). The tray menu says what the lights show, starts and stops the Ambilight
+  and the effects and applies a mood, so you never have to leave a game.
 - **At login.** *Open at login* and *Start hidden in the tray* in Settings;
   each light picks up the effect it was left playing.
 - **Keyboard.** <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>1</kbd>–<kbd>4</kbd>
@@ -183,8 +190,8 @@ owner to add you to their home instead.
   bigger steps), <kbd>Delete</kbd> removes it, <kbd>Esc</kbd> deselects, and
   holding <kbd>Shift</kbd> while turning the screen snaps to 15°.
 - **Mistakes.** Removing a light can be undone, and the room plan has undo and
-  redo. Changes made while the ambilight runs come with a one-click
-  *Apply now*.
+  redo. Changes made while effects play come with a one-click
+  *Apply*.
 - **Music.** On Windows the Music effect listens to the computer's own sound,
   so it follows any song or game. On macOS and Linux it listens to the
   microphone. It hears the kick, the snare and the hi-hats apart, finds the
@@ -239,10 +246,32 @@ tries to get around that.
 Lueur talks to your bulbs on your local network, and only at private
 addresses. Beyond that it sends exactly two kinds of traffic: the update
 check to GitHub over HTTPS, and Tuya's sign-in while you import Smart Life
-bulbs. Bulb and bridge credentials never leave the app, nor go into an
-exported configuration. On disk they are encrypted, with a key kept in your
-system's keyring (Credential Manager on Windows, the Keychain on macOS, the
-Secret Service on Linux).
+bulbs. That sign-in identifies itself with the app id Home Assistant uses
+with Tuya, as Lueur has none of its own yet.
+
+On your network, a Hue bridge is reached over HTTPS, and only ever with
+the certificate it showed the first time Lueur saw it (at pairing, or for
+a bridge paired with an older version, at its usual address). Nothing
+vouches for that first sight: Lueur trusts it, then holds the bridge to
+it. A bridge that does not answer over HTTPS is not paired, except the
+first, round bridge, which has no HTTPS. That one and Nanoleaf controllers
+only speak plain HTTP, so their credentials cross your network
+unencrypted, and only to the address they were paired at. A bridge or
+controller that turns up at a new address without proving who it is gets
+nothing: the Bulbs page offers to pair it again with its button, or, when
+nothing is pinned for it, to confirm that it is yours. A Hue bridge that
+shows another certificate than its own can only be paired again.
+Yeelight, WiZ, LIFX and Govee bulbs take commands from anyone on the
+network, by design. Tuya bulbs get commands encrypted with their local
+key, which itself never crosses the network, sent to wherever the bulb
+was last found.
+
+Bulb and bridge credentials never leave the app, nor go into an exported
+configuration. On disk they are encrypted, with a key kept in your system's
+keyring (Credential Manager on Windows, the Keychain on macOS, the Secret
+Service on Linux). Without a keyring, on a Linux session with no Secret
+Service for instance, they stay unencrypted in the settings file, which only
+your account can read, and Settings says so.
 
 Settings live in a `lueur` folder in your user config folder (`%APPDATA%` on
 Windows, `~/Library/Application Support` on macOS, `~/.config` on Linux).
@@ -265,8 +294,9 @@ To remove your settings too, delete the `lueur` folder listed under
 
 ## Contributing
 
-Building from source, the architecture and the release process are in
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Building from source, the architecture, the logs and the release process
+are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). To add a bulb family,
+see [docs/ADDING_A_FAMILY.md](docs/ADDING_A_FAMILY.md).
 
 ## License
 

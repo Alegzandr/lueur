@@ -839,9 +839,6 @@ const LOOKS_PER_HARMONY: u32 = 2;
 const DROP_BEATS: u32 = 16;
 /// How long a build takes to reach white, seconds.
 const BUILD_SECS: f32 = 8.0;
-/// White flashes are kept this far apart, seconds: three a second at most,
-/// the limit for flashing light that is safe to look at.
-const WHITE_GAP: f32 = 1.0 / 3.0;
 /// A white flash's colour temperature.
 const WHITE_KELVIN: u16 = 6500;
 
@@ -916,7 +913,6 @@ pub struct Stage {
     drift: f32,
     /// Snares heard in this build: they walk it across the room.
     roll: usize,
-    since_white: f32,
     sharp: Vec<bool>,
 }
 
@@ -960,7 +956,6 @@ impl Stage {
             step: 0.0,
             drift: 0.0,
             roll: 0,
-            since_white: 10.0,
             sharp: vec![false; fixtures.len()],
         }
     }
@@ -982,13 +977,12 @@ impl Stage {
         &PARTY[(self.looks / LOOKS_PER_HARMONY) as usize % PARTY.len()]
     }
 
-    /// Whether a white flash may go out now; if so, it is counted.
-    fn white(&mut self, settings: &ShowSettings) -> bool {
-        if !settings.flashes || self.since_white < WHITE_GAP {
-            return false;
-        }
-        self.since_white = 0.0;
-        true
+    /// Whether the white flashes are on. How often they may go out is not
+    /// the show's to decide: the show's guard
+    /// ([`crate::safety::FlashGuard::show`]) keeps them to three a second,
+    /// protection on or off.
+    fn white(&self, settings: &ShowSettings) -> bool {
+        settings.flashes
     }
 
     fn enter(&mut self, section: Section) {
@@ -1057,7 +1051,6 @@ impl Stage {
             lamp.sharp = false;
         }
         self.held += dt;
-        self.since_white += dt;
         self.since_kick = if levels.kick {
             0.0
         } else {
@@ -1246,6 +1239,7 @@ fn pale(rgb: Rgb, t: f32) -> Rgb {
 mod tests {
     use super::*;
     use crate::color::full_chroma;
+    use crate::safety::FlashGuard;
 
     fn tone(rate: u32, freq: f32, amp: f32, secs: f32) -> Vec<f32> {
         let n = (rate as f32 * secs) as usize;
@@ -1674,31 +1668,103 @@ mod tests {
         assert!(out.iter().all(|o| matches!(o, BulbOutput::Color { .. })));
     }
 
+    /// Whether a light shows white, or a colour pale enough to pass for it.
+    fn whitish(o: &BulbOutput) -> bool {
+        match o {
+            BulbOutput::White { bright, .. } => *bright >= 20,
+            BulbOutput::Color { rgb, bright } => {
+                *bright >= 20 && crate::color::saturation(*rgb) < 0.2
+            }
+        }
+    }
+
+    /// The most white flashes the room shows in any one second.
+    ///
+    /// Each light's white (its brightness while it shows white, else
+    /// nothing) turns when it swings a tenth of the way back, the darker
+    /// side under 0.8. Lights turning the same way within 0.1 s are one
+    /// change of the room; a flash is a rise and a fall.
+    fn room_white_flashes(frames: &[Vec<BulbOutput>], dt: f32) -> usize {
+        let mut events: Vec<(f32, i8)> = Vec::new();
+        for i in 0..frames[0].len() {
+            let level = |f: &Vec<BulbOutput>| {
+                if whitish(&f[i]) {
+                    f32::from(f[i].bright()) / 100.0
+                } else {
+                    0.0
+                }
+            };
+            let (mut ext, mut dir) = (level(&frames[0]), 0i8);
+            for (k, f) in frames.iter().enumerate().skip(1) {
+                let v = level(f);
+                if v - ext >= 0.1 && dir <= 0 && ext < 0.8 {
+                    (ext, dir) = (v, 1);
+                    events.push((k as f32 * dt, 1));
+                } else if ext - v >= 0.1 && dir >= 0 && v < 0.8 {
+                    (ext, dir) = (v, -1);
+                    events.push((k as f32 * dt, -1));
+                } else if (dir > 0 && v > ext) || (dir < 0 && v < ext) {
+                    ext = v;
+                }
+            }
+        }
+        events.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut room: Vec<(f32, i8)> = Vec::new();
+        for (t, d) in events {
+            if !room.iter().any(|&(u, e)| e == d && t - u < 0.1 - 1e-4) {
+                room.push((t, d));
+            }
+        }
+        room.iter()
+            .map(|&(t, _)| {
+                let within = |d: i8| {
+                    room.iter()
+                        .filter(|&&(u, e)| e == d && u <= t && t - u < 1.0)
+                        .count()
+                };
+                within(1).max(within(-1))
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
     #[test]
     fn white_flashes_stay_under_three_a_second() {
+        // The top of a build: every snare walks a white flash to the next
+        // light, eight a second. Each light flashes only twice a second; the
+        // room flashes eight times. With the protection off as on, the
+        // show's guard holds the room to three.
         let s = ShowSettings::default();
+        let dt = 0.025;
         let mut stage = Stage::new(&Fixture::row(4));
-        stage.enter(Section::Drop);
-        let mut flashes = 0;
-        let mut was_white = false;
-        // A snare on every other frame for four seconds: far too many.
-        for k in 0..160 {
-            let l = Levels {
-                energy: 1.0,
-                bass: 1.0,
-                kick: k % 20 == 0,
-                beat: (k % 20 == 0).then_some(1.0),
-                snare: (k % 2 == 1).then_some(1.0),
-                ..Levels::default()
-            };
-            let out = stage.frame(&s, l, 0.025);
-            let white = out.iter().any(|o| matches!(o, BulbOutput::White { .. }));
-            if white && !was_white {
-                flashes += 1;
-            }
-            was_white = white;
+        stage.enter(Section::Build);
+        stage.held = 7.0;
+        let frames: Vec<Vec<BulbOutput>> = (0..160)
+            .map(|k| {
+                let l = Levels {
+                    energy: 0.8,
+                    snare: (k % 5 == 0).then_some(1.0),
+                    ..Levels::default()
+                };
+                stage.frame(&s, l, dt)
+            })
+            .collect();
+        assert_eq!(stage.section, Section::Build);
+        let raw = room_white_flashes(&frames, dt);
+        assert!(raw > 3, "the roll only flashes {raw} times a second");
+        for on in [false, true] {
+            let mut guard = FlashGuard::show(4);
+            let sent: Vec<Vec<BulbOutput>> = frames
+                .iter()
+                .map(|f| {
+                    let mut f = f.clone();
+                    guard.apply(&mut f, dt, on);
+                    f
+                })
+                .collect();
+            let n = room_white_flashes(&sent, dt);
+            assert!(n <= 3, "{n} white flashes a second, protection on: {on}");
         }
-        assert!(flashes <= 12, "{flashes} white flashes in four seconds");
     }
 
     #[test]

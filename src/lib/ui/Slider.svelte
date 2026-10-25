@@ -59,7 +59,7 @@
         class:shown={!isDefault}
         tabindex={isDefault ? -1 : 0}
         title={t("reset_to", { v: format(def) })}
-        aria-label="{label}: {t('reset_to', { v: format(def) })}"
+        aria-label={t("labelled", { name: label, what: t("reset_to", { v: format(def) }) })}
         onclick={reset}
       >
         <Icon name="reset" size={13} />

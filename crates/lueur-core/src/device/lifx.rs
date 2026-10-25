@@ -5,6 +5,7 @@
 //! its own interpolation between frames.
 
 use super::common::{LastSent, Throttle, broadcast_targets, rgb_to_hsv, udp_to};
+use super::wire::Wire;
 use super::{DeviceKind, DiscoveredDevice, LightStream, REST_BRIGHT, REST_KELVIN};
 use crate::color::BulbOutput;
 use crate::yeelight::Effect;
@@ -144,16 +145,18 @@ pub struct LifxStream {
     sequence: u8,
     last: LastSent,
     pace: Throttle,
+    wire: Wire,
 }
 
 impl LifxStream {
-    pub fn open(ip: &str, port: u16, target: &str) -> io::Result<Self> {
+    pub fn open(ip: &str, port: u16, target: &str, wire: Wire) -> io::Result<Self> {
         Ok(LifxStream {
             socket: udp_to(ip, port)?,
             target: target_of(target)?,
             sequence: 0,
             last: LastSent::default(),
             pace: Throttle::new(FRAME_INTERVAL),
+            wire,
         })
     }
 
@@ -166,6 +169,7 @@ impl LifxStream {
             self.sequence,
             &set_color_payload(output, duration_ms),
         );
+        self.wire.bytes(&msg);
         self.socket.send(&msg).map(|_| ())
     }
 }

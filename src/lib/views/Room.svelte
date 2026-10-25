@@ -12,6 +12,7 @@
     renameLight,
     setLightEnabled,
   } from "../state.svelte";
+  import { tick } from "svelte";
   import { history, observe, planKey, redo, track, undo } from "../history.svelte";
   import {
     closestOnSegment,
@@ -21,9 +22,11 @@
     mapLight,
     EDGE_COLOR,
     EDGE_KIND,
+    EDGE_LETTER,
     type Edge,
   } from "../geometry";
   import { t, pct } from "../i18n";
+  import { bulbLabel } from "../brands";
   import { MOD_KEY } from "../platform";
   import { WALLS, rgbCss, rgbOfHex } from "../scenes";
   import { defaultConfig, type Rgb, type Vec2 } from "../types";
@@ -31,6 +34,7 @@
   import Slider from "../ui/Slider.svelte";
   import Switch from "../ui/Switch.svelte";
   import RestartBanner from "../ui/RestartBanner.svelte";
+  import ZoneBadge from "../ui/ZoneBadge.svelte";
 
   const DEF = defaultConfig();
   // Extent of the plan in plan units. Everything placed is kept inside it.
@@ -83,17 +87,72 @@
 
   const selLight = $derived(app.selectedLight ? lightById(app.selectedLight) : undefined);
 
-  function selectLight(id: string) {
+  // --- Focus ---
+  // Picking from the list, or adding, moves the focus to the inspector; going
+  // back returns it to where it came from, or to the object's row in the list.
+  // A pick on the plan with the pointer leaves the focus alone.
+
+  let inspectorEl = $state<HTMLElement>();
+  /** The control the inspector was opened from, when it outlives it. */
+  let origin: HTMLElement | null = null;
+
+  /** The list row of what is selected now, e.g. "light:<id>" or "corner:2". */
+  function selectedKey(): string | null {
+    if (selLight) return `light:${selLight.id}`;
+    if (other?.kind === "screen") return "screen";
+    if (other?.kind === "corner") return `corner:${other.index}`;
+    return null;
+  }
+
+  async function focusInspector() {
+    await tick();
+    inspectorEl?.querySelector<HTMLElement>("[data-autofocus]")?.focus();
+  }
+
+  /** Only take the focus back from the inspector or from nowhere, never
+   *  from a control the user has since moved to. */
+  function focusIsOurs(): boolean {
+    const a = document.activeElement;
+    return !a || a === document.body || !!inspectorEl?.contains(a);
+  }
+
+  /** After the inspector closes: back to the origin, else to the row `key`,
+   *  else to the row now at `index` (what took a removed object's place). */
+  async function focusList(key: string | null, index = 0) {
+    const from = origin;
+    origin = null;
+    await tick();
+    if (from?.isConnected) return from.focus();
+    const rows = [...(inspectorEl?.querySelectorAll<HTMLElement>("[data-key]") ?? [])];
+    const row = rows.find((r) => r.dataset.key === key) ?? rows[Math.min(Math.max(index, 0), rows.length - 1)];
+    row?.focus();
+  }
+
+  function selectLight(id: string, focus = false) {
     app.selectedLight = id;
     other = null;
+    if (focus) focusInspector();
   }
-  function selectOther(o: Other) {
+  function selectOther(o: Other, focus = false) {
     app.selectedLight = null;
     other = o;
+    if (focus) focusInspector();
   }
-  function clearSelection() {
+  /** A pick from the list or an add button: the focus follows it. */
+  function pick(e: Event, o: { light: string } | Other) {
+    const el = e.currentTarget as HTMLElement;
+    // List rows go away with the list; they are found again by their key.
+    origin = el.dataset.key ? null : el;
+    if (o && "light" in o) selectLight(o.light, true);
+    else selectOther(o, true);
+  }
+  function clearSelection(restore = true) {
+    const key = selectedKey();
+    const ours = restore && key !== null && focusIsOurs();
     app.selectedLight = null;
     other = null;
+    if (ours) focusList(key);
+    else origin = null;
   }
 
   // --- Dragging ---
@@ -123,6 +182,7 @@
   function begin(e: PointerEvent, d: NonNullable<Drag>) {
     if (e.button !== 0) return;
     e.stopPropagation();
+    origin = null;
     drag = d;
     dragging = true;
     held = fitted;
@@ -181,9 +241,9 @@
 
   // --- Editing ---
 
-  function newLight() {
+  function newLight(e: Event) {
     const l = addLight();
-    selectLight(l.id);
+    pick(e, { light: l.id });
   }
 
   /** Double-click on a wall drops a corner exactly there. */
@@ -210,7 +270,7 @@
   }
 
   /** Toolbar version: split the longest wall in two. */
-  function addCorner() {
+  function addCorner(e: Event) {
     const w = app.config.room.walls;
     let best = 0;
     let bestLen = -1;
@@ -228,7 +288,7 @@
       const b = c.room.walls[(best + 1) % c.room.walls.length];
       c.room.walls.splice(best + 1, 0, { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) });
     });
-    selectOther({ kind: "corner", index: best + 1 });
+    pick(e, { kind: "corner", index: best + 1 });
   }
 
   function removeCorner(index: number) {
@@ -236,10 +296,20 @@
       notify("info", t("min_corners"));
       return;
     }
+    const ours = focusIsOurs();
+    const row = rowIndex(`corner:${index}`);
     edit((c) => {
       c.room.walls.splice(index, 1);
     });
     other = null;
+    if (ours) focusList(null, row);
+  }
+
+  function removeSelectedLight(id: string) {
+    const ours = focusIsOurs();
+    const row = rowIndex(`light:${id}`);
+    removeLight(id);
+    if (ours) focusList(null, row);
   }
 
   function resetShape() {
@@ -247,12 +317,12 @@
       c.room.walls = structuredClone(DEF.room.walls);
       c.room.screen = structuredClone(DEF.room.screen);
     });
-    clearSelection();
+    clearSelection(false);
     notify("info", t("reset_done"));
   }
 
   function removeSelected() {
-    if (selLight) removeLight(selLight.id);
+    if (selLight) removeSelectedLight(selLight.id);
     else if (other?.kind === "corner") removeCorner(other.index);
   }
 
@@ -269,6 +339,115 @@
         if (p) c.room.walls[i] = clampP({ x: p.x + dx, y: p.y + dy });
       }
     });
+    announceSoon();
+  }
+
+  // --- Typed positions ---
+  // The keyboard's way to place things: X and Y fields, kept in the plan's
+  // bounds. A value is taken while typing only once it is in bounds, so
+  // typing "420" does not stop at 12 on the way; leaving the field clamps it.
+
+  const X_MAX = VIEW_W - MARGIN;
+  const Y_MAX = VIEW_H - MARGIN;
+
+  function selectedPos(): Vec2 | undefined {
+    if (selLight) return lightById(selLight.id)?.pos;
+    if (other?.kind === "screen") return app.config.room.screen.center;
+    if (other?.kind === "corner") return app.config.room.walls[other.index];
+  }
+
+  function setPos(axis: "x" | "y", v: number) {
+    edit((c) => {
+      const put = (p: Vec2): Vec2 => clampP({ ...p, [axis]: v });
+      if (selLight) {
+        const l = c.room.lights.find((x) => x.id === selLight.id);
+        if (l) l.pos = put(l.pos);
+      } else if (other?.kind === "screen") {
+        c.room.screen.center = put(c.room.screen.center);
+      } else if (other?.kind === "corner") {
+        const p = c.room.walls[other.index];
+        if (p) c.room.walls[other.index] = put(p);
+      }
+    });
+    // Placing a light or the screen is arranging the room, as a drag is.
+    if (selLight || other?.kind === "screen") markRoomArranged();
+  }
+
+  function onPosInput(axis: "x" | "y", e: Event & { currentTarget: HTMLInputElement }) {
+    const v = e.currentTarget.valueAsNumber;
+    if (Number.isFinite(v) && v >= MARGIN && v <= (axis === "x" ? X_MAX : Y_MAX)) setPos(axis, v);
+  }
+
+  function onPosChange(axis: "x" | "y", e: Event & { currentTarget: HTMLInputElement }) {
+    const v = e.currentTarget.valueAsNumber;
+    if (Number.isFinite(v)) setPos(axis, v);
+    // Show what was kept: the clamped value, or the old one for no number.
+    const kept = selectedPos();
+    if (kept) e.currentTarget.value = String(kept[axis]);
+  }
+
+  // --- Announcements ---
+  // Moves made with the arrows are read out once the keys rest, so holding
+  // an arrow gives one message, not one per step.
+
+  let announcement = $state("");
+  let announceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function announceSoon() {
+    if (announceTimer) clearTimeout(announceTimer);
+    announceTimer = setTimeout(() => {
+      announceTimer = null;
+      announcement = whereNow();
+    }, 600);
+  }
+  $effect(() => () => {
+    if (announceTimer) clearTimeout(announceTimer);
+  });
+
+  function whereNow(): string {
+    const p = selectedPos();
+    if (!p) return "";
+    if (selLight) {
+      const m = mapLight(app.config.room.screen, selLight);
+      return t("moved_zone", {
+        name: selLight.name,
+        x: p.x,
+        y: p.y,
+        letter: t(EDGE_LETTER[m.edge]),
+        zone: t(EDGE_KIND[m.edge]),
+      });
+    }
+    const name = other?.kind === "corner" ? cornerName(other.index) : t("plan_screen");
+    return t("moved", { name, x: p.x, y: p.y });
+  }
+
+  // --- Naming corners ---
+
+  const WHERE = [
+    ["where_top_left", "where_top", "where_top_right"],
+    ["where_left", "where_middle", "where_right"],
+    ["where_bottom_left", "where_bottom", "where_bottom_right"],
+  ] as const;
+
+  /** "Corner 2, top right": where it sits in the room as drawn. */
+  function cornerName(i: number): string {
+    const w = app.config.room.walls;
+    const p = w[i];
+    if (!p) return t("corner_n", { n: i + 1 });
+    const third = (v: number, all: number[]) => {
+      const lo = Math.min(...all);
+      const f = (v - lo) / Math.max(Math.max(...all) - lo, 1);
+      return f < 1 / 3 ? 0 : f > 2 / 3 ? 2 : 1;
+    };
+    const row = third(p.y, w.map((q) => q.y));
+    const col = third(p.x, w.map((q) => q.x));
+    return t("corner_at", { n: i + 1, where: t(WHERE[row][col]) });
+  }
+
+  /** Where an object's row sits in the list, to land on its neighbour. */
+  function rowIndex(key: string): number {
+    const { lights, walls } = app.config.room;
+    return ["screen", ...lights.map((l) => `light:${l.id}`), ...walls.map((_, i) => `corner:${i}`)].indexOf(key);
   }
 
   // --- History ---
@@ -287,8 +466,15 @@
 
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
-    // Text fields keep their own undo.
-    if (t.closest("input, select, textarea")) return;
+    // Text fields keep their own undo and arrows; Escape still closes the
+    // inspector they sit in.
+    if (t.closest("input, select, textarea")) {
+      if (e.key === "Escape" && inspectorEl?.contains(t) && (selLight || other)) {
+        e.preventDefault();
+        clearSelection();
+      }
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !drag) {
       const key = e.key.toLowerCase();
       if (key === "z" || key === "y") {
@@ -433,13 +619,17 @@
     <div class="banner-slot"><RestartBanner /></div>
 
     <div class="stage" class:dragging bind:clientWidth={stageW} bind:clientHeight={stageH}>
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <!-- The plan is a picture to screen readers: everything on it can be
+           reached, selected and placed from the list in the inspector. -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
       <svg
         bind:this={svgEl}
         viewBox="{box.x} {box.y} {box.w} {box.h}"
         style="--k:{k}"
         preserveAspectRatio="xMidYMid meet"
-        onpointerdown={clearSelection}
+        role="img"
+        aria-label={t("plan_label")}
+        onpointerdown={() => clearSelection(false)}
         onpointermove={onMove}
         onpointerup={endDrag}
         onpointercancel={endDrag}
@@ -570,7 +760,10 @@
             }}
           >
             <circle cx={l.pos.x} cy={l.pos.y} r={15 * k} class="ring" />
-            <circle cx={l.pos.x} cy={l.pos.y} r={8 * k} class="bulb" fill={EDGE_COLOR[m.edge]} />
+            <circle cx={l.pos.x} cy={l.pos.y} r={9.5 * k} class="bulb" fill={EDGE_COLOR[m.edge]} />
+            <text x={l.pos.x} y={l.pos.y} class="bulb-letter" text-anchor="middle" dominant-baseline="central"
+              >{t(EDGE_LETTER[m.edge])}</text
+            >
             <text x={labelPos(l.pos).x} y={labelPos(l.pos).y} class="label" text-anchor="middle">{l.name}</text>
           </g>
         {/each}
@@ -580,12 +773,38 @@
     </div>
   </section>
 
-  <aside class="inspector">
+  {#snippet place(p: Vec2)}
+    <fieldset class="place">
+      <legend class="field-label">{t("position")}</legend>
+      <div class="xy">
+        {#each ["x", "y"] as const as axis}
+          <label class="axis">
+            <span aria-hidden="true">{axis.toUpperCase()}</span>
+            <input
+              type="number"
+              class="num"
+              min={MARGIN}
+              max={axis === "x" ? X_MAX : Y_MAX}
+              step="1"
+              value={p[axis]}
+              aria-label={t(axis === "x" ? "pos_x" : "pos_y")}
+              aria-describedby="pos-tip"
+              oninput={(e) => onPosInput(axis, e)}
+              onchange={(e) => onPosChange(axis, e)}
+            />
+          </label>
+        {/each}
+      </div>
+      <p class="hint" id="pos-tip">{t("pos_tip", { min: MARGIN, maxX: X_MAX, maxY: Y_MAX, w: scr.width })}</p>
+    </fieldset>
+  {/snippet}
+
+  <aside class="inspector" bind:this={inspectorEl}>
     {#if selLight}
       {@const l = selLight}
       {@const m = mapLight(scr, l)}
       {@const b = bindingFor(l.id)}
-      <button class="back" onclick={clearSelection}><Icon name="back" size={13} /> {t("all_objects")}</button>
+      <button class="back" onclick={() => clearSelection()}><Icon name="back" size={13} /> {t("all_objects")}</button>
 
       <input
         class="name"
@@ -593,6 +812,7 @@
         value={l.name}
         aria-label={t("light_name")}
         spellcheck="false"
+        data-autofocus
         oninput={(e) => renameLight(l.id, e.currentTarget.value)}
       />
 
@@ -609,10 +829,11 @@
             fill-opacity={0.2 + 0.25 * (1 - m.spread)}
           />
         </svg>
-        <figcaption><span class="swatch"></span>{t(describe(m))}</figcaption>
+        <figcaption><ZoneBadge edge={m.edge} off={!l.enabled} labelled />{t(describe(m))}</figcaption>
       </figure>
 
       <div class="fields">
+        {@render place(l.pos)}
         <div class="field">
           <span class="field-label">{t("height")}</span>
           <Slider
@@ -647,7 +868,8 @@
       <div class="bulb-box">
         <Icon name="bulb" size={15} />
         {#if b}
-          <span class="bulb-info num">{b.ip}</span>
+          <!-- The bulb by name; its address only in the tooltip, for whoever needs it. -->
+          <span class="bulb-info" title={b.ip}>{bulbLabel(b, l.name)}</span>
           <button class="btn sm" title={t("identify_tip")} onclick={() => identifyLight(l.id)}>{t("identify")}</button>
         {:else}
           <span class="bulb-info warn">{t("no_bulb")}</span>
@@ -655,11 +877,12 @@
         {/if}
       </div>
 
-      <button class="btn plain danger remove" onclick={() => removeLight(l.id)}>{t("remove_light")}</button>
+      <button class="btn plain danger remove" onclick={() => removeSelectedLight(l.id)}>{t("remove_light")}</button>
     {:else if other?.kind === "screen"}
-      <button class="back" onclick={clearSelection}><Icon name="back" size={13} /> {t("all_objects")}</button>
-      <h2 class="name static">{t("plan_screen")}</h2>
+      <button class="back" onclick={() => clearSelection()}><Icon name="back" size={13} /> {t("all_objects")}</button>
+      <h2 class="name static" tabindex="-1" data-autofocus>{t("plan_screen")}</h2>
       <div class="fields">
+        {@render place(scr.center)}
         <div class="field">
           <span class="field-label">{t("facing")}</span>
           <Slider
@@ -689,14 +912,20 @@
       </div>
     {:else if other?.kind === "corner"}
       {@const index = other.index}
-      <button class="back" onclick={clearSelection}><Icon name="back" size={13} /> {t("all_objects")}</button>
-      <h2 class="name static">{t("corner_n", { n: index + 1 })}</h2>
+      {@const p = room.walls[index]}
+      <button class="back" onclick={() => clearSelection()}><Icon name="back" size={13} /> {t("all_objects")}</button>
+      <h2 class="name static" tabindex="-1" data-autofocus>{cornerName(index)}</h2>
+      {#if p}
+        <div class="fields">
+          {@render place(p)}
+        </div>
+      {/if}
       <button class="btn plain danger remove" onclick={() => removeCorner(index)}>{t("remove_corner")}</button>
     {:else}
-      <h2 class="side-title">{t("objects")}</h2>
-      <ul class="objects">
+      <h2 class="side-title" id="objects-title">{t("objects")}</h2>
+      <ul class="objects" aria-labelledby="objects-title">
         <li>
-          <button class="obj" onclick={() => selectOther({ kind: "screen" })}>
+          <button class="obj" data-key="screen" onclick={(e) => pick(e, { kind: "screen" })}>
             <Icon name="screen" size={15} />
             <span class="obj-name">{t("plan_screen")}</span>
             <span class="obj-meta num">{scr.facing_deg}°</span>
@@ -705,9 +934,15 @@
         {#each room.lights as l (l.id)}
           {@const m = mapLight(scr, l)}
           <li>
-            <button class="obj" class:off={!l.enabled} onclick={() => selectLight(l.id)}>
-              <span class="obj-dot" style="background:{EDGE_COLOR[m.edge]}"></span>
-              <span class="obj-name">{l.name}</span>
+            <button class="obj" class:off={!l.enabled} data-key="light:{l.id}" onclick={(e) => pick(e, { light: l.id })}>
+              <ZoneBadge edge={m.edge} off={!l.enabled} />
+              <span class="obj-name"
+                >{l.name}<span class="sr-only"
+                  >, {t("zone_of", { letter: t(EDGE_LETTER[m.edge]), zone: t(EDGE_KIND[m.edge]) })}{#if !l.enabled}, {t(
+                      "not_following",
+                    )}{/if}</span
+                ></span
+              >
               {#if !bindingFor(l.id)}<span class="obj-warn">{t("no_bulb")}</span>{/if}
             </button>
           </li>
@@ -716,6 +951,19 @@
       {#if room.lights.length === 0}
         <p class="empty">{t("no_lights")}</p>
       {/if}
+
+      <h2 class="side-title corners-title" id="corners-title">{t("corners")}</h2>
+      <ul class="objects" aria-labelledby="corners-title">
+        {#each room.walls as w, i}
+          <li>
+            <button class="obj" data-key="corner:{i}" onclick={(e) => pick(e, { kind: "corner", index: i })}>
+              <span class="obj-corner" aria-hidden="true"></span>
+              <span class="obj-name">{cornerName(i)}</span>
+              <span class="obj-meta num" aria-hidden="true">{w.x}, {w.y}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
 
       <div class="paint">
         <h2 class="side-title" id="walls-title">{t("walls")}</h2>
@@ -756,11 +1004,14 @@
 
       <div class="legend">
         {#each EDGES as edge}
-          <span><i style="background:{EDGE_COLOR[edge]}"></i>{t(EDGE_KIND[edge])}</span>
+          <span><ZoneBadge {edge} />{t(EDGE_KIND[edge])}</span>
         {/each}
       </div>
     {/if}
   </aside>
+
+  <!-- Where a light moved with the arrows went, for screen readers. -->
+  <p class="sr-only" aria-live="polite">{announcement}</p>
 </div>
 
 <style>
@@ -916,11 +1167,11 @@
     transition: stroke var(--dur) var(--ease);
   }
   .screen.sel .screen-body {
-    stroke: var(--glow);
+    stroke: var(--active);
   }
   .handle {
     fill: var(--surface);
-    stroke: var(--glow);
+    stroke: var(--active);
     stroke-width: calc(2px * var(--k));
     cursor: ew-resize;
   }
@@ -935,8 +1186,8 @@
     fill: var(--surface-hover);
   }
   .corner.sel {
-    fill: var(--glow);
-    stroke: var(--glow);
+    fill: var(--active);
+    stroke: var(--active);
   }
 
   .light {
@@ -944,7 +1195,7 @@
   }
   .ring {
     fill: none;
-    stroke: var(--glow);
+    stroke: var(--active);
     stroke-width: calc(2px * var(--k));
     opacity: 0;
     transition: opacity var(--dur) var(--ease);
@@ -962,6 +1213,16 @@
   }
   .light.off .bulb {
     fill: var(--line-strong);
+  }
+  /* The zone's letter, so a bulb's zone reads without its colour. */
+  .bulb-letter {
+    fill: var(--zone-ink);
+    font-size: calc(10.5px * var(--k));
+    font-weight: 700;
+    pointer-events: none;
+  }
+  .light.off .bulb-letter {
+    fill: var(--text);
   }
   .label {
     fill: var(--text);
@@ -1057,11 +1318,41 @@
     font-size: var(--t-sm);
     color: var(--text-2);
   }
-  .swatch {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--c);
+
+  .place {
+    margin: 0;
+    padding: 0;
+    border: none;
+    min-width: 0;
+  }
+  .place legend {
+    padding: 0;
+  }
+  .xy {
+    display: flex;
+    gap: var(--s-2);
+  }
+  .axis {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--t-sm);
+    font-weight: 600;
+    color: var(--text-2);
+  }
+  .axis input {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+  }
+  .hint {
+    margin-top: var(--s-2);
+    font-size: var(--t-xs);
+    color: var(--text-3);
+    line-height: 1.4;
+    user-select: text;
   }
 
   .fields {
@@ -1104,6 +1395,9 @@
   .bulb-info {
     flex: 1;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--text-2);
     font-size: var(--t-sm);
   }
@@ -1152,12 +1446,21 @@
   .obj.off .obj-name {
     color: var(--text-3);
   }
-  .obj-dot {
-    width: 8px;
-    height: 8px;
-    margin: 0 3.5px;
-    border-radius: 50%;
+  .obj :global(.zone-badge) {
+    margin: 0 0.5px;
+  }
+  /* A corner as the plan draws it. */
+  .obj-corner {
+    width: 9px;
+    height: 9px;
+    margin: 0 3px;
     flex: none;
+    border-radius: 2px;
+    background: var(--plan-floor);
+    box-shadow: inset 0 0 0 1.5px var(--plan-wall);
+  }
+  .corners-title {
+    margin-top: var(--s-4);
   }
   .obj-meta {
     font-size: var(--t-sm);
@@ -1236,10 +1539,5 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-  }
-  .legend i {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
   }
 </style>

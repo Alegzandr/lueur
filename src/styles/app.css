@@ -5,7 +5,11 @@
    controls with a faint top light and a real pressed state, motion that is
    short and physical, numbers that line up. The only colour in the chrome
    is amber, and it always means light: the effect running, a bulb on, the
-   selection on the plan. */
+   selection on the plan. What a choice applies to is shown in neutral ink
+   instead (--select), so "picked" never reads as "running". Neither is
+   ever told by colour alone: a running state also carries a lamp or words,
+   a picked one a tick or an edge. Red only ever means an error or a
+   destructive action. */
 
 :root {
   --bg: oklch(0.972 0 0);
@@ -29,14 +33,28 @@
   --glow: oklch(0.76 0.15 70);
   --glow-text: oklch(0.52 0.12 62);
   --glow-soft: oklch(0.76 0.15 70 / 0.16);
+  /* State indicators. --active is the amber of something running, dark
+     enough for 3:1 on every surface (4.4:1 on --surface, 3.7:1 on
+     --surface-hover); --active-text reads at 4.5:1 on --active-soft.
+     --select is the neutral ink of a target or a selection. */
+  --active: oklch(0.58 0.13 62);
+  --active-text: oklch(0.5 0.12 60);
+  --active-soft: oklch(0.76 0.15 70 / 0.16);
+  --select: oklch(0.3 0 0);
+  --select-soft: oklch(0 0 0 / 0.045);
 
   --ok: oklch(0.58 0.14 150);
   --danger: oklch(0.55 0.19 27);
   --danger-soft: oklch(0.55 0.19 27 / 0.1);
 
-  --zone-left: oklch(0.66 0.14 30);
-  --zone-center: oklch(0.72 0.13 85);
-  --zone-right: oklch(0.62 0.11 235);
+  /* Screen zones on the plan. Blue, teal and orange, each a step apart in
+     lightness, so they stay apart with red-green colour blindness (no red:
+     it reads as an error). Every zone also carries a letter (--zone-ink on
+     the colour); colours hold 3:1 on the floor and the sidebar. */
+  --zone-left: oklch(0.42 0.14 262);
+  --zone-center: oklch(0.51 0.1 175);
+  --zone-right: oklch(0.625 0.145 58);
+  --zone-ink: oklch(1 0 0);
 
   --plan-bg: oklch(0.955 0 0);
   --plan-grid: oklch(0.87 0 0);
@@ -105,12 +123,18 @@
     --glow: oklch(0.8 0.14 72);
     --glow-text: oklch(0.83 0.13 75);
     --glow-soft: oklch(0.8 0.14 72 / 0.16);
+    --active: oklch(0.8 0.14 72);
+    --active-text: oklch(0.83 0.13 75);
+    --active-soft: oklch(0.8 0.14 72 / 0.14);
+    --select: oklch(0.9 0 0);
+    --select-soft: oklch(1 0 0 / 0.06);
     --ok: oklch(0.76 0.13 150);
     --danger: oklch(0.72 0.16 27);
     --danger-soft: oklch(0.72 0.16 27 / 0.15);
-    --zone-left: oklch(0.72 0.13 30);
-    --zone-center: oklch(0.78 0.12 85);
-    --zone-right: oklch(0.72 0.1 235);
+    --zone-left: oklch(0.64 0.13 252);
+    --zone-center: oklch(0.74 0.12 175);
+    --zone-right: oklch(0.87 0.13 80);
+    --zone-ink: oklch(0.2 0 0);
     --plan-bg: oklch(0.18 0 0);
     --plan-grid: oklch(0.28 0 0);
     --plan-floor: oklch(0.23 0 0);
@@ -143,12 +167,18 @@
   --glow: oklch(0.8 0.14 72);
   --glow-text: oklch(0.83 0.13 75);
   --glow-soft: oklch(0.8 0.14 72 / 0.16);
+  --active: oklch(0.8 0.14 72);
+  --active-text: oklch(0.83 0.13 75);
+  --active-soft: oklch(0.8 0.14 72 / 0.14);
+  --select: oklch(0.9 0 0);
+  --select-soft: oklch(1 0 0 / 0.06);
   --ok: oklch(0.76 0.13 150);
   --danger: oklch(0.72 0.16 27);
   --danger-soft: oklch(0.72 0.16 27 / 0.15);
-  --zone-left: oklch(0.72 0.13 30);
-  --zone-center: oklch(0.78 0.12 85);
-  --zone-right: oklch(0.72 0.1 235);
+  --zone-left: oklch(0.64 0.13 252);
+  --zone-center: oklch(0.74 0.12 175);
+  --zone-right: oklch(0.87 0.13 80);
+  --zone-ink: oklch(0.2 0 0);
   --plan-bg: oklch(0.18 0 0);
   --plan-grid: oklch(0.28 0 0);
   --plan-floor: oklch(0.23 0 0);
@@ -222,6 +252,19 @@ button {
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+/* Read by screen readers, not shown. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 ::selection {
@@ -304,7 +347,7 @@ button {
   height: var(--lamp);
   flex: none;
   border-radius: 50%;
-  background: var(--glow);
+  background: var(--active);
   box-shadow: 0 0 var(--lamp) color-mix(in oklab, var(--glow) 60%, transparent);
 }
 
@@ -395,6 +438,7 @@ button {
 
 /* --- Form controls --- */
 input[type="text"],
+input[type="number"],
 select {
   height: 28px;
   padding: 0 var(--s-2);
@@ -406,6 +450,7 @@ select {
 }
 /* A field shows focus on its own edge: it is where the typing goes. */
 input[type="text"]:focus-visible,
+input[type="number"]:focus-visible,
 select:focus-visible {
   outline-offset: 0;
 }

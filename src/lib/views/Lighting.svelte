@@ -9,6 +9,7 @@
     effectTargets,
     identifyLight,
     isDriven,
+    isReconnecting,
     isOn,
     isPlaying,
     lightState,
@@ -17,10 +18,10 @@
     setAllPower,
     setLightMode,
     setSleepTimer,
-    toggleEffect,
     toggleLightPower,
     toggleTarget,
   } from "../state.svelte";
+  import { tick } from "svelte";
   import { t, tn, pct, times } from "../i18n";
   import { describe, mapLight } from "../geometry";
   import { applyFeel, currentFeel, FEEL_ORDER, type Feel } from "../presets";
@@ -74,14 +75,15 @@
     { value: "color" as const, label: t("tint_colour") },
   ]);
 
+  // The last step starts the Ambilight the way its tile does.
   const steps = $derived([
     { done: bound > 0, title: t("step1_title"), btn: t("step1_btn"), go: () => (app.view = "bulbs") },
     { done: arranged, title: t("step2_title"), btn: t("step2_btn"), go: () => (app.view = "room") },
-    { done: live, title: t("step3_title"), btn: t("start"), go: toggleEffect },
+    { done: live, title: t("step3_title"), btn: t("start_ambilight"), go: () => chooseMode("ambilight") },
   ]);
   const next = $derived(steps.findIndex((s) => !s.done));
 
-  const modeName = (m: Mode | "manual") => t(`mode_${m}`);
+  const modeName = (m: Mode) => t(`mode_${m}`);
 
   // --- Where effects and moods go ---
 
@@ -102,11 +104,28 @@
   const tileTitle = (mode: Mode) =>
     playsAll(mode) ? t("click_to_stop") : shareOf(mode) > 0 ? t("click_to_extend") : undefined;
 
-  /** What a light can play, by hand first. */
-  const LIGHT_MODES: (Mode | null)[] = [null, "ambilight", ...SHOWS.map((s) => s.id)];
-  const SCREEN_SWATCH = "linear-gradient(90deg, oklch(0.62 0.2 30), oklch(0.45 0.12 300), oklch(0.6 0.16 250))";
+  // Amber, violet and blue: a picture's colours, without the red that reads
+  // as an error.
+  const SCREEN_SWATCH = "linear-gradient(90deg, oklch(0.66 0.16 55), oklch(0.45 0.12 300), oklch(0.6 0.16 250))";
   const modeSwatch = (m: Mode | null, s: LightState) =>
     m === null ? tintCss(s.tint) : m === "ambilight" ? SCREEN_SWATCH : (SHOWS.find((x) => x.id === m)?.preview ?? "");
+
+  /** A light's shortcut to the effects: they start from their tiles only,
+   *  so this aims them at the light and brings the tiles into view. */
+  async function pickEffectFor(id: string) {
+    // A selection that already holds this light is kept: replacing it would
+    // drop the other lights picked without a word.
+    if (pickable.length > 1 && !app.target.includes(id)) app.target = [id];
+    await tick();
+    // The first tile that can be pressed, or the section title while all
+    // wait on a switch in progress.
+    const first =
+      document.querySelector<HTMLElement>("#effects .tile:not(:disabled)") ??
+      document.querySelector<HTMLElement>("#effects .group-title");
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    first?.scrollIntoView({ block: "center", behavior: still ? "auto" : "smooth" });
+    first?.focus({ preventScroll: true });
+  }
 
   // --- Lights by hand ---
 
@@ -133,28 +152,6 @@
 
   function setColour(id: string, [r, g, b]: RgbTuple) {
     adjustLight(id, { tint: { mode: "color", r, g, b } });
-  }
-
-  /** A light's modes are a radio group: the arrows move the choice. The chips
-   *  are only marked disabled while a switch runs, so focus stays on them. */
-  function onModeKey(e: KeyboardEvent & { currentTarget: HTMLElement }, id: string) {
-    const last = LIGHT_MODES.length - 1;
-    const i = Math.max(0, LIGHT_MODES.indexOf(modeOf(id)));
-    const to =
-      e.key === "ArrowRight" || e.key === "ArrowDown"
-        ? (i === last ? 0 : i + 1)
-        : e.key === "ArrowLeft" || e.key === "ArrowUp"
-          ? (i === 0 ? last : i - 1)
-          : e.key === "Home"
-            ? 0
-            : e.key === "End"
-              ? last
-              : -1;
-    if (to < 0) return;
-    e.preventDefault();
-    if (app.busy || app.modeBusy[id]) return;
-    void setLightMode(id, LIGHT_MODES[to]);
-    e.currentTarget.querySelectorAll<HTMLButtonElement>("button")[to]?.focus();
   }
 
   function showOnPlan(id: string) {
@@ -193,14 +190,14 @@
   const SLEEP_PRESETS = [15, 30, 60, 90];
   const sleepOptions = $derived([
     { value: "off", label: t("sleep_off") },
-    ...SLEEP_PRESETS.map((m) => ({ value: String(m), label: `${m} min` })),
+    ...SLEEP_PRESETS.map((m) => ({ value: String(m), label: `${m}\u00a0min` })),
   ]);
 
   let now = $state(Date.now());
   $effect(() => {
     if (!app.sleep) return;
-    const tick = setInterval(() => (now = Date.now()), 1000);
-    return () => clearInterval(tick);
+    const timer = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(timer);
   });
   /** Seconds until the lights go off. */
   const sleepLeft = $derived(
@@ -209,7 +206,7 @@
   );
   const sleepLabel = $derived(
     sleepLeft === null
-      ? t("sleep_timer")
+      ? t("sleep_in")
       : sleepLeft <= 60
         ? t("sleep_fading")
         : t("sleep_left", { n: Math.ceil(sleepLeft / 60) }),
@@ -255,26 +252,17 @@
   {#if pickable.length > 1}
     <section class="group">
       <div class="group-head"><h2 class="group-title" title={t("apply_to_tip")}>{t("apply_to")}</h2></div>
+      <!-- Who the effects and moods go to, not what plays: a neutral edge and
+           a tick, never the amber of something running. -->
       <div class="targets" role="group" aria-label={t("apply_to")}>
-        <button
-          class="chip"
-          class:picked={wholeRoom}
-          aria-pressed={wholeRoom}
-          onclick={() => (app.target = [])}
-        >
-          <Icon name="plan" size={13} />
+        <button class="chip target" class:picked={wholeRoom} aria-pressed={wholeRoom} onclick={() => (app.target = [])}>
+          <span class="tick" aria-hidden="true">{#if wholeRoom}<Icon name="check" size={10} />{/if}</span>
           {t("whole_room")}
         </button>
         {#each pickable as l (l.id)}
           {@const picked = !wholeRoom && app.target.includes(l.id)}
-          {@const dark = !isDriven(l.id) && !isOn(l.id)}
-          <button class="chip" class:picked aria-pressed={picked} onclick={() => toggleTarget(l.id)}>
-            <span
-              class="chip-dot"
-              class:off={dark}
-              style={dark ? undefined : `background:${modeSwatch(modeOf(l.id), lightState(l.id))}`}
-              aria-hidden="true"
-            ></span>
+          <button class="chip target" class:picked aria-pressed={picked} onclick={() => toggleTarget(l.id)}>
+            <span class="tick" aria-hidden="true">{#if picked}<Icon name="check" size={10} />{/if}</span>
             {l.name}
           </button>
         {/each}
@@ -282,10 +270,19 @@
     </section>
   {/if}
 
+  {#snippet status(all: boolean, share: number, total: number)}
+    <!-- What plays now: amber, a lamp and words, so colour is never the only sign. -->
+    {#if all}
+      <span class="status"><span class="lamp" aria-hidden="true"></span>{t("playing")}</span>
+    {:else if share > 0}
+      <span class="status partial">{t("share_of", { n: share, total })}</span>
+    {/if}
+  {/snippet}
+
   {#if bound > 0}
-    <section class="group">
+    <section class="group" id="effects">
       <div class="group-head">
-        <h2 class="group-title">
+        <h2 class="group-title" tabindex="-1">
           {t("effects")}{#if targetName}<span class="for">{` · ${targetName}`}</span>{/if}
         </h2>
       </div>
@@ -309,9 +306,7 @@
               {DETECTS_FULLSCREEN && app.config.behavior.auto_fullscreen ? t("mode_ambilight_auto") : t("mode_ambilight_sub")}
             </span>
           </span>
-          {#if shareOf("ambilight") > 0 && !playsAll("ambilight")}
-            <span class="share">{t("share_of", { n: shareOf("ambilight"), total: targets.length })}</span>
-          {/if}
+          {@render status(playsAll("ambilight"), shareOf("ambilight"), targets.length)}
         </button>
         {#each SHOWS as s (s.id)}
           <button
@@ -327,9 +322,7 @@
             <span class="preview" style="--p:{s.preview}" aria-hidden="true"></span>
             <span class="tile-text">
               <span class="tile-name">{modeName(s.id)}</span>
-              {#if shareOf(s.id) > 0 && !playsAll(s.id)}
-                <span class="tile-sub">{t("share_of", { n: shareOf(s.id), total: targets.length })}</span>
-              {/if}
+              <span class="tile-state">{@render status(playsAll(s.id), shareOf(s.id), targets.length)}</span>
             </span>
           </button>
         {/each}
@@ -422,9 +415,7 @@
           ></span>
           <span class="mood-text">
             {t("mood_natural")}
-            {#if moodShare(NATURAL) > 0 && !moodAll(NATURAL)}
-              <span class="share">{t("share_of", { n: moodShare(NATURAL), total: moodIds.length })}</span>
-            {/if}
+            {@render status(moodAll(NATURAL), moodShare(NATURAL), moodIds.length)}
           </span>
         </button>
         {#each MOODS as m (m.id)}
@@ -444,14 +435,22 @@
             ></span>
             <span class="mood-text">
               {t(`mood_${m.id}`)}
-              {#if moodShare(m.id) > 0 && !moodAll(m.id)}
-                <span class="share">{t("share_of", { n: moodShare(m.id), total: moodIds.length })}</span>
-              {/if}
+              {@render status(moodAll(m.id), moodShare(m.id), moodIds.length)}
             </span>
           </button>
         {/each}
       </div>
-      <div class="card rows tune">
+    </section>
+
+    <!-- The timer is for bedtime: it puts the whole room out, whatever
+         "Apply to" picks (the tray sets it too, with no pick to follow). -->
+    <section class="group">
+      <div class="group-head">
+        <h2 class="group-title">
+          {t("sleep_timer")}<span class="for">{` · ${t("whole_room")}`}</span>
+        </h2>
+      </div>
+      <div class="card rows">
         <Row label={sleepLabel} tip={t("sleep_timer_tip")}>
           <Segmented
             label={t("sleep_timer")}
@@ -502,6 +501,8 @@
 
               {#if !b}
                 <button class="btn sm" onclick={() => (app.view = "bulbs")}>{t("assign")}</button>
+              {:else if lm && isReconnecting(l.id)}
+                <span class="live-tag" title={t("reconnecting_tip")}>{t("reconnecting")}</span>
               {:else if lm}
                 <span class="live-tag">
                   <span class="lamp" aria-hidden="true"></span>
@@ -516,7 +517,7 @@
                     step="1"
                     value={s.bright}
                     style="--fill:{(s.bright - 1) / 99}"
-                    aria-label="{l.name}: {t('brightness')}"
+                    aria-label={t("labelled", { name: l.name, what: t("brightness") })}
                     aria-valuetext={pct(s.bright / 100)}
                     oninput={(e) => adjustLight(l.id, { bright: +e.currentTarget.value })}
                   />
@@ -525,12 +526,13 @@
               {/if}
 
               {#if b}
+                <!-- On shows as a filled button, not only an amber icon. -->
                 <button
                   class="btn plain icon sm power"
                   class:on={isOn(l.id)}
                   disabled={app.powerBusy[l.id]}
                   title={isOn(l.id) ? t("turn_off") : t("turn_on")}
-                  aria-label="{l.name}: {isOn(l.id) ? t('turn_off') : t('turn_on')}"
+                  aria-label={t("labelled", { name: l.name, what: isOn(l.id) ? t("turn_off") : t("turn_on") })}
                   onclick={() => toggleLightPower(l.id)}
                 >
                   <Icon name="power" size={14} />
@@ -540,32 +542,17 @@
 
             {#if expanded}
               <div class="panel">
-                <div
-                  class="light-modes"
-                  role="radiogroup"
-                  aria-label="{l.name}: {t('light_mode')}"
-                  title={t("light_mode_tip")}
-                  tabindex="-1"
-                  onkeydown={(e) => onModeKey(e, l.id)}
-                >
-                  {#each LIGHT_MODES as option, i (option ?? "manual")}
-                    <button
-                      type="button"
-                      class="chip"
-                      class:picked={lm === option}
-                      role="radio"
-                      tabindex={i === Math.max(0, LIGHT_MODES.indexOf(lm)) ? 0 : -1}
-                      aria-checked={lm === option}
-                      aria-disabled={app.busy || app.modeBusy[l.id]}
-                      onclick={() => setLightMode(l.id, option)}
-                    >
-                      <span class="chip-dot" style="background:{modeSwatch(option, s)}" aria-hidden="true"></span>
-                      {modeName(option ?? "manual")}
-                    </button>
-                  {/each}
-                </div>
                 {#if driven}
-                  <p class="hint">{t("driven_hint")}</p>
+                  <div class="plays">
+                    <p class="hint">{t("driven_hint", { mode: lm ? modeName(lm) : t("mode_mixed") })}</p>
+                    <button
+                      class="btn sm"
+                      disabled={app.busy || app.modeBusy[l.id]}
+                      onclick={() => setLightMode(l.id, null)}
+                    >
+                      {t("set_by_hand")}
+                    </button>
+                  </div>
                 {:else}
                   <div class="tint-mode">
                     <Segmented
@@ -585,7 +572,7 @@
                         step="100"
                         value={s.tint.kelvin}
                         style="--warm:{rgbCss(kelvinRgb(MIN_KELVIN))};--mid:{rgbCss(kelvinRgb(4000))};--cool:{rgbCss(kelvinRgb(MAX_KELVIN))}"
-                        aria-label="{l.name}: {t('warmth')}"
+                        aria-label={t("labelled", { name: l.name, what: t("warmth") })}
                         aria-valuetext="{s.tint.kelvin} K"
                         oninput={(e) => adjustLight(l.id, { tint: { mode: "white", kelvin: +e.currentTarget.value } })}
                       />
@@ -595,7 +582,7 @@
                       </div>
                     </div>
                   {:else}
-                    <div class="palette" role="group" aria-label="{l.name}: {t('tint_colour')}">
+                    <div class="palette" role="group" aria-label={t("labelled", { name: l.name, what: t("tint_colour") })}>
                       {#each PALETTE as c, i}
                         <button
                           class="dot"
@@ -615,7 +602,7 @@
                         <input
                           type="color"
                           value={hexOf(s.tint)}
-                          aria-label="{l.name}: {t('custom_colour')}"
+                          aria-label={t("labelled", { name: l.name, what: t("custom_colour") })}
                           oninput={(e) => {
                             const c = rgbOfHex(e.currentTarget.value);
                             if (c) setColour(l.id, c);
@@ -626,6 +613,10 @@
                   {/if}
                 {/if}
                 <div class="panel-foot">
+                  <button class="btn plain sm" title={t("pick_effect_tip")} onclick={() => pickEffectFor(l.id)}>
+                    <Icon name="screen" size={13} />
+                    {driven ? t("change_effect") : t("pick_effect")}
+                  </button>
                   <button class="btn plain sm" onclick={() => identifyLight(l.id)} title={t("identify_tip")}>
                     <Icon name="flash" size={13} />
                     {t("identify")}
@@ -731,19 +722,53 @@
   .screen .tile-text {
     flex: 1;
   }
-  /* Some of the lights picked play it: a dashed edge, not the full ring. */
+  /* Playing: an amber ring, with a lamp and "Playing" in words. Some of the
+     lights picked play it: a dashed ring and how many. */
   .tile.partial,
   .mood.partial {
-    outline: 1.5px dashed color-mix(in oklab, var(--glow) 70%, transparent);
+    outline: 1.5px dashed var(--active);
     outline-offset: -1.5px;
   }
-  .share {
-    font-size: var(--t-sm);
-    color: var(--text-3);
+  .tile.active {
+    box-shadow: inset 0 0 0 2px var(--active);
+  }
+  .status {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 7px 1px 6px;
+    border-radius: var(--r-full);
+    background: var(--active-soft);
+    color: var(--active-text);
+    font-size: var(--t-xs);
+    font-weight: 600;
+    line-height: 16px;
     white-space: nowrap;
   }
-  .tile.active {
-    box-shadow: inset 0 0 0 2px var(--glow);
+  .status.partial {
+    padding-left: 7px;
+    background: none;
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    color: var(--text-2);
+    font-weight: 500;
+  }
+  .status .lamp {
+    --lamp: 6px;
+    animation: glow 1.6s ease-in-out infinite alternate;
+  }
+  @keyframes glow {
+    to {
+      opacity: 0.4;
+    }
+  }
+  .screen .status {
+    align-self: center;
+  }
+  /* One line kept for the state, so a tile does not grow when it plays. */
+  .tile-state {
+    display: flex;
+    min-height: 18px;
   }
   .preview {
     flex: 1;
@@ -781,7 +806,7 @@
     place-items: center;
     min-height: 96px;
     background:
-      radial-gradient(60% 70% at 30% 50%, oklch(0.7 0.18 30 / 0.55), transparent 70%),
+      radial-gradient(60% 70% at 30% 50%, oklch(0.72 0.15 55 / 0.55), transparent 70%),
       radial-gradient(60% 70% at 70% 50%, oklch(0.65 0.15 250 / 0.55), transparent 70%),
       var(--sunken);
   }
@@ -792,7 +817,7 @@
     width: 46%;
     aspect-ratio: 16 / 9;
     border-radius: 4px;
-    background: linear-gradient(90deg, oklch(0.62 0.2 30), oklch(0.45 0.12 300), oklch(0.6 0.16 250));
+    background: linear-gradient(90deg, oklch(0.66 0.16 55), oklch(0.45 0.12 300), oklch(0.6 0.16 250));
     box-shadow:
       0 0 0 3px oklch(0.2 0 0),
       0 10px 18px -6px oklch(0 0 0 / 0.5);
@@ -848,12 +873,11 @@
     display: flex;
     flex-direction: column;
   }
-  .mood-text .share {
-    font-size: var(--t-xs);
-    font-weight: 400;
+  .mood-text {
+    gap: 3px;
   }
   .mood.active {
-    box-shadow: inset 0 0 0 2px var(--glow);
+    box-shadow: inset 0 0 0 2px var(--active);
   }
   .mood.pending .mood-dot {
     animation: breathe 800ms var(--ease) infinite alternate;
@@ -868,14 +892,16 @@
     box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.15);
   }
 
+  /* Who it goes to, in the neutral ink of a selection. */
   .for {
-    color: var(--glow-text);
+    color: var(--text-2);
     font-weight: 500;
   }
 
   /* --- Lights --- */
   .light.targeted {
-    background: color-mix(in oklab, var(--glow) 8%, transparent);
+    background: var(--select-soft);
+    box-shadow: inset 2px 0 0 var(--select);
   }
   .light:first-child {
     border-radius: var(--r-lg) var(--r-lg) 0 0;
@@ -990,7 +1016,9 @@
     color: var(--text-3);
   }
   .power.on {
-    color: var(--glow-text);
+    background: var(--active-soft);
+    box-shadow: inset 0 0 0 1px var(--active);
+    color: var(--active-text);
   }
 
   .panel {
@@ -1006,10 +1034,10 @@
       transform: translateY(-4px);
     }
   }
-  .light-modes {
+  .plays {
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-1);
+    align-items: center;
+    gap: var(--s-3);
   }
   .chip {
     display: inline-flex;
@@ -1025,24 +1053,27 @@
     white-space: nowrap;
     transition: box-shadow 200ms var(--ease);
   }
-  .chip:hover:not(:disabled, [aria-disabled="true"]) {
+  .chip:hover {
     background: var(--surface-hover);
   }
-  .chip:is(:disabled, [aria-disabled="true"]):not(.picked) {
-    opacity: 0.55;
-  }
+  /* Picked: a neutral edge and a tick, like a checkbox. */
   .chip.picked {
-    box-shadow: inset 0 0 0 2px var(--glow);
+    background: var(--select-soft);
+    box-shadow: inset 0 0 0 1.5px var(--select);
   }
-  .chip-dot {
-    width: 12px;
-    height: 12px;
+  .tick {
+    width: 14px;
+    height: 14px;
     flex: none;
+    display: grid;
+    place-items: center;
     border-radius: 50%;
-    box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.18);
+    box-shadow: inset 0 0 0 1.5px var(--control-line);
   }
-  .chip-dot.off {
-    box-shadow: inset 0 0 0 1.5px var(--line-strong);
+  .picked .tick {
+    background: var(--select);
+    box-shadow: none;
+    color: var(--on-ink);
   }
   .targets {
     display: flex;
@@ -1128,7 +1159,8 @@
   /* Reduced motion: the loops stand still. A pending choice dims instead of
      breathing; a light the effect drives shows the spectrum without turning. */
   @media (prefers-reduced-motion: reduce) {
-    .active .preview {
+    .active .preview,
+    .status .lamp {
       animation: none;
     }
     .pending .preview,

@@ -14,9 +14,11 @@ mod capture;
 mod commands;
 mod devices;
 mod error;
+mod identity;
 #[cfg(windows)]
 mod install;
 mod lights;
+mod logging;
 mod manual;
 mod natural;
 mod paths;
@@ -30,6 +32,10 @@ mod tuya;
 mod tuya_cloud;
 mod updater;
 mod vault;
+
+/// The capture benchmark, for `examples/capture_bench.rs` only.
+#[doc(hidden)]
+pub use capture::bench as capture_bench;
 
 use lueur_core::config::Appearance;
 use state::AppState;
@@ -52,7 +58,7 @@ pub(crate) fn start(app: &AppHandle) {
     }
 
     if let Err(e) = tray::setup(app) {
-        eprintln!("lueur: tray: {e}");
+        log::error!("tray: {e}");
     }
     auto::spawn(app);
     natural::spawn(app);
@@ -97,12 +103,14 @@ pub(crate) fn start(app: &AppHandle) {
 
 /// Build and run the application.
 pub fn run() {
+    let data_dir = paths::resolve_data_dir();
+    logging::init(&data_dir);
+
     #[cfg(windows)]
     if !install::prepare() {
         return;
     }
 
-    let data_dir = paths::resolve_data_dir();
     let app_state = AppState::load(data_dir);
 
     tauri::Builder::default()
@@ -120,6 +128,13 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        // Opens the logs folder, from Rust only: no capability grants it to
+        // the page, and no script is injected to open links.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .manage(app_state)
         .manage(updater::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
@@ -150,10 +165,15 @@ pub fn run() {
             updater::update_progress,
             updater::update_ready,
             updater::restart_app,
+            identity::unverified_devices,
+            identity::confirm_device,
+            identity::forget_device,
+            vault::credentials_sealed,
+            logging::open_logs_folder,
         ])
         .setup(|app| {
-            // An effect that ends by itself (every bulb gone) still shows as
-            // playing until the window and the tray are told.
+            // An effect that ends by itself (no capture, no sound) still
+            // shows as playing until the window and the tray are told.
             let handle = app.handle().clone();
             runner::on_end(move || {
                 let handle = handle.clone();
@@ -161,6 +181,16 @@ pub fn run() {
                     use tauri::Emitter;
                     let _ = handle.emit(tray::EFFECT_CHANGED, None::<error::AppError>);
                     tray::refresh(&handle);
+                });
+            });
+            // A bulb that dropped or came back: the window shows which
+            // lights are being reconnected.
+            let handle = app.handle().clone();
+            runner::on_links(move || {
+                let handle = handle.clone();
+                std::thread::spawn(move || {
+                    use tauri::Emitter;
+                    let _ = handle.emit(tray::EFFECT_CHANGED, None::<error::AppError>);
                 });
             });
             // The main window is created hidden; `start` shows it.

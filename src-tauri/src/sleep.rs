@@ -1,6 +1,11 @@
 //! The sleep timer: after a set time, the room fades out and every light goes
 //! off, whatever was running.
 //!
+//! It is a bedtime timer, so it always puts out the whole room: the lights
+//! the interface picks under "Apply to" do not narrow it (the tray, which
+//! sets it too, picks nothing, and a pick is gone once the window closes).
+//! The interface says so where the timer is set.
+//!
 //! The fade is the timer's last minute: each light free to be set by hand
 //! dims from what it shows down to its lowest, then everything is switched
 //! off. Cancelling during the fade puts the lights back as they were.

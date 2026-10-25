@@ -6,6 +6,7 @@
 use crate::device::{DeviceKind, Endpoint, Pairings};
 use crate::engine::EngineSettings;
 use crate::geometry::Room;
+use crate::safety::SafetySettings;
 use crate::scene::LightState;
 use crate::show::ShowSettings;
 use crate::yeelight::Effect;
@@ -71,8 +72,9 @@ impl Default for TransitionSettings {
     }
 }
 
-/// Capture-related settings.
+/// Capture-related settings. A field an older config lacks takes its default.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CaptureSettings {
     /// Index into the monitor list reported by the shell.
     pub monitor_index: usize,
@@ -194,6 +196,9 @@ pub struct AppConfig {
     /// again. A light set by hand has no entry.
     #[serde(default)]
     pub modes: BTreeMap<String, String>,
+    /// The photosensitivity protection, which every mode goes through.
+    #[serde(default)]
+    pub safety: SafetySettings,
 }
 
 /// Stands, while a config is read, for "every light" in an older config's
@@ -235,6 +240,7 @@ impl Default for AppConfig {
             show: ShowSettings::default(),
             natural: BTreeSet::new(),
             modes: BTreeMap::new(),
+            safety: SafetySettings::default(),
         }
     }
 }
@@ -360,6 +366,14 @@ mod tests {
         assert_eq!(cfg.behavior, BehaviorSettings::default());
         assert_eq!(cfg.transition, TransitionSettings::default());
         assert_eq!(cfg.interface.appearance, Appearance::System);
+    }
+
+    #[test]
+    fn a_capture_without_a_rate_keeps_the_default_rate() {
+        let json = r#"{ "version": 1, "capture": { "monitor_index": 1 } }"#;
+        let cfg = AppConfig::from_json(json).unwrap();
+        assert_eq!(cfg.capture.monitor_index, 1);
+        assert_eq!(cfg.capture.target_fps, 45);
     }
 
     #[test]

@@ -49,6 +49,9 @@ pub enum Vault {
         /// What the sealed file holds, as written: a slider drag saves the
         /// config many times a second, the credentials almost never change.
         written: Option<Vec<u8>>,
+        /// The last save could not seal the credentials, which then stayed
+        /// in the config.
+        failed: bool,
     },
     /// No keyring: the credentials stay in the config.
     Unavailable,
@@ -70,46 +73,50 @@ fn credential_mut(kind: &mut DeviceKind) -> Option<&mut String> {
 
 /// Fill in every credential `cfg` lacks from `sealed`. One `cfg` holds is
 /// newer (written while the keyring was away) and stays.
+///
+/// Where a credential comes from the sealed file, so does where it goes:
+/// the address and pinned certificate beside it in `config.json` are only a
+/// copy anyone with access to the file could have edited, so the sealed
+/// ones win.
 fn fill(cfg: &mut AppConfig, sealed: Sealed) {
-    fn take(slot: &mut String, from: Option<&String>) {
-        if slot.is_empty()
-            && let Some(from) = from
-        {
-            slot.clone_from(from);
-        }
-    }
     let p = &sealed.pairings;
     for h in &mut cfg.pairings.hue {
-        take(
-            &mut h.username,
-            p.hue.iter().find(|x| x.id == h.id).map(|x| &x.username),
-        );
+        if let Some(s) = p.hue.iter().find(|x| x.id == h.id)
+            && h.username.is_empty()
+            && !s.username.is_empty()
+        {
+            *h = s.clone();
+        }
     }
     for n in &mut cfg.pairings.nanoleaf {
-        take(
-            &mut n.token,
-            p.nanoleaf.iter().find(|x| x.id == n.id).map(|x| &x.token),
-        );
+        if let Some(s) = p.nanoleaf.iter().find(|x| x.id == n.id)
+            && n.token.is_empty()
+            && !s.token.is_empty()
+        {
+            *n = s.clone();
+        }
     }
     for t in &mut cfg.pairings.tuya {
-        take(
-            &mut t.key,
-            p.tuya.iter().find(|x| x.id == t.id).map(|x| &x.key),
-        );
+        if let Some(s) = p.tuya.iter().find(|x| x.id == t.id)
+            && t.key.is_empty()
+        {
+            t.key.clone_from(&s.key);
+        }
     }
     for b in &mut cfg.bindings {
-        let mut from = sealed
-            .bindings
-            .iter()
-            .find(|s| {
-                s.light_id == b.light_id
-                    && s.device_id == b.device_id
-                    && s.kind.family() == b.kind.family()
-            })
-            .map(|s| s.kind.clone());
-        let from = from.as_mut().and_then(credential_mut).map(|s| &*s);
-        if let Some(slot) = credential_mut(&mut b.kind) {
-            take(slot, from);
+        let Some(s) = sealed.bindings.iter().find(|s| {
+            s.light_id == b.light_id
+                && s.device_id == b.device_id
+                && s.kind.family() == b.kind.family()
+        }) else {
+            continue;
+        };
+        let empty = credential_mut(&mut b.kind).is_some_and(|c| c.is_empty());
+        let held = credential_mut(&mut s.kind.clone()).is_some_and(|c| !c.is_empty());
+        if empty && held {
+            b.ip.clone_from(&s.ip);
+            b.port = s.port;
+            b.kind = s.kind.clone();
         }
     }
 }
@@ -170,11 +177,17 @@ fn open_with(key: &[u8; 32], sealed: &[u8]) -> Result<Vec<u8>, String> {
 
 /// Set an unreadable sealed file aside rather than overwrite it.
 fn set_aside(path: &Path, why: &str) {
-    eprintln!("lueur: credentials unreadable ({why}); set aside");
+    log::error!("credentials unreadable ({why}); set aside");
     let _ = std::fs::rename(path, path.with_extension("sealed.bad"));
 }
 
 impl Vault {
+    /// Whether the credentials are sealed this session, rather than kept in
+    /// `config.json` for want of a keyring.
+    pub fn is_sealing(&self) -> bool {
+        matches!(self, Vault::Ready { failed: false, .. })
+    }
+
     /// Open the vault for `data_dir` and give `cfg` back its credentials.
     pub fn open(data_dir: &Path, cfg: &mut AppConfig) -> Vault {
         let path = data_dir.join(FILE_NAME);
@@ -182,13 +195,13 @@ impl Vault {
             Ok(raw) => match <[u8; 32]>::try_from(raw.as_slice()) {
                 Ok(key) => Some(key),
                 Err(_) => {
-                    eprintln!("lueur: keyring holds no usable key; making another");
+                    log::warn!("keyring holds no usable key; making another");
                     None
                 }
             },
             Err(keyring::Error::NoEntry) => None,
             Err(e) => {
-                eprintln!("lueur: keyring unavailable ({e}); credentials stay in the config");
+                log::warn!("keyring unavailable ({e}); credentials stay in the config");
                 return Vault::Unavailable;
             }
         };
@@ -204,13 +217,22 @@ impl Vault {
             (Ok(_), None) => set_aside(&path, "its key is gone"),
             (Err(_), _) => {}
         }
-        Vault::Ready { key, written: None }
+        Vault::Ready {
+            key,
+            written: None,
+            failed: false,
+        }
     }
 
     /// What to write to `config.json` for `cfg`: without its credentials once
     /// they are sealed beside it, else `cfg` itself, so none is ever lost.
     pub fn seal(&mut self, data_dir: &Path, cfg: &AppConfig) -> AppConfig {
-        let Vault::Ready { key: slot, written } = self else {
+        let Vault::Ready {
+            key: slot,
+            written,
+            failed,
+        } = self
+        else {
             return cfg.clone();
         };
         let key = match slot {
@@ -225,7 +247,7 @@ impl Vault {
                             .map_err(|e| e.to_string())
                     });
                 if let Err(e) = made {
-                    eprintln!("lueur: cannot store a key in the keyring ({e})");
+                    log::warn!("cannot store a key in the keyring ({e})");
                     *self = Vault::Unavailable;
                     return cfg.clone();
                 }
@@ -240,7 +262,8 @@ impl Vault {
         let plain = match serde_json::to_vec(&sealed) {
             Ok(plain) => plain,
             Err(e) => {
-                eprintln!("lueur: cannot seal the credentials ({e}); kept in the config");
+                log::warn!("cannot seal the credentials ({e}); kept in the config");
+                *failed = true;
                 return cfg.clone();
             }
         };
@@ -253,10 +276,12 @@ impl Vault {
         match sealed {
             Ok(()) => {
                 *written = Some(plain);
+                *failed = false;
                 strip(cfg)
             }
             Err(e) => {
-                eprintln!("lueur: cannot seal the credentials ({e}); kept in the config");
+                log::warn!("cannot seal the credentials ({e}); kept in the config");
+                *failed = true;
                 cfg.clone()
             }
         }
@@ -280,6 +305,13 @@ fn write(data_dir: &Path, body: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, &path)
 }
 
+/// Whether the credentials are encrypted on disk this session. Settings
+/// says so when they are not, for want of a keyring.
+#[tauri::command]
+pub fn credentials_sealed(state: tauri::State<'_, crate::state::AppState>) -> bool {
+    state.credentials_sealed()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,6 +324,7 @@ mod tests {
                     id: "b1".into(),
                     ip: "192.168.1.2".into(),
                     username: "hue-secret".into(),
+                    cert: String::new(),
                 }],
                 nanoleaf: Vec::new(),
                 tuya: vec![TuyaDevice {
@@ -312,6 +345,7 @@ mod tests {
                 kind: DeviceKind::Hue {
                     username: "hue-secret".into(),
                     light: "3".into(),
+                    cert: String::new(),
                 },
             }],
             ..AppConfig::default()
@@ -350,6 +384,47 @@ mod tests {
             },
         );
         assert_eq!(cfg.pairings.hue[0].username, "newer");
+    }
+
+    #[test]
+    fn a_credential_goes_where_the_sealed_file_says() {
+        // config.json edited behind Lueur's back: another address, no pin.
+        let mut bare = strip(&config());
+        bare.pairings.hue[0].ip = "192.168.1.66".into();
+        bare.pairings.hue[0].cert.clear();
+        bare.bindings[0].ip = "192.168.1.66".into();
+        let mut sealed = config();
+        sealed.pairings.hue[0].cert = "ab".repeat(32);
+        if let DeviceKind::Hue { cert, .. } = &mut sealed.bindings[0].kind {
+            *cert = "ab".repeat(32);
+        }
+        fill(
+            &mut bare,
+            Sealed {
+                pairings: sealed.pairings.clone(),
+                bindings: sealed.bindings.clone(),
+            },
+        );
+        assert_eq!(bare.pairings, sealed.pairings);
+        assert_eq!(bare.bindings, sealed.bindings);
+    }
+
+    #[test]
+    fn a_failed_seal_is_not_reported_as_sealed() {
+        // A file where the data folder should be: nothing can be written.
+        let dir = std::env::temp_dir().join(format!("lueur-vault-fail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::write(&dir, b"not a folder").unwrap();
+        let mut vault = Vault::Ready {
+            key: Some([7u8; 32]),
+            written: None,
+            failed: false,
+        };
+        assert!(vault.is_sealing());
+        let on_disk = vault.seal(&dir, &config());
+        assert!(holds_credentials(&on_disk), "kept in the config");
+        assert!(!vault.is_sealing());
+        let _ = std::fs::remove_file(&dir);
     }
 
     /// The whole round trip through the OS keyring. Touches the real one

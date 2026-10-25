@@ -20,11 +20,18 @@ fn is_tuya(ep: &Endpoint) -> bool {
 }
 
 pub fn open_stream(ep: &Endpoint, siblings: usize) -> io::Result<Box<dyn LightStream>> {
-    if is_tuya(ep) {
+    let opened = if is_tuya(ep) {
         tuya::open_stream(ep)
     } else {
         device::open_stream(ep, siblings)
+    };
+    if let Err(e) = &opened {
+        log::debug!(
+            family = ep.kind.family(), id = ep.id.as_str(), ip = ep.ip.as_str();
+            "cannot open a stream: {e}"
+        );
     }
+    opened
 }
 
 pub fn set_power(ep: &Endpoint, on: bool) -> io::Result<()> {

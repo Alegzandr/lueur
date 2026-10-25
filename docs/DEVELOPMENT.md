@@ -11,22 +11,30 @@ lueur/
 │   ├─ color.rs           Colour types, linear-space averaging, smoothing
 │   ├─ geometry.rs        Room model + light→screen-zone mapping
 │   ├─ engine.rs          Frame → one colour per light
+│   ├─ safety.rs          Photosensitivity guard on every mode's output
 │   ├─ yeelight/          LAN protocol, SSDP discovery, music-mode sockets
 │   ├─ device/            Every family behind one stream/power/identify API:
-│   │                     WiZ, LIFX, Govee, Hue, Nanoleaf, Tuya DP encoding
+│   │                     WiZ, LIFX, Govee, Hue, Nanoleaf, Tuya DP encoding;
+│   │                     wire.rs traces what each stream sends
 │   └─ config.rs          Persisted settings
 ├─ src-tauri/             Desktop shell (Tauri v2)
 │   ├─ capture.rs         Screen capture behind a FrameSource trait
-│   │  └─ dxgi.rs        Windows: Desktop Duplication, GPU-downscaled
+│   │  ├─ dxgi.rs        Windows: Desktop Duplication, GPU-downscaled
+│   │  ├─ gdi.rs         Windows fallback: GDI, shrunk while it copies
+│   │  ├─ screencast.rs  Wayland: ScreenCast portal + PipeWire stream
+│   │  ├─ scale.rs       CPU shrink of a full-size frame (PipeWire)
+│   │  └─ bench.rs       What examples/capture_bench.rs measures
 │   ├─ runner.rs          The live capture→compute→push loop
 │   ├─ devices.rs         Dispatch between the core families and Tuya
 │   ├─ tuya.rs            Tuya LAN control (rustuya), discovery by key
 │   ├─ tuya_cloud.rs      Smart Life QR sign-in that imports local keys
 │   ├─ commands.rs        Validated IPC surface
 │   ├─ secrets.rs         Credentials kept from the UI and from exports
+│   ├─ identity.rs        Paired bridges heard where nothing vouches for them
 │   ├─ vault.rs           Credentials sealed on disk, the key in the OS keyring
 │   ├─ tray.rs            Tray menu: start/stop, open, quit
 │   ├─ error.rs           Errors sent as codes the UI words in its language
+│   ├─ logging.rs         Logs to stderr and a capped file, set by LUEUR_LOG
 │   ├─ install.rs         Windows: silent per-user install and uninstall
 │   ├─ updater.rs         Startup splash and updates from GitHub releases
 │   └─ lib.rs             Tray, autostart, single-instance, window handling
@@ -46,14 +54,57 @@ cargo test -p lueur-core
 ```
 
 The device layer is a small trait, so new bulb families slot in without
-touching the engine.
+touching the engine. [ADDING_A_FAMILY.md](ADDING_A_FAMILY.md) walks through
+everything a new family touches, with WLED as the example.
+
+The interface has its own tests (Vitest), run without the shell:
+
+```bash
+npm test
+```
 
 ### Capture
 
 On Windows the desktop is read through DXGI Desktop Duplication and shrunk on
 the GPU, so a frame costs well under a millisecond and exclusive-fullscreen
-games are captured; GDI is the fallback. macOS uses ScreenCaptureKit, Linux
-X11 or PipeWire.
+games are captured. Where duplication refuses (a rotated display, a remote
+session), GDI takes over, sampling the desktop straight into a small bitmap.
+
+On a Linux Wayland session the ambilight opens one xdg-desktop-portal
+ScreenCast session and reads its PipeWire stream, shrunk on arrival. The
+desktop asks once which screen to share; where the portal can remember it
+(ScreenCast version 4 and up: recent GNOME and KDE), the restore token it
+returns is kept in `screencast-token.json` in the data folder and later
+launches start without asking. Without a portal it falls back to `xcap`'s
+one-shot screenshots, slow and on some desktops asking every time, and says
+so on stderr. X11 and macOS use `xcap`'s one-shot capture (XCB and
+CoreGraphics), at full resolution.
+
+What it costs is measured by an example that runs capture and colour
+computation at the target rate without any bulb:
+
+```bash
+cargo run --release -p lueur --example capture_bench -- --help
+```
+
+On the reference machine (Ryzen 7 9850X3D, RTX 4080 SUPER, Windows 11, one
+2560×1440 display, a video playing), 300 frames at 45 fps, 8 lights; CPU is
+the whole process's, in percent of one core, lowest and highest of three
+runs:
+
+| Path | Frame | Capture avg / p95 | Colours avg / p95 | CPU |
+| --- | --- | --- | --- | --- |
+| DXGI (what Lueur uses) | 320×180 | 0.5 / 1.4 ms | 0.06 / 0.09 ms | 3.7–4.2 % |
+| GDI fallback | 640×360 | 13 / 15 ms | 0.19 / 0.26 ms | 22–30 % |
+| `xcap` full frame (the old fallback) | 2560×1440 | 19.5 / 22 ms | 0.23 / 0.32 ms | 50–57 % |
+
+GDI's floor is reading the composed desktop back from the GPU, whatever the
+shrink. `HALFTONE` stretching was measured at about the CPU of the full copy
+it replaces, so the fallback samples with `COLORONCOLOR` at twice the DXGI
+size instead. GPU time is not in these figures, and the effect on a game's
+frame rate has not been measured directly: DXGI's share is one small copy
+and mip chain per presented frame, but only a run with a frame-time overlay
+in a GPU-bound game would put a number on it.
 
 The anti-cheat rules in the README are enforced at build time: `clippy.toml`
 bans the APIs that would break them, and the app crate denies those lints.
@@ -64,6 +115,47 @@ The QR sign-in uses the partner id Home Assistant ships with Tuya's SDK
 (`CLIENT_ID` in `src-tauri/src/tuya_cloud.rs`). A public release should
 register its own with Tuya.
 
+### Hue and Nanoleaf credentials
+
+A Hue username or a Nanoleaf token is all it takes to drive the lights, and
+anything on the network can claim a bridge's or controller's id, in mDNS or
+in the bridge's public `/api/config`. So the id alone opens nothing
+(`Approach` in `device/mod.rs`):
+
+- **Hue bridges are pinned, trust on first use.** `pair` records the
+  SHA-256 of the certificate the bridge shows on port 443, provided what
+  answers there over TLS reports the bridge's id. Nothing vouches for that
+  certificate (Lueur ships no Signify root, and anyone can make one), so it
+  is taken on the word of whatever answers the first time; from then on
+  every request goes over TLS to that certificate only (`device/http.rs`, a
+  rustls verifier that checks the fingerprint, and the handshake signature
+  against it), never in the clear again. A bridge that does not answer
+  over HTTPS is not paired, unless its `/api/config` says it is the round
+  bridge (`BSB001`), which has no HTTPS. Pairing again a bridge whose
+  certificate is pinned needs that same certificate (`pairing_cert` in
+  `hue.rs`). A pairing made before pinning learns its certificate the
+  first time discovery reaches the bridge over TLS at its paired address,
+  where its username always went. A pinned bridge that moves is followed
+  only if it shows its certificate at the new address.
+- **The round bridge and Nanoleaf controllers** speak HTTP only. Their
+  credential goes to the address it was granted at, nowhere else.
+- Anything else, a paired id heard at another address without proof, or a
+  pinned bridge showing another certificate, gets nothing: discovery lists
+  it unpaired, `identity.rs` keeps it and emits `device-unverified`, and
+  the Bulbs page asks the user, offering first to pair it again with its
+  button. For a device with nothing pinned, `confirm_device` (which only
+  accepts a device the last search listed, at the address it was heard at)
+  moves the pairing on the user's word. A pinned bridge showing another
+  certificate, or none, can only be an impostor or a reset bridge: it is
+  never confirmed, and `forget_device` drops its pairing so it can be
+  paired again.
+- A binding only ever holds its device's credential at its pairing's
+  address (`follow_pairings`, `restore_bindings` in `secrets.rs`).
+
+Validity dates are not checked: the certificate is known by its
+fingerprint. A bridge whose certificate changes (a factory reset, a
+firmware that reissues it) has to be paired again.
+
 ## Building & running
 
 ### Prerequisites
@@ -71,15 +163,35 @@ register its own with Tuya.
 - [Rust](https://rustup.rs/) 1.90+ and [Node.js](https://nodejs.org/) 20.19+ or 22.12+.
 - Tauri CLI: `npm install` pulls it in as a dev dependency (`npm run tauri`).
 
-**Linux** also needs the usual Tauri + capture system libraries, e.g. on
-Debian/Ubuntu:
+**Linux** also needs the Tauri, audio and capture system libraries. One
+command installs them on Debian/Ubuntu (24.04 or later), Fedora and Arch, and
+is what the CI runs:
 
 ```bash
-sudo apt-get install \
-  libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
-  libsoup-3.0-dev libssl-dev libxcb1-dev libxrandr-dev libdbus-1-dev \
-  libpipewire-0.3-dev pkg-config build-essential
+./scripts/linux-deps.sh
 ```
+
+It installs exactly these:
+
+```bash
+# Debian / Ubuntu
+sudo apt-get install build-essential file pkg-config clang libclang-dev \
+  libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+  libsoup-3.0-dev libssl-dev libxdo-dev libxcb1-dev libxrandr-dev libdbus-1-dev \
+  libasound2-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev
+# Fedora
+sudo dnf install gcc gcc-c++ make file pkgconf-pkg-config clang clang-devel \
+  webkit2gtk4.1-devel gtk3-devel libappindicator-gtk3-devel librsvg2-devel \
+  libsoup3-devel openssl-devel libxdo-devel libxcb-devel libXrandr-devel dbus-devel \
+  alsa-lib-devel pipewire-devel wayland-devel mesa-libEGL-devel mesa-libgbm-devel
+# Arch
+sudo pacman -S --needed base-devel file pkgconf clang \
+  webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg libsoup3 openssl xdotool \
+  libxcb libxrandr dbus alsa-lib pipewire wayland libglvnd mesa
+```
+
+At run time, Wayland capture needs `xdg-desktop-portal` and the desktop's
+portal backend (`-gnome`, `-kde`, `-wlr`…), which desktops install already.
 
 ### Develop
 
@@ -92,6 +204,32 @@ The UI also runs in a plain browser for design work: `npm run dev`, then open
 `http://localhost:1420/?demo` for a furnished sample room, or `?fresh` for a
 first launch with bulbs waiting on the network. The README screenshots are
 taken from `?demo` at the app's default window size (1180×800, 2× scale).
+
+### Logs
+
+Lueur logs to stderr and to `logs/lueur.log` in its data folder (Settings,
+*Open logs folder*). The file is capped at 2 MB: it then becomes
+`lueur.old.log`, replacing the one before. `LUEUR_LOG` sets what is logged,
+in `RUST_LOG`'s syntax (comma-separated `level`, `target` or
+`target=level`; the `/regex` suffix is not supported). Without it, Lueur
+logs from `info` up and its dependencies from `warn` up
+(`warn,lueur=info`). Targets named alone are added to that default; a bare
+level replaces it. Addresses appear from `debug` down, never a credential.
+
+```bash
+LUEUR_LOG=lueur=debug npm run tauri dev                  # Lueur in detail: searches, streams, power
+LUEUR_LOG=lueur_core::device=trace npm run tauri dev     # and every frame sent to a bulb
+LUEUR_LOG=lueur_core::device::wire=trace npm run tauri dev   # the frames, the rest as usual
+LUEUR_LOG=debug npm run tauri dev                        # everything, dependencies included
+```
+
+At trace level each frame a stream sends is logged with its family, the
+device id and its content: hex for binary protocols (LIFX, Nanoleaf), the
+JSON or text as sent for the others (WiZ, Govee, Yeelight, Hue, the Tuya
+DPs before encryption). The Hue username in a request path shows as
+`***`. Off, tracing costs the frame loop one level check per frame sent,
+and formats nothing. On PowerShell, set the variable first:
+`$env:LUEUR_LOG = "lueur_core::device=trace"`.
 
 ### Build a release
 
@@ -116,6 +254,20 @@ and the app restarts into it. Without network it gives up after a few seconds.
 While Lueur runs it checks again every six hours. Development builds never
 update.
 
+**No going back.** The Tauri updater verifies the minisign signature of the
+downloaded file against the public key in `tauri.conf.json`, and installs
+only a version newer than the running one. But the version it compares is
+the one `latest.json` announces, and `latest.json` is not signed: alone, a
+doctored manifest could pair `version: 99.0.0` with the URL and signature
+of an old, genuine release. So each signature carries the version it was
+made for in its trusted comment, which the signature covers
+(`tauri signer sign --app-version`, checked by the release workflow), and
+`plugins.updater.requireSignedVersion` makes the plugin refuse a file whose
+signed version differs from the announced one. The announced version must be
+strictly newer (`is_upgrade` in `updater.rs`), so the signed one is too.
+Releases signed before v0.8.0 carry no version and are refused by v0.8.0 and
+later, which is what we want: an update only ever goes forward.
+
 ## Releasing
 
 Bump `version` in `Cargo.toml` (`[workspace.package]`) and `package.json` and
@@ -130,3 +282,32 @@ workflow" button.
 It needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, from `npx tauri signer generate`, whose
 public key goes in `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
+
+### Signing the Mac app
+
+The published Mac app is not signed yet: Gatekeeper asks for the user's
+go-ahead at first launch, and since each update is a different unsigned
+binary, macOS may ask again for the Keychain item that holds the
+credentials' key and for the microphone. The workflow signs and notarizes
+it as soon as these repository secrets exist:
+
+| Secret | What it is |
+|---|---|
+| `APPLE_CERTIFICATE` | The *Developer ID Application* certificate and its key, exported as `.p12` and base64-encoded |
+| `APPLE_CERTIFICATE_PASSWORD` | The password of that `.p12` |
+| `APPLE_SIGNING_IDENTITY` | Its name, e.g. `Developer ID Application: Name (TEAMID)` |
+| `APPLE_ID` | The Apple account that notarizes |
+| `APPLE_PASSWORD` | An app-specific password of that account |
+| `APPLE_TEAM_ID` | The team id |
+
+The build job makes the app unsigned, as without them. With the first
+three, a `macos-sign` job then signs it on a fresh Mac, the only job that
+sees these secrets: it runs nothing from npm or the build, only Apple's
+`security`, `codesign`, `notarytool` and `stapler`. It signs with the
+hardened runtime and `src-tauri/Entitlements.plist` (the microphone, for
+the Music effect); with all six it also notarizes and staples the ticket,
+then makes the two Mac archives again from the signed app, before the
+`sign` job signs the update files. Without them the release is built
+exactly as before, with a warning. This path has not run on a real Mac
+yet: check the first signed release's log (`codesign --verify`,
+`stapler validate` and `spctl` run in it) and the app itself.

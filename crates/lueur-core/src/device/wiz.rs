@@ -5,6 +5,7 @@
 //! stream well.
 
 use super::common::{LastSent, Throttle, broadcast_targets, scale_bright, udp_to};
+use super::wire::Wire;
 use super::{DeviceKind, DiscoveredDevice, LightStream, REST_BRIGHT, REST_KELVIN};
 use crate::color::BulbOutput;
 use crate::yeelight::Effect;
@@ -60,14 +61,16 @@ pub struct WizStream {
     socket: UdpSocket,
     last: LastSent,
     pace: Throttle,
+    wire: Wire,
 }
 
 impl WizStream {
-    pub fn open(ip: &str) -> io::Result<Self> {
+    pub fn open(ip: &str, wire: Wire) -> io::Result<Self> {
         Ok(WizStream {
             socket: udp_to(ip, PORT)?,
             last: LastSent::default(),
             pace: Throttle::new(FRAME_INTERVAL),
+            wire,
         })
     }
 }
@@ -81,7 +84,9 @@ impl LightStream for WizStream {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());
         }
-        self.socket.send(pilot(output).to_string().as_bytes())?;
+        let msg = pilot(output).to_string();
+        self.wire.text(&msg);
+        self.socket.send(msg.as_bytes())?;
         self.last.mark(output);
         Ok(())
     }
@@ -92,6 +97,7 @@ impl LightStream for WizStream {
             bright: REST_BRIGHT,
         })
         .to_string();
+        self.wire.text(&msg);
         for _ in 0..2 {
             let _ = self.socket.send(msg.as_bytes());
         }

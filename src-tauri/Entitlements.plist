@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- A signed build runs under the hardened runtime, which notarization
+	     requires; without this the Music effect could not open the
+	     microphone (see NSMicrophoneUsageDescription in Info.plist). An
+	     unsigned build has no hardened runtime, so this changes nothing
+	     for it. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>

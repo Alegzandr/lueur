@@ -10,6 +10,16 @@ rust-version.workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+# The LAN's real netmask, so discovery sweeps the subnet the PC is on.
+if-addrs = "0.15.0"
+# HTTPS to a Hue bridge, pinned to the certificate it showed at pairing
+# (device/http.rs). The same rustls and ring the shell's HTTPS client
+# already builds, so no new crate.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+ring = "0.17"
+# The logging facade (device/wire.rs traces frames). Already in the tree
+# through rustls and Tauri; `kv` adds structured fields and no crate.
+log = { version = "0.4.29", features = ["kv"] }
 
 [lints.rust]
 # The core crate is security-sensitive; be strict about the obvious footguns.

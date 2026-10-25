@@ -15,6 +15,7 @@
 use super::protocol::{self, Effect};
 use crate::color::{BulbOutput, Rgb};
 use crate::device::common::{bright_needs_update, ipv4, local_ip_toward};
+use crate::device::wire::Wire;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -74,6 +75,8 @@ impl YeelightControl {
 pub struct MusicConnection {
     stream: TcpStream,
     sent: Sent,
+    /// Where the trace log says the commands went, once known.
+    wire: Option<Wire>,
 }
 
 /// What the bulb was last told on each channel, so [`MusicConnection::push`]
@@ -166,7 +169,21 @@ impl MusicConnection {
         Ok(Self {
             stream,
             sent: Sent::default(),
+            wire: None,
         })
+    }
+
+    /// Name the bulb in the trace log of what this channel sends.
+    pub fn traced(mut self, wire: Wire) -> Self {
+        self.wire = Some(wire);
+        self
+    }
+
+    fn write(&mut self, line: &str) -> io::Result<()> {
+        if let Some(wire) = &self.wire {
+            wire.text(line);
+        }
+        self.stream.write_all(line.as_bytes())
     }
 
     /// Set brightness on the music channel.
@@ -178,14 +195,14 @@ impl MusicConnection {
     ) -> io::Result<()> {
         let line = protocol::set_bright(next_id(), brightness, effect, duration_ms);
         self.sent = Sent::default();
-        self.stream.write_all(line.as_bytes())
+        self.write(&line)
     }
 
     /// Set a white colour temperature (Kelvin) on the music channel.
     pub fn set_ct(&mut self, kelvin: u16, effect: Effect, duration_ms: u32) -> io::Result<()> {
         let line = protocol::set_ct_abx(next_id(), kelvin, effect, duration_ms);
         self.sent = Sent::default();
-        self.stream.write_all(line.as_bytes())
+        self.write(&line)
     }
 
     /// Push one [`BulbOutput`], the correct pairing of chromaticity and
@@ -216,7 +233,7 @@ impl MusicConnection {
         if batch.is_empty() {
             return Ok(());
         }
-        self.stream.write_all(batch.as_bytes())?;
+        self.write(&batch)?;
         self.sent = next;
         Ok(())
     }

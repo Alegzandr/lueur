@@ -41,16 +41,29 @@ pub fn bright_needs_update(last: Option<u8>, next: u8) -> bool {
     }
 }
 
-/// What a bulb was last sent, so a still scene costs nothing.
+/// How long a still scene goes without a command before it is sent again.
+///
+/// Over UDP nothing says a bulb rebooted (cut at the wall switch, a power
+/// blip): it just comes back on its own default colour, and a still scene
+/// would leave it there. One small command every few seconds brings it back
+/// to what the room shows.
+pub const REFRESH: Duration = Duration::from_secs(5);
+
+/// What a bulb was last sent, and when, so a still scene costs (almost)
+/// nothing.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct LastSent(Option<BulbOutput>);
+pub struct LastSent(Option<(BulbOutput, Instant)>);
 
 impl LastSent {
-    /// Whether `next` differs enough from what the bulb shows to be sent.
+    /// Whether `next` differs enough from what the bulb shows to be sent, or
+    /// the bulb has gone [`REFRESH`] without a command.
     pub fn needs(&self, next: BulbOutput) -> bool {
-        let Some(prev) = self.0 else {
+        let Some((prev, at)) = self.0 else {
             return true;
         };
+        if at.elapsed() >= REFRESH {
+            return true;
+        }
         let same_chroma = match (prev, next) {
             (BulbOutput::Color { rgb: a, .. }, BulbOutput::Color { rgb: b, .. }) => a == b,
             (BulbOutput::White { kelvin: a, .. }, BulbOutput::White { kelvin: b, .. }) => a == b,
@@ -60,7 +73,7 @@ impl LastSent {
     }
 
     pub fn mark(&mut self, sent: BulbOutput) {
-        self.0 = Some(sent);
+        self.0 = Some((sent, Instant::now()));
     }
 }
 
@@ -233,36 +246,89 @@ pub fn local_ip_toward(peer: Ipv4Addr) -> io::Result<Ipv4Addr> {
     }
 }
 
-/// The addresses a LAN-wide broadcast should go to.
-///
-/// The all-ones address alone is unreliable on Windows, which sends it out of
-/// a single interface, so the /24 broadcast of our main LAN address goes too.
-/// (Home networks are almost always /24.)
-pub fn broadcast_targets() -> Vec<Ipv4Addr> {
-    let mut out = vec![Ipv4Addr::BROADCAST];
-    // Any private address works as the probe: nothing is sent.
-    if let Ok(local) = local_ip_toward(Ipv4Addr::new(192, 168, 0, 1))
-        && local.is_private()
-    {
-        let [a, b, c, _] = local.octets();
-        out.push(Ipv4Addr::new(a, b, c, 255));
-    }
-    out
+/// The widest subnet a sweep covers, as a prefix length: 1022 hosts. On a
+/// larger LAN only the /22 around our own address is swept, rather than
+/// knocking on tens of thousands of hosts.
+pub const WIDEST_SWEEP: u8 = 22;
+
+/// Whether an address may be a bulb's: private or link-local. Every address
+/// Lueur sends to passes this one rule (see [`ipv4`]).
+pub fn is_lan(addr: Ipv4Addr) -> bool {
+    addr.is_private() || addr.is_link_local()
 }
 
-/// Every host of the /24 our main LAN address sits in, ourselves excluded.
-pub fn lan_hosts() -> Vec<Ipv4Addr> {
-    let Ok(local) = local_ip_toward(Ipv4Addr::new(192, 168, 0, 1)) else {
-        return Vec::new();
-    };
+/// Our main LAN address and the prefix length of its subnet, read from the
+/// interface that holds it (a /24 if that cannot be read). None when the
+/// route toward the LAN does not leave from a private address.
+pub fn main_lan() -> Option<(Ipv4Addr, u8)> {
+    // Any private address works as the probe: nothing is sent.
+    let local = local_ip_toward(Ipv4Addr::new(192, 168, 0, 1))
+        .ok()
+        .filter(Ipv4Addr::is_private)?;
+    let prefix = if_addrs::get_if_addrs()
+        .ok()
+        .and_then(|interfaces| {
+            interfaces.into_iter().find_map(|i| match i.addr {
+                if_addrs::IfAddr::V4(v4) if v4.ip == local => Some(v4.prefixlen),
+                _ => None,
+            })
+        })
+        .unwrap_or(24);
+    Some((local, prefix))
+}
+
+/// The netmask of a `prefix`-bit subnet, as an integer.
+fn netmask(prefix: u8) -> u32 {
+    u32::MAX
+        .checked_shl(32 - u32::from(prefix.min(32)))
+        .unwrap_or(0)
+}
+
+/// The broadcast address of the `prefix`-bit subnet `local` sits in. A /31
+/// or a /32 has none.
+pub fn subnet_broadcast(local: Ipv4Addr, prefix: u8) -> Option<Ipv4Addr> {
+    (prefix < 31).then(|| Ipv4Addr::from(u32::from(local) | !netmask(prefix)))
+}
+
+/// Every host of the `prefix`-bit subnet `local` sits in, narrowed to the
+/// [`WIDEST_SWEEP`] around `local` when wider: the network and broadcast
+/// addresses, `local` itself and anything [`is_lan`] refuses left out.
+/// Nothing at all unless `local` is a private address.
+pub fn subnet_hosts(local: Ipv4Addr, prefix: u8) -> Vec<Ipv4Addr> {
     if !local.is_private() {
         return Vec::new();
     }
-    let [a, b, c, me] = local.octets();
-    (1..=254u8)
-        .filter(|&d| d != me)
-        .map(|d| Ipv4Addr::new(a, b, c, d))
+    let prefix = prefix.clamp(WIDEST_SWEEP, 32);
+    let mask = netmask(prefix);
+    let network = u32::from(local) & mask;
+    let broadcast = network | !mask;
+    // A /31 is two hosts and nothing else (RFC 3021).
+    let (first, last) = if prefix >= 31 {
+        (network, broadcast)
+    } else {
+        (network + 1, broadcast - 1)
+    };
+    (first..=last)
+        .map(Ipv4Addr::from)
+        .filter(|&ip| ip != local && is_lan(ip))
         .collect()
+}
+
+/// The addresses a LAN-wide broadcast should go to.
+///
+/// The all-ones address alone is unreliable on Windows, which sends it out of
+/// a single interface, so the broadcast address of our main LAN's subnet goes
+/// too.
+pub fn broadcast_targets() -> Vec<Ipv4Addr> {
+    let mut out = vec![Ipv4Addr::BROADCAST];
+    out.extend(main_lan().and_then(|(local, prefix)| subnet_broadcast(local, prefix)));
+    out
+}
+
+/// Every host of the subnet our main LAN address sits in, ourselves
+/// excluded (see [`subnet_hosts`]).
+pub fn lan_hosts() -> Vec<Ipv4Addr> {
+    main_lan().map_or_else(Vec::new, |(local, prefix)| subnet_hosts(local, prefix))
 }
 
 /// Parse a bare IPv4 address a bulb can have: private or link-local.
@@ -276,7 +342,7 @@ pub fn ipv4(ip: &str) -> io::Result<Ipv4Addr> {
     let addr: Ipv4Addr = ip
         .parse()
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "bad address"))?;
-    if !(addr.is_private() || addr.is_link_local()) {
+    if !is_lan(addr) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "not a LAN address",
@@ -375,6 +441,87 @@ mod tests {
     const RED: Rgb = Rgb::new(255, 0, 0);
 
     #[test]
+    fn a_home_network_is_its_254_hosts() {
+        let me = Ipv4Addr::new(192, 168, 1, 37);
+        let hosts = subnet_hosts(me, 24);
+        assert_eq!(hosts.len(), 253);
+        assert_eq!(hosts.first(), Some(&Ipv4Addr::new(192, 168, 1, 1)));
+        assert_eq!(hosts.last(), Some(&Ipv4Addr::new(192, 168, 1, 254)));
+        assert!(!hosts.contains(&me), "never ourselves");
+        assert_eq!(
+            subnet_broadcast(me, 24),
+            Some(Ipv4Addr::new(192, 168, 1, 255))
+        );
+    }
+
+    #[test]
+    fn a_wider_mask_is_swept_in_full() {
+        // A /23: both halves, the bulb on .0.x and the PC on .1.x.
+        let me = Ipv4Addr::new(10, 0, 1, 20);
+        let hosts = subnet_hosts(me, 23);
+        assert_eq!(hosts.len(), 510 - 1);
+        assert!(hosts.contains(&Ipv4Addr::new(10, 0, 0, 77)));
+        // On a /23, .0.255 and .1.0 are hosts like any other.
+        assert!(hosts.contains(&Ipv4Addr::new(10, 0, 0, 255)));
+        assert!(hosts.contains(&Ipv4Addr::new(10, 0, 1, 0)));
+        assert!(!hosts.contains(&Ipv4Addr::new(10, 0, 0, 0)), "the network");
+        assert!(
+            !hosts.contains(&Ipv4Addr::new(10, 0, 1, 255)),
+            "the broadcast"
+        );
+        assert_eq!(subnet_broadcast(me, 23), Some(Ipv4Addr::new(10, 0, 1, 255)));
+    }
+
+    #[test]
+    fn a_huge_lan_is_swept_around_us_only() {
+        let me = Ipv4Addr::new(172, 20, 9, 4);
+        let hosts = subnet_hosts(me, 16);
+        assert_eq!(hosts.len(), 1022 - 1);
+        assert_eq!(hosts.first(), Some(&Ipv4Addr::new(172, 20, 8, 1)));
+        assert_eq!(hosts.last(), Some(&Ipv4Addr::new(172, 20, 11, 254)));
+        // The broadcast itself is one packet: it keeps the real mask.
+        assert_eq!(
+            subnet_broadcast(me, 16),
+            Some(Ipv4Addr::new(172, 20, 255, 255))
+        );
+        assert_eq!(subnet_hosts(me, 0).len(), 1021);
+    }
+
+    #[test]
+    fn a_narrow_mask_is_swept_as_is() {
+        let me = Ipv4Addr::new(192, 168, 5, 9);
+        assert_eq!(
+            subnet_hosts(me, 29),
+            (10..=14)
+                .map(|d| Ipv4Addr::new(192, 168, 5, d))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(subnet_hosts(me, 31), [Ipv4Addr::new(192, 168, 5, 8)]);
+        assert_eq!(subnet_broadcast(me, 31), None);
+        assert!(subnet_hosts(me, 32).is_empty());
+    }
+
+    #[test]
+    fn only_a_private_network_is_swept() {
+        assert!(subnet_hosts(Ipv4Addr::new(8, 8, 4, 4), 24).is_empty());
+        assert!(subnet_hosts(Ipv4Addr::new(169, 254, 3, 3), 16).is_empty());
+        assert!(subnet_hosts(Ipv4Addr::new(100, 64, 0, 9), 24).is_empty());
+        // Every host of a private subnet is itself private.
+        for (me, prefix) in [
+            ((10, 255, 255, 1), 8),
+            ((172, 31, 255, 7), 12),
+            ((192, 168, 0, 2), 16),
+        ] {
+            let me = Ipv4Addr::new(me.0, me.1, me.2, me.3);
+            assert!(
+                subnet_hosts(me, prefix)
+                    .into_iter()
+                    .all(|ip| ip.is_private())
+            );
+        }
+    }
+
+    #[test]
     fn a_reply_from_its_own_address_wins() {
         let mut found = HashMap::new();
         keep(&mut found, "a".into(), "relayed", false);
@@ -430,6 +577,19 @@ mod tests {
         assert!(!last.needs(color(RED, 51)), "1-point jitter is absorbed");
         assert!(last.needs(color(RED, 53)));
         assert!(last.needs(color(Rgb::new(0, 0, 255), 50)));
+    }
+
+    #[test]
+    fn a_still_scene_is_sent_again_now_and_then() {
+        let mut last = LastSent::default();
+        last.mark(color(RED, 50));
+        assert!(!last.needs(color(RED, 50)));
+        // As if the last command went out longer ago than the refresh.
+        last.0 = Some((color(RED, 50), Instant::now() - REFRESH));
+        assert!(
+            last.needs(color(RED, 50)),
+            "a rebooted bulb gets the scene back"
+        );
     }
 
     #[test]
