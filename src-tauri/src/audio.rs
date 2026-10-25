@@ -63,6 +63,7 @@ pub enum AudioError {
     /// The device picked is not plugged in: its name.
     DeviceMissing(String),
     /// The application picked plays nothing, or is not open: its name.
+    #[cfg_attr(not(windows), allow(dead_code))]
     AppClosed(String),
     Failed(String),
 }
