@@ -6,7 +6,7 @@
 //! see exclusive-fullscreen games. The ambilight only needs a handful of
 //! averages, so this source keeps one duplication session open, lets the GPU
 //! box-filter the desktop down a mip chain, and reads back a frame a few hundred
-//! pixels wide — a few hundred kilobytes instead of tens of megabytes.
+//! pixels wide, a few hundred kilobytes instead of tens of megabytes.
 //!
 //! The mip chain is built in an sRGB view of the desktop, so the GPU averages
 //! in linear light; that keeps the averages as vivid as the engine's own

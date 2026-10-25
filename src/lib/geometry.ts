@@ -1,7 +1,7 @@
 // Front-end mirror of the geometry in crates/lueur-core/src/geometry.rs.
 // Used by the room editor to draw the screen and to show, per light, which part
 // of the screen it will mirror and how strongly. Keep this in sync with the Rust
-// version — the constants below must match the ones there exactly, or the
+// version: the constants below must match the ones there exactly, or the
 // preview will lie about what the engine does.
 
 import type { Light, Screen, Vec2 } from "./types";

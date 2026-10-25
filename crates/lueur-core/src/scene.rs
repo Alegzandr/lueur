@@ -1,7 +1,7 @@
 //! Lights held steady by hand: what one light shows, and the built-in moods.
 //!
 //! The ambilight decides colours frame by frame; everything here is the other
-//! way of using the bulbs — pick a white or a colour and leave it there.
+//! way of using the bulbs: pick a white or a colour and leave it there.
 
 use crate::color::{BulbOutput, MAX_BRIGHT, MAX_KELVIN, MIN_BRIGHT, MIN_KELVIN, Rgb, full_chroma};
 use serde::{Deserialize, Serialize};

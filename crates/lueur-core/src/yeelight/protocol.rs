@@ -97,7 +97,7 @@ pub fn set_power(id: u32, on: bool, effect: Effect, duration_ms: u32) -> String 
 /// `set_music`: enable (action=1) or disable (action=0) music mode.
 ///
 /// When enabled the bulb opens a TCP connection back to `host:port`, over which
-/// we can push commands with **no rate limit** — this is the key to low-latency
+/// we can push commands with **no rate limit**; this is the key to low-latency
 /// ambilight. When disabling, host/port are ignored by the bulb.
 pub fn set_music(id: u32, enable: bool, host: &str, port: u16) -> String {
     if enable {

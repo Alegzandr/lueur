@@ -1,4 +1,4 @@
-//! Tauri IPC commands — the entire surface the frontend can call.
+//! Tauri IPC commands: the entire surface the frontend can call.
 //!
 //! Security notes:
 //! * Every command validates its inputs (addresses, colour ranges, timeouts).

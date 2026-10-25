@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.5.1",
   "type": "module",
-  "description": "Lueur — a low-latency ambilight for smart bulbs, made for cosy night gaming.",
+  "description": "Lueur: a low-latency ambilight for smart bulbs, made for cosy night gaming.",
   "scripts": {
     "dev": "vite",
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",

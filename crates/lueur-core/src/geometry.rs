@@ -8,15 +8,15 @@
 //! averages the captured pixels inside that zone to drive the light.
 //!
 //! The mapping reads three things off the plan instead of one:
-//!   * **Lateral position** — where the light sits along the screen's width
+//!   * **Lateral position**: where the light sits along the screen's width
 //!     selects the horizontal centre of its zone.
-//!   * **Distance** — how far the light is *in front of* the screen plane, and
+//!   * **Distance**: how far the light is *in front of* the screen plane, and
 //!     how far it overshoots the screen's ends, widens the zone continuously.
 //!     A lamp tucked behind the panel mirrors a tight slice; one standing next
 //!     to the player mirrors a broad region; one behind the couch mirrors
 //!     essentially the whole picture, which is what reads as ambient light
 //!     rather than a nervous, flickering slice.
-//!   * **Height** — a per-light 0 (floor) … 1 (ceiling) value the user sets,
+//!   * **Height**: a per-light 0 (floor) … 1 (ceiling) value the user sets,
 //!     which selects the vertical band. It is the one thing a top-down plan
 //!     genuinely cannot know, so we ask for it rather than pretending.
 //!
@@ -85,7 +85,7 @@ impl Default for Screen {
     fn default() -> Self {
         // Sit the screen near the top wall, facing down into the room where the
         // player sits. right_axis is then +X, so the viewer's right matches the
-        // plan's right — the intuitive default.
+        // plan's right, the intuitive default.
         Screen {
             center: Vec2::new(500.0, 160.0),
             width: 300.0,
@@ -126,7 +126,7 @@ impl Screen {
 pub enum ScreenEdge {
     Left,
     Right,
-    /// Directly behind the screen — mirrors a vertical slice at some x.
+    /// Directly behind the screen; mirrors a vertical slice at some x.
     Center,
 }
 
@@ -271,7 +271,7 @@ const LATERAL_WIDEN: f32 = 0.14;
 /// Distance (in screen half-widths) at which attenuation reaches its halfway
 /// point. Tuned so lights around the sofa are noticeably softened.
 const FALLOFF: f32 = 2.0;
-/// Floor for the distance brightness multiplier — never fully dim a light out.
+/// Floor for the distance brightness multiplier; never fully dim a light out.
 const MIN_GAIN: f32 = 0.55;
 /// Floor for the distance smoothing multiplier.
 const MIN_RESPONSIVENESS: f32 = 0.35;
@@ -302,7 +302,7 @@ pub fn map_light(screen: &Screen, light: &Light) -> LightMapping {
     };
 
     // How far the light has escaped the screen: past an end, and out in front.
-    // Both widen the zone, continuously — there is no cliff at the screen's end
+    // Both widen the zone, continuously: there is no cliff at the screen's end
     // any more, a light just past the corner sees almost what its neighbour
     // just inside does.
     let lateral_out = (u.abs() - 1.0).max(0.0);
@@ -318,7 +318,7 @@ pub fn map_light(screen: &Screen, light: &Light) -> LightMapping {
     let x_center = ((u + 1.0) * 0.5).clamp(0.0, 1.0);
     let y_center = 1.0 - light.height.clamp(0.0, 1.0);
     // Slide the zone so it stays wholly inside the frame rather than being
-    // truncated at an edge — a clipped zone would silently shrink its sample.
+    // truncated at an edge: a clipped zone would silently shrink its sample.
     let x0 = (x_center - hw).clamp(0.0, (1.0 - 2.0 * hw).max(0.0));
     let y0 = (y_center - hh).clamp(0.0, (1.0 - 2.0 * hh).max(0.0));
     let zone = SampleZone::new(x0, y0, 2.0 * hw, 2.0 * hh);

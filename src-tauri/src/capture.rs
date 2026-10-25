@@ -31,7 +31,7 @@ use xcap::Monitor;
 ///
 /// Deliberately *not* `Send`: platform capture handles (a Windows `HMONITOR`, a
 /// macOS display ref) are raw pointers and stay on the thread that opened them.
-/// The loop builds its source inside the capture thread — see [`ScreenSource`].
+/// The loop builds its source inside the capture thread; see [`ScreenSource`].
 pub trait FrameSource {
     /// Grab the current screen contents. A source that is told when the screen
     /// changes waits up to `timeout` for the next update and otherwise returns
@@ -81,7 +81,7 @@ fn all_monitors() -> AppResult<Vec<Monitor>> {
 
 /// The best [`FrameSource`] available for one monitor.
 ///
-/// Build this on the thread that will pull frames from it — the underlying
+/// Build this on the thread that will pull frames from it: the underlying
 /// handles are not thread-safe.
 pub enum ScreenSource {
     #[cfg(windows)]

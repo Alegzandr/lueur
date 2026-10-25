@@ -188,7 +188,7 @@ impl MusicConnection {
         self.stream.write_all(line.as_bytes())
     }
 
-    /// Push one [`BulbOutput`] — the correct pairing of chromaticity and
+    /// Push one [`BulbOutput`], the correct pairing of chromaticity and
     /// brightness for this bulb.
     ///
     /// Only what changed since the last push goes out, and it goes out as one

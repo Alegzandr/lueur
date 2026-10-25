@@ -49,7 +49,7 @@ impl Rgb {
 /// Averaging colours in raw sRGB space muddies them (bright reds next to blues
 /// average to a dull grey). We accumulate the *squared* channel values and take
 /// the square root at the end, which is a fast approximation of averaging in
-/// linear light and keeps colours vivid — exactly what a gamer wants at night.
+/// linear light and keeps colours vivid, exactly what a gamer wants at night.
 ///
 /// Samples can carry a weight, which is how the engine tapers a zone's edges:
 /// a pixel drifting into the zone arrives at near-zero weight instead of
@@ -200,7 +200,7 @@ pub fn saturate(color: Rgb, amount: f32) -> Rgb {
 ///
 /// Kept for callers that want a single screen-referred colour (previews, tests).
 /// The live path does *not* use this: bulbs take brightness on their own channel,
-/// so scaling RGB there would be silently discarded — see [`BulbOutput`].
+/// so scaling RGB there would be silently discarded; see [`BulbOutput`].
 pub fn shape(color: Rgb, saturation: f32, brightness: f32) -> Rgb {
     let bri = brightness.clamp(0.0, 1.0);
     let c = saturate(color, saturation);
@@ -230,7 +230,7 @@ pub fn saturation(color: Rgb) -> f32 {
 /// This is what a Yeelight bulb actually wants from `set_rgb`: the command sets
 /// *chromaticity* only, and the bulb applies its own `bright` property on top. A
 /// dim triple like `rgb(63, 61, 66)` is therefore rendered at whatever
-/// brightness the bulb already had — so we must hand it full-chroma RGB and pass
+/// brightness the bulb already had, so we must hand it full-chroma RGB and pass
 /// the intensity separately via `set_bright`.
 pub fn full_chroma(color: Rgb) -> Rgb {
     let max = color.r.max(color.g).max(color.b);
@@ -293,7 +293,7 @@ pub const MAX_BRIGHT: u8 = 100;
 /// that twice, leaving a bright blue sky at a tenth of the bulb's power.
 ///
 /// The bulb cannot go below 1%, so a fully black frame lands on 1 rather than
-/// off — turning the bulb off and on per frame would strobe.
+/// off: turning the bulb off and on per frame would strobe.
 pub fn bulb_brightness(color: Rgb, brightness: f32) -> u8 {
     let bri = brightness.clamp(0.0, 1.0);
     let pct = (color.value() as f32 / 255.0) * bri * 100.0;
@@ -306,7 +306,7 @@ pub const MAX_KELVIN: u16 = 6500;
 
 /// What to actually push to a bulb for one computed colour.
 ///
-/// Splitting hue from intensity is not an optimisation — it is the only correct
+/// Splitting hue from intensity is not an optimisation; it is the only correct
 /// way to drive a Yeelight. See [`full_chroma`] for why.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BulbOutput {
@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn weights_shift_the_average() {
-        // A nearly-zero-weight white barely moves an otherwise black average —
+        // A nearly-zero-weight white barely moves an otherwise black average:
         // this is what makes a zone's edge taper instead of jump.
         let mut acc = ColorAccumulator::new();
         acc.add(0, 0, 0);
@@ -511,7 +511,7 @@ mod tests {
             255,
             "should hit the ceiling"
         );
-        // Channel ratios — and therefore hue — must survive the scaling.
+        // Channel ratios (and therefore hue) must survive the scaling.
         let ratio_before = dim.r as f32 / dim.b as f32;
         let ratio_after = full.r as f32 / full.b as f32;
         assert!((ratio_before - ratio_after).abs() < 0.02, "hue drifted");
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn bulb_brightness_tracks_intensity() {
         assert_eq!(bulb_brightness(Rgb::new(255, 255, 255), 1.0), 100);
-        // A dark frame must dim the bulb — this is the intensity dimension that
+        // A dark frame must dim the bulb: this is the intensity dimension that
         // set_rgb alone can never convey.
         let dark = bulb_brightness(Rgb::new(63, 61, 66), 1.0);
         assert!((20..=30).contains(&dark), "expected a dim bulb, got {dark}");

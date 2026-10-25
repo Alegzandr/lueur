@@ -1,6 +1,6 @@
 //! The ambilight engine: turn a captured frame into one colour per light.
 //!
-//! This module is deliberately pure and synchronous — given a [`Frame`] and the
+//! This module is deliberately pure and synchronous: given a [`Frame`] and the
 //! set of [`SampleZone`]s, it returns the colours to send. All timing, capture
 //! and network I/O live in the desktop shell. Keeping it pure means the
 //! colour-critical path is fully deterministic and unit-tested.
@@ -54,7 +54,7 @@ impl Frame {
 
     /// Average the colour inside a normalised zone, visiting roughly every
     /// `step`-th pixel in each axis (>=1). Larger `step` = cheaper, slightly
-    /// noisier — a good latency/quality knob.
+    /// noisier, a good latency/quality knob.
     ///
     /// Pixels are weighted by a separable bell curve centred on the zone, so a
     /// zone's edge fades out rather than cutting off. Without it, two adjacent
@@ -111,7 +111,7 @@ impl Frame {
 
 /// Sample weight at normalised distance `d` from a zone's centre (0 = centre,
 /// 1 = edge). A Gaussian, kept wide enough that edge pixels still contribute
-/// (~0.14) — the goal is a soft handover, not a spotlight on the centre.
+/// (~0.14); the goal is a soft handover, not a spotlight on the centre.
 #[inline]
 fn taper(d: f32) -> f32 {
     (-2.0 * d * d).exp()
@@ -304,7 +304,7 @@ impl Ambilight {
 
     /// Compute the screen-referred colour for each light this frame.
     ///
-    /// This is the colour *as seen on screen* (sampled, smoothed, saturated) —
+    /// This is the colour *as seen on screen* (sampled, smoothed, saturated);
     /// brightness is deliberately not applied here, because bulbs take intensity
     /// on their own channel. Use [`Ambilight::process_outputs`] to drive hardware.
     ///
