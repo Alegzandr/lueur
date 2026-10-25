@@ -35,16 +35,24 @@ pub fn redact_devices(devices: &mut [DiscoveredDevice]) {
     }
 }
 
-/// Fill in `kind`'s credential for device `id` from the pairings. False when
-/// no pairing holds one (the credential is left as it was).
-pub fn restore(id: &str, kind: &mut DeviceKind, pairings: &Pairings) -> bool {
+/// Fill in `kind`'s credential for device `id` at `ip` from the pairings.
+/// False when no pairing holds one (the credential is left as it was).
+///
+/// Hue usernames and Nanoleaf tokens travel in the clear, so they only go to
+/// the address they were granted at (discovery follows a bridge that moves):
+/// a binding naming a paired id at another host gets nothing.
+pub fn restore(id: &str, ip: &str, kind: &mut DeviceKind, pairings: &Pairings) -> bool {
     match kind {
         DeviceKind::Hue { username, .. } => {
             // `hue:<bridge>:<light>`
             let bridge = id
                 .strip_prefix(hue::ID_PREFIX)
                 .and_then(|rest| rest.split(':').next());
-            match pairings.hue.iter().find(|h| Some(h.id.as_str()) == bridge) {
+            match pairings
+                .hue
+                .iter()
+                .find(|h| Some(h.id.as_str()) == bridge && h.ip == ip)
+            {
                 Some(h) => username.clone_from(&h.username),
                 None => return false,
             }
@@ -54,7 +62,7 @@ pub fn restore(id: &str, kind: &mut DeviceKind, pairings: &Pairings) -> bool {
             match pairings
                 .nanoleaf
                 .iter()
-                .find(|n| Some(n.id.as_str()) == own)
+                .find(|n| Some(n.id.as_str()) == own && n.ip == ip)
             {
                 Some(n) => token.clone_from(&n.token),
                 None => return false,
@@ -77,19 +85,19 @@ pub fn restore(id: &str, kind: &mut DeviceKind, pairings: &Pairings) -> bool {
 }
 
 /// Give every binding its credential back: from the pairings, else from the
-/// binding in `previous` for the same device and family, else none.
+/// binding in `previous` for the same device, address and family, else none.
 pub fn restore_bindings(cfg: &mut AppConfig, previous: &[DeviceBinding]) {
     let AppConfig {
         bindings, pairings, ..
     } = cfg;
     for b in bindings {
-        if restore(&b.device_id, &mut b.kind, pairings) {
+        if restore(&b.device_id, &b.ip, &mut b.kind, pairings) {
             continue;
         }
         blank(&mut b.kind);
-        let before = previous
-            .iter()
-            .find(|p| p.device_id == b.device_id && p.kind.family() == b.kind.family());
+        let before = previous.iter().find(|p| {
+            p.device_id == b.device_id && p.ip == b.ip && p.kind.family() == b.kind.family()
+        });
         if let Some(before) = before {
             // Same family: only the credential differs, take it whole.
             let credential = before.kind.clone();
@@ -103,6 +111,44 @@ pub fn restore_bindings(cfg: &mut AppConfig, previous: &[DeviceBinding]) {
             }
         }
     }
+}
+
+/// Move each pairing to the address discovery found its device at with its
+/// credential. True when one moved.
+pub fn follow_moves(pairings: &mut Pairings, found: &[DiscoveredDevice]) -> bool {
+    let mut moved = false;
+    for d in found {
+        let ip = match &d.kind {
+            DeviceKind::Hue { username, .. } if !username.is_empty() => {
+                // `hue:<bridge>:<light>`
+                let bridge = d
+                    .id
+                    .strip_prefix(hue::ID_PREFIX)
+                    .and_then(|rest| rest.split(':').next());
+                pairings
+                    .hue
+                    .iter_mut()
+                    .find(|h| Some(h.id.as_str()) == bridge)
+                    .map(|h| &mut h.ip)
+            }
+            DeviceKind::Nanoleaf { token } if !token.is_empty() => {
+                let own = d.id.strip_prefix(nanoleaf::ID_PREFIX);
+                pairings
+                    .nanoleaf
+                    .iter_mut()
+                    .find(|n| Some(n.id.as_str()) == own)
+                    .map(|n| &mut n.ip)
+            }
+            _ => None,
+        };
+        if let Some(ip) = ip
+            && *ip != d.ip
+        {
+            ip.clone_from(&d.ip);
+            moved = true;
+        }
+    }
+    moved
 }
 
 /// Add what `imported` was granted to `pairings`, for exports made before
@@ -154,11 +200,11 @@ mod tests {
         }
     }
 
-    fn binding(id: &str, kind: DeviceKind) -> DeviceBinding {
+    fn binding(id: &str, ip: &str, kind: DeviceKind) -> DeviceBinding {
         DeviceBinding {
             light_id: format!("l-{id}"),
             device_id: id.into(),
-            ip: "192.168.1.9".into(),
+            ip: ip.into(),
             port: 1,
             model: String::new(),
             name: String::new(),
@@ -172,6 +218,7 @@ mod tests {
             bindings: vec![
                 binding(
                     "hue:b1:3",
+                    "192.168.1.2",
                     DeviceKind::Hue {
                         username: "hue-secret".into(),
                         light: "3".into(),
@@ -179,12 +226,14 @@ mod tests {
                 ),
                 binding(
                     "nanoleaf:n1",
+                    "192.168.1.3",
                     DeviceKind::Nanoleaf {
                         token: "nano-secret".into(),
                     },
                 ),
                 binding(
                     "tuya:t1",
+                    "192.168.1.9",
                     DeviceKind::Tuya {
                         key: "tuya-secret".into(),
                         version: "3.3".into(),
@@ -221,6 +270,22 @@ mod tests {
         let mut bare = redact_config(&full);
         restore_bindings(&mut bare, &[]);
         assert!(!bare.to_json().unwrap().contains("secret"));
+    }
+
+    #[test]
+    fn credentials_stay_with_the_paired_address() {
+        let previous = config().bindings;
+        let mut cfg = redact_config(&config());
+        cfg.pairings = pairings();
+        for b in &mut cfg.bindings {
+            b.ip = "192.168.1.66".into();
+        }
+        restore_bindings(&mut cfg, &previous);
+        let json = serde_json::to_string(&cfg.bindings).unwrap();
+        assert!(!json.contains("hue-secret"), "{json}");
+        assert!(!json.contains("nano-secret"), "{json}");
+        // A Tuya key never travels: it only encrypts, so it follows the bulb.
+        assert!(json.contains("tuya-secret"));
     }
 
     #[test]

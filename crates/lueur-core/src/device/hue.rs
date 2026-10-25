@@ -205,6 +205,15 @@ pub fn discover(timeout: Duration, known: &[HueBridge]) -> io::Result<Vec<Discov
             },
         };
         let paired = known.iter().find(|b| b.id == id);
+        // The username only goes where it was granted, or where the bridge
+        // moved to: a second host claiming its id while it still answers at
+        // home is someone else.
+        if let Some(b) = paired
+            && b.ip != ip
+            && bridge_id(&b.ip).is_ok_and(|home| home == id)
+        {
+            continue;
+        }
         match paired.map(|b| lights(&ip, &id, &b.username)) {
             Some(Ok(lamps)) => out.extend(lamps),
             // Unpaired, or the bridge forgot us (factory reset): offer pairing.

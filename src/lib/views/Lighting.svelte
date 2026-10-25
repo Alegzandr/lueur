@@ -135,6 +135,28 @@
     adjustLight(id, { tint: { mode: "color", r, g, b } });
   }
 
+  /** A light's modes are a radio group: the arrows move the choice. The chips
+   *  are only marked disabled while a switch runs, so focus stays on them. */
+  function onModeKey(e: KeyboardEvent & { currentTarget: HTMLElement }, id: string) {
+    const last = LIGHT_MODES.length - 1;
+    const i = Math.max(0, LIGHT_MODES.indexOf(modeOf(id)));
+    const to =
+      e.key === "ArrowRight" || e.key === "ArrowDown"
+        ? (i === last ? 0 : i + 1)
+        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+          ? (i === 0 ? last : i - 1)
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? last
+              : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    if (app.busy || app.modeBusy[id]) return;
+    void setLightMode(id, LIGHT_MODES[to]);
+    e.currentTarget.querySelectorAll<HTMLButtonElement>("button")[to]?.focus();
+  }
+
   function showOnPlan(id: string) {
     app.selectedLight = id;
     app.view = "room";
@@ -518,14 +540,23 @@
 
             {#if expanded}
               <div class="panel">
-                <div class="light-modes" role="radiogroup" aria-label="{l.name}: {t('light_mode')}" title={t("light_mode_tip")}>
-                  {#each LIGHT_MODES as option (option ?? "manual")}
+                <div
+                  class="light-modes"
+                  role="radiogroup"
+                  aria-label="{l.name}: {t('light_mode')}"
+                  title={t("light_mode_tip")}
+                  tabindex="-1"
+                  onkeydown={(e) => onModeKey(e, l.id)}
+                >
+                  {#each LIGHT_MODES as option, i (option ?? "manual")}
                     <button
+                      type="button"
                       class="chip"
                       class:picked={lm === option}
                       role="radio"
+                      tabindex={i === Math.max(0, LIGHT_MODES.indexOf(lm)) ? 0 : -1}
                       aria-checked={lm === option}
-                      disabled={app.busy || app.modeBusy[l.id]}
+                      aria-disabled={app.busy || app.modeBusy[l.id]}
                       onclick={() => setLightMode(l.id, option)}
                     >
                       <span class="chip-dot" style="background:{modeSwatch(option, s)}" aria-hidden="true"></span>
@@ -994,10 +1025,10 @@
     white-space: nowrap;
     transition: box-shadow 200ms var(--ease);
   }
-  .chip:hover:not(:disabled) {
+  .chip:hover:not(:disabled, [aria-disabled="true"]) {
     background: var(--surface-hover);
   }
-  .chip:disabled:not(.picked) {
+  .chip:is(:disabled, [aria-disabled="true"]):not(.picked) {
     opacity: 0.55;
   }
   .chip.picked {

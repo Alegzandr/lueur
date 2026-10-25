@@ -145,6 +145,10 @@ const ROOM_SPAN: f32 = 3.0;
 
 /// Seconds for the rainbow to sweep warm to cool and back.
 const RAINBOW_CYCLE: f32 = 60.0;
+/// The shows' clocks go back to zero after this many seconds: an `f32` that
+/// kept counting would round each small step away after a few days. A whole
+/// number of rainbow cycles and ocean swells, so those two never jump.
+const CLOCK_WRAP: f32 = 3600.0;
 
 /// Which colour of a harmony light `i` plays. Two lights side by side never
 /// share one, and the first and last of a harmony, the furthest apart, are
@@ -467,7 +471,7 @@ impl Candle {
     pub fn frame(&mut self, settings: &ShowSettings, dt: f32) -> Vec<BulbOutput> {
         // Draughts per second, per flame: one every quarter of a minute or so.
         const GUSTS: f32 = 0.07;
-        self.t += dt;
+        self.t = (self.t + dt) % CLOCK_WRAP;
         let t = self.t;
         let bright = settings.bright();
         let room = 0.025 * noise(seed(0, 10), t * 0.5);
@@ -530,7 +534,7 @@ impl Show {
     /// move from where they are rather than making them leap.
     pub fn frame(&mut self, settings: &ShowSettings, dt: f32, levels: Levels) -> Vec<BulbOutput> {
         if self.kind.has_speed() {
-            self.t += dt * settings.pace();
+            self.t = (self.t + dt * settings.pace()) % CLOCK_WRAP;
         }
         let (t, n, bright) = (self.t, self.lights, settings.bright());
         match self.kind {

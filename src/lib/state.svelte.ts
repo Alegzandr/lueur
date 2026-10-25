@@ -175,6 +175,10 @@ function recorded(lightId: string, s: LightState): void {
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** False until the backend config has arrived. Until then `app.config` holds
+ *  defaults, and saving them would wipe the real setup. */
+let configLoaded = false;
+
 /**
  * Mutate the config in place and persist it (debounced, so dragging a slider
  * does not hammer the disk). A running effect picks up live-tunable settings.
@@ -190,6 +194,7 @@ export async function persistNow(): Promise<void> {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
+  if (!configLoaded) return;
   try {
     await ipc.saveConfig($state.snapshot(app.config));
   } catch (e) {
@@ -219,12 +224,18 @@ export async function bootstrap(): Promise<void> {
       cfg.interface.room_arranged = true;
     }
     app.config = cfg;
+    configLoaded = true;
     app.status = await ipc.effectStatus();
     sleepChanged(await ipc.sleepTimer());
     // Running already (resumed at launch): it was started from the saved config.
     if (app.status.running) app.startedWith = topology();
   } catch (e) {
-    fail(e, "err_load");
+    // Without the config, offer to try again rather than run on defaults.
+    const retry = () => {
+      loaded = false;
+      void bootstrap();
+    };
+    fail(e, "err_load", configLoaded ? undefined : { label: t("retry"), run: retry });
   } finally {
     app.ready = true;
   }
@@ -336,20 +347,30 @@ function reportPartial(res: { total: number; succeeded: number; failures: string
 const inFlight = new Set<string>();
 const waiting = new Map<string, LightState>();
 
+/** True while a wish for this light is on its way or queued, so the local
+ *  value is newer than anything the backend has. */
+const sending = (lightId: string) => inFlight.has(lightId) || waiting.has(lightId);
+
 async function send(lightId: string, s: LightState): Promise<void> {
   if (inFlight.has(lightId)) {
     waiting.set(lightId, s);
     return;
   }
   inFlight.add(lightId);
+  let failed = false;
   try {
     await ipc.setLightState(lightId, s);
   } catch (e) {
     // One toast per failure, not one per slider step.
     waiting.delete(lightId);
+    failed = true;
     fail(e);
   } finally {
     inFlight.delete(lightId);
+  }
+  if (failed) {
+    void revert(lightId);
+    return;
   }
   const next = waiting.get(lightId);
   if (next) {
@@ -370,14 +391,39 @@ export function adjustLight(lightId: string, patch: Partial<LightState>): void {
   void send(lightId, next);
 }
 
+/** Show what the backend recorded for a light the bulb refused, rather than
+ *  a value it never got. */
+async function revert(lightId: string): Promise<void> {
+  try {
+    const cfg = await ipc.getConfig();
+    // Moved again meanwhile: that newer wish wins.
+    if (sending(lightId)) return;
+    const states = { ...app.config.states };
+    const s = cfg.states?.[lightId];
+    if (s) states[lightId] = s;
+    else delete states[lightId];
+    app.config.states = states;
+    const natural = (app.config.natural ?? []).filter((id) => id !== lightId);
+    if (cfg.natural?.includes(lightId)) natural.push(lightId);
+    app.config.natural = natural;
+  } catch {
+    /* the next change will catch up */
+  }
+}
+
 /** Bring the light states in line with what the backend recorded (after the
- *  tray, automatic mode or a scene changed them). */
+ *  tray, automatic mode or a scene changed them). Lights being set by hand
+ *  keep their value, which is newer. */
 export async function reloadStates(): Promise<void> {
   try {
     await persistNow();
     const cfg = await ipc.getConfig();
-    app.config.states = cfg.states ?? {};
-    app.config.natural = cfg.natural ?? [];
+    const states = cfg.states ?? {};
+    for (const [id, s] of Object.entries(app.config.states ?? {})) {
+      if (sending(id)) states[id] = s;
+    }
+    app.config.states = states;
+    app.config.natural = (cfg.natural ?? []).filter((id) => !sending(id));
   } catch {
     /* the next change will catch up */
   }
@@ -457,6 +503,7 @@ async function moveLights(ids: string[], mode: Mode | null): Promise<void> {
 export async function setLightMode(lightId: string, mode: Mode | null): Promise<void> {
   if (app.busy || app.modeBusy[lightId] || modeOf(lightId) === mode) return;
   app.modeBusy[lightId] = true;
+  app.busy = true;
   try {
     await persistNow();
     await moveLights([lightId], mode);
@@ -465,6 +512,7 @@ export async function setLightMode(lightId: string, mode: Mode | null): Promise<
     await refreshStatus();
     fail(e);
   } finally {
+    app.busy = false;
     delete app.modeBusy[lightId];
   }
 }
@@ -494,6 +542,7 @@ export async function identifyLight(lightId: string): Promise<void> {
 async function reloadConfig(): Promise<void> {
   await persistNow();
   app.config = normalized(await ipc.getConfig());
+  configLoaded = true;
 }
 
 /** Save the config to a file of the user's choosing. */
@@ -514,6 +563,7 @@ export async function importConfig(): Promise<void> {
     const cfg = await ipc.importConfig();
     if (!cfg) return;
     app.config = normalized(cfg);
+    configLoaded = true;
     notify("info", t("imported"));
     if (cfg.bindings.length > 0) void scan(3000, true);
   } catch (e) {
@@ -770,7 +820,8 @@ export function removeLight(id: string): void {
     run: () =>
       edit((c) => {
         c.room.lights.splice(Math.min(index, c.room.lights.length), 0, light);
-        if (binding) c.bindings.push(binding);
+        // The bulb went to another light since: it stays there.
+        if (binding && !c.bindings.some((b) => b.device_id === binding.device_id)) c.bindings.push(binding);
       }),
   });
 }
@@ -784,12 +835,46 @@ export function markRoomArranged(): void {
 
 let toastSeq = 0;
 
+/** Each toast's countdown: what is left of it, and what pauses it (the
+ *  pointer or focus on the toast). */
+interface Countdown {
+  handle: ReturnType<typeof setTimeout> | null;
+  left: number;
+  since: number;
+  held: Set<"hover" | "focus">;
+}
+const countdowns = new Map<number, Countdown>();
+
 /** Show a toast, keeping at most three. Errors and toasts with an action
  *  stay longer, so there is time to read or act on them. */
 function toast(entry: Omit<Toast, "id">): void {
   const id = ++toastSeq;
-  app.toasts = [...app.toasts.slice(-2), { id, ...entry }];
-  setTimeout(() => dismiss(id), entry.kind === "error" || entry.action ? 7000 : 3600);
+  for (const old of app.toasts.slice(0, -2)) dismiss(old.id);
+  app.toasts = [...app.toasts, { id, ...entry }];
+  const left = entry.kind === "error" || entry.action ? 7000 : 3600;
+  countdowns.set(id, { handle: setTimeout(() => dismiss(id), left), left, since: Date.now(), held: new Set() });
+}
+
+/** Pause a toast's countdown while it is pointed at or focused. */
+export function holdToast(id: number, why: "hover" | "focus"): void {
+  const c = countdowns.get(id);
+  if (!c) return;
+  c.held.add(why);
+  if (!c.handle) return;
+  clearTimeout(c.handle);
+  c.handle = null;
+  c.left -= Date.now() - c.since;
+}
+
+/** Resume it once nothing holds it, with a moment left to finish reading. */
+export function releaseToast(id: number, why: "hover" | "focus"): void {
+  const c = countdowns.get(id);
+  if (!c) return;
+  c.held.delete(why);
+  if (c.handle || c.held.size > 0) return;
+  c.left = Math.max(c.left, 2000);
+  c.since = Date.now();
+  c.handle = setTimeout(() => dismiss(id), c.left);
 }
 
 export function notify(kind: Toast["kind"], msg: string, action?: Toast["action"]): void {
@@ -797,6 +882,9 @@ export function notify(kind: Toast["kind"], msg: string, action?: Toast["action"
 }
 
 export function dismiss(id: number): void {
+  const c = countdowns.get(id);
+  if (c?.handle) clearTimeout(c.handle);
+  countdowns.delete(id);
   app.toasts = app.toasts.filter((t) => t.id !== id);
 }
 
@@ -804,7 +892,11 @@ export function dismiss(id: number): void {
  * Report a failure. Backend errors arrive as codes and are worded in the
  * interface language; `fallback` words anything else (a frontend-only step).
  */
-export function fail(e: unknown, fallback?: "err_save" | "err_load" | "err_displays"): void {
+export function fail(
+  e: unknown,
+  fallback?: "err_save" | "err_load" | "err_displays",
+  action?: Toast["action"],
+): void {
   const msg = isBackendError(e) || !fallback ? errorText(e) : t(fallback);
-  toast({ kind: "error", msg, detail: errorDetail(e) });
+  toast({ kind: "error", msg, detail: errorDetail(e), action });
 }

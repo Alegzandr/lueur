@@ -311,8 +311,7 @@ export async function setRunOnStartup(enabled: boolean): Promise<void> {
 /** Match the native title bar to the chosen appearance (null follows the OS). */
 export async function setWindowTheme(theme: "light" | "dark" | null): Promise<void> {
   if (!inTauri()) return;
-  const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  await getCurrentWindow().setTheme(theme);
+  return invoke<void>("set_window_theme", { theme });
 }
 
 export async function appVersion(): Promise<string> {

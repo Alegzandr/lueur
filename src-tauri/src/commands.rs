@@ -280,6 +280,11 @@ pub async fn discover_devices(
             .map_err(|e| AppError::new("discovery_failed").detail(e))
     })
     .await?;
+    // Discovery only hands a credential to a bridge or controller found away
+    // from home once nothing answers there: it moved, and its pairing follows.
+    if secrets::follow_moves(&mut state.lock_config()?.pairings, &found) {
+        state.persist()?;
+    }
     secrets::redact_devices(&mut found);
     Ok(found)
 }
@@ -425,6 +430,7 @@ pub async fn test_device(
     validate_ip(&endpoint.ip)?;
     if !secrets::restore(
         &endpoint.id,
+        &endpoint.ip,
         &mut endpoint.kind,
         &state.lock_config()?.pairings,
     ) {
@@ -578,6 +584,17 @@ pub fn set_ui_language(app: AppHandle, state: State<AppState>, lang: String) -> 
     *state.ui_language.lock().map_err(|_| AppError::poisoned())? = lang;
     crate::tray::refresh(&app);
     Ok(())
+}
+
+/// Force the window's theme (None follows the OS), title bar included.
+#[tauri::command]
+pub fn set_window_theme(window: tauri::WebviewWindow, theme: Option<String>) {
+    let theme = match theme.as_deref() {
+        Some("light") => Some(tauri::Theme::Light),
+        Some("dark") => Some(tauri::Theme::Dark),
+        _ => None,
+    };
+    crate::titlebar::set_theme(&window, theme);
 }
 
 /// Report whether the effect is running.

@@ -20,6 +20,9 @@
     { id: "settings", label: () => t("nav_settings"), icon: "sliders", key: "4" },
   ];
 
+  // True while a view plays its entrance animation.
+  let settling = $state(false);
+
   onMount(() => {
     void bootstrap();
     // Hidden in the tray, nobody reads the status: skip the poll, and catch
@@ -150,9 +153,13 @@
     {#if app.updateReady}
       <div class="topbar"><UpdateButton /></div>
     {/if}
-    <div class="scroll">
+    <div class="scroll" class:settling>
       {#key app.view}
-        <div class="view view-enter">
+        <div
+          class="view view-enter"
+          onanimationstart={(e) => e.target === e.currentTarget && (settling = true)}
+          onanimationend={(e) => e.target === e.currentTarget && (settling = false)}
+        >
           {#if app.view === "lighting"}
             <Lighting />
           {:else if app.view === "room"}
@@ -305,6 +312,11 @@
     min-height: 0;
     overflow: auto;
     scrollbar-gutter: stable;
+  }
+  /* The entering view slides up from a few pixels low; without this, that
+     brief overhang flashes a scrollbar. */
+  .scroll.settling {
+    overflow: hidden;
   }
   .view {
     height: 100%;

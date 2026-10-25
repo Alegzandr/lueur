@@ -306,6 +306,9 @@ const MISSES: u32 = 3;
 pub const LEAD: f32 = 0.05;
 /// How far back the kicks the tempo is read from go, seconds.
 const MEMORY: f32 = 6.0;
+/// The analyser's clock moves back by this many seconds whenever it reaches
+/// twice that, so an `f32` keeps it to the sample after hours of music.
+const CLOCK_SPAN: f32 = 600.0;
 
 /// The beat's clock: the tempo, read from where the kicks fall, and when the
 /// next beat is due.
@@ -335,6 +338,14 @@ struct Tempo {
 }
 
 impl Tempo {
+    /// Move every time it holds `by` seconds earlier, with the clock.
+    fn rewind(&mut self, by: f32) {
+        for k in &mut self.kicks {
+            *k -= by;
+        }
+        self.next -= by;
+    }
+
     fn locked(&self) -> bool {
         self.period > 0.0 && self.sure >= SURE
     }
@@ -490,7 +501,7 @@ pub struct Analyzer {
     low: Band,
     mid: Band,
     high: Band,
-    /// Seconds of sound heard.
+    /// Seconds of sound heard, give or take whole [`CLOCK_SPAN`]s.
     time: f32,
     /// Seconds since any band was last struck.
     quiet: f32,
@@ -565,6 +576,10 @@ impl Analyzer {
         self.count = 0;
         let dt = n as f32 / self.rate;
         self.time += dt;
+        if self.time > 2.0 * CLOCK_SPAN {
+            self.time -= CLOCK_SPAN;
+            self.tempo.rewind(CLOCK_SPAN);
+        }
         let playing = self.quiet < 1.0;
         self.mix.close(n, dt, playing);
         let low = self.low.close(n, dt, playing);
@@ -1320,6 +1335,27 @@ mod tests {
         let tempo = frames.last().unwrap().tempo.expect("no tempo found");
         assert!((tempo - 60.0 / 128.0).abs() < 0.01, "{tempo}");
         // Once locked, one beat per kick: none doubled, none dropped.
+        let beats = frames[frames.len() / 2..]
+            .iter()
+            .filter(|l| l.beat.is_some())
+            .count();
+        let expected = (6.0 * 128.0 / 60.0) as usize;
+        assert!(
+            beats.abs_diff(expected) <= 1,
+            "{beats} beats for {expected}"
+        );
+    }
+
+    #[test]
+    fn the_clock_moving_back_keeps_the_tempo() {
+        // The clock rewinds a few seconds in, while the tempo locks.
+        let rate = 48_000;
+        let mut a = Analyzer::new(rate);
+        a.time = 2.0 * CLOCK_SPAN - 5.0;
+        let frames = four_on_the_floor(&mut a, rate, 128.0, 1.0, 12.0);
+        assert!(a.time < CLOCK_SPAN + 10.0, "{}", a.time);
+        let tempo = frames.last().unwrap().tempo.expect("tempo lost");
+        assert!((tempo - 60.0 / 128.0).abs() < 0.01, "{tempo}");
         let beats = frames[frames.len() / 2..]
             .iter()
             .filter(|l| l.beat.is_some())

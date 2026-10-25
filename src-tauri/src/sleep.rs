@@ -158,14 +158,12 @@ fn fade(state: &AppState, generation: u64) -> bool {
             .collect(),
         Err(_) => return true,
     };
+    // The steps are not recorded: what each light was set to stays its
+    // state for tomorrow. A light that does not answer is switched off with
+    // the rest.
     let show = |dim: &dyn Fn(LightState) -> LightState| {
-        std::thread::scope(|scope| {
-            for (id, s) in &lit {
-                let wish = dim(*s);
-                // A light that does not answer is switched off with the rest.
-                scope.spawn(move || lights::set_light(state, id, wish));
-            }
-        });
+        let wishes: Vec<_> = lit.iter().map(|(id, s)| (id.clone(), dim(*s))).collect();
+        lights::show_lights(state, &wishes);
     };
     for step in 1..=FADE_STEPS {
         if !state.sleep.current(generation) {

@@ -24,6 +24,7 @@ mod runner;
 mod secrets;
 mod sleep;
 mod state;
+mod titlebar;
 mod tray;
 mod tuya;
 mod tuya_cloud;
@@ -64,11 +65,14 @@ pub(crate) fn start(app: &AppHandle) {
     // A forced theme applies before the window first paints, or it would
     // open in the OS colours and switch once the page reads the config.
     if let Some(win) = app.get_webview_window(MAIN_WINDOW) {
-        let _ = win.set_theme(match appearance {
-            Appearance::System => None,
-            Appearance::Light => Some(tauri::Theme::Light),
-            Appearance::Dark => Some(tauri::Theme::Dark),
-        });
+        titlebar::set_theme(
+            &win,
+            match appearance {
+                Appearance::System => None,
+                Appearance::Light => Some(tauri::Theme::Light),
+                Appearance::Dark => Some(tauri::Theme::Dark),
+            },
+        );
     }
 
     // We stay hidden if the user asked to start minimised, or if we were
@@ -141,11 +145,23 @@ pub fn run() {
             commands::sleep_timer,
             commands::set_run_on_startup,
             commands::set_ui_language,
+            commands::set_window_theme,
             updater::update_progress,
             updater::update_ready,
             updater::restart_app,
         ])
         .setup(|app| {
+            // An effect that ends by itself (every bulb gone) still shows as
+            // playing until the window and the tray are told.
+            let handle = app.handle().clone();
+            runner::on_end(move || {
+                let handle = handle.clone();
+                std::thread::spawn(move || {
+                    use tauri::Emitter;
+                    let _ = handle.emit(tray::EFFECT_CHANGED, None::<error::AppError>);
+                    tray::refresh(&handle);
+                });
+            });
             // The main window is created hidden; `start` shows it.
             if updater::enabled() {
                 updater::launch(app.handle())?;
@@ -179,9 +195,26 @@ pub fn run() {
                 WindowEvent::Resized(_) if window.is_minimized().unwrap_or(false) && !to_tray() => {
                     let _ = window.hide();
                 }
+                // Following the OS, which just switched light or dark.
+                WindowEvent::ThemeChanged(theme) => {
+                    if let Some(win) = window.app_handle().get_webview_window(MAIN_WINDOW) {
+                        titlebar::paint(&win, *theme);
+                    }
+                }
                 _ => {}
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Lueur");
+        .build(tauri::generate_context!())
+        .expect("error while building Lueur")
+        .run(|app, event| {
+            // However Lueur quits (the tray, closing the window, Cmd+Q, the
+            // session ending), the bulbs leave music mode on a warm glow
+            // rather than frozen on the last frame. A no-op when the tray's
+            // Quit has done it already.
+            if let tauri::RunEvent::Exit = event
+                && let Some(state) = app.try_state::<AppState>()
+            {
+                lights::suspend(&state, false);
+            }
+        });
 }

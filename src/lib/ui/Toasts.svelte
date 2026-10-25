@@ -1,12 +1,25 @@
 <script lang="ts">
-  import { app, dismiss } from "../state.svelte";
+  import { app, dismiss, holdToast, releaseToast } from "../state.svelte";
   import Icon from "./Icon.svelte";
   import { t as tr } from "../i18n";
 </script>
 
+<!-- One live region, always present, so each toast is announced once as it
+     arrives. The toasts inside carry no role of their own. -->
 <div class="toasts" aria-live="polite">
   {#each app.toasts as t (t.id)}
-    <div class="toast" class:error={t.kind === "error"} role={t.kind === "error" ? "alert" : "status"}>
+    <!-- Pointing at or focusing a toast keeps it up until you move on. -->
+    <div
+      class="toast"
+      class:error={t.kind === "error"}
+      role="presentation"
+      onmouseenter={() => holdToast(t.id, "hover")}
+      onmouseleave={() => releaseToast(t.id, "hover")}
+      onfocusin={() => holdToast(t.id, "focus")}
+      onfocusout={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) releaseToast(t.id, "focus");
+      }}
+    >
       {#if t.kind === "error"}<span class="ic"><Icon name="alert" size={15} /></span>{/if}
       <p title={t.detail}>{t.msg}</p>
       {#if t.action}

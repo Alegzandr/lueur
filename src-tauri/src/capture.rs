@@ -25,6 +25,8 @@ mod dxgi;
 use crate::error::{AppError, AppResult};
 use lueur_core::engine::{Frame, PixelFormat};
 use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 use xcap::Monitor;
 
 /// Something the ambilight loop can pull frames from.
@@ -79,41 +81,86 @@ fn all_monitors() -> AppResult<Vec<Monitor>> {
     Monitor::all().map_err(|e| AppError::new("monitors_unavailable").detail(e))
 }
 
+/// Desktop duplication failing this many grabs in a row (a display rotated
+/// or unplugged mid-session) hands over to GDI rather than retrying forever.
+#[cfg(windows)]
+const DUPLICATION_FAILURES: u32 = 40;
+/// How often GDI tries desktop duplication again, which comes back after a
+/// UAC prompt or the lock screen and is what sees exclusive fullscreen.
+#[cfg(windows)]
+const DUPLICATION_RETRY: Duration = Duration::from_secs(5);
+
 /// The best [`FrameSource`] available for one monitor.
 ///
 /// Build this on the thread that will pull frames from it: the underlying
 /// handles are not thread-safe.
-pub enum ScreenSource {
+pub struct ScreenSource {
     #[cfg(windows)]
-    Duplication(dxgi::DxgiSource),
-    Xcap(XcapSource),
+    duplication: Option<dxgi::DxgiSource>,
+    /// Grabs in a row duplication has failed.
+    #[cfg(windows)]
+    failures: u32,
+    /// When GDI next tries duplication again.
+    #[cfg(windows)]
+    retry_at: Instant,
+    xcap: XcapSource,
 }
 
 impl ScreenSource {
     /// Build a source for the monitor at `index`.
     pub fn for_index(index: usize) -> AppResult<Self> {
         let monitor = monitor_at(index)?;
-        #[cfg(windows)]
-        if let Ok(id) = monitor.id() {
-            match dxgi::DxgiSource::open(id) {
-                Ok(source) => return Ok(ScreenSource::Duplication(source)),
-                Err(e) => eprintln!("lueur: desktop duplication unavailable, using GDI: {e}"),
-            }
-        }
-        Ok(ScreenSource::Xcap(XcapSource {
-            monitor,
-            frame: None,
-        }))
+        Ok(ScreenSource {
+            #[cfg(windows)]
+            duplication: duplicate(&monitor),
+            #[cfg(windows)]
+            failures: 0,
+            #[cfg(windows)]
+            retry_at: Instant::now() + DUPLICATION_RETRY,
+            xcap: XcapSource {
+                monitor,
+                frame: None,
+            },
+        })
     }
+}
+
+#[cfg(windows)]
+fn duplicate(monitor: &Monitor) -> Option<dxgi::DxgiSource> {
+    let id = monitor.id().ok()?;
+    dxgi::DxgiSource::open(id)
+        .inspect_err(|e| eprintln!("lueur: desktop duplication unavailable, using GDI: {e}"))
+        .ok()
 }
 
 impl FrameSource for ScreenSource {
     fn grab(&mut self, timeout: Duration) -> Result<&Frame, String> {
-        match self {
-            #[cfg(windows)]
-            ScreenSource::Duplication(s) => s.grab(timeout),
-            ScreenSource::Xcap(s) => s.grab(timeout),
+        #[cfg(windows)]
+        {
+            if self.duplication.is_none() && Instant::now() >= self.retry_at {
+                self.retry_at = Instant::now() + DUPLICATION_RETRY;
+                self.duplication = duplicate(&self.xcap.monitor);
+                self.failures = 0;
+            }
+            if let Some(d) = self.duplication.as_mut() {
+                match d.grab(timeout) {
+                    Ok(_) => self.failures = 0,
+                    Err(e) => {
+                        self.failures += 1;
+                        if self.failures < DUPLICATION_FAILURES {
+                            return Err(e);
+                        }
+                        eprintln!("lueur: desktop duplication lost, using GDI: {e}");
+                        self.duplication = None;
+                        self.retry_at = Instant::now() + DUPLICATION_RETRY;
+                    }
+                }
+            }
+            if let Some(frame) = self.duplication.as_ref().and_then(|d| d.frame()) {
+                return Ok(frame);
+            }
         }
+        self.xcap.grab(timeout)
     }
 }
 

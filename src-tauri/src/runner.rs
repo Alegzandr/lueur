@@ -26,7 +26,7 @@ use lueur_core::stage::{Analyzer, Fixture, Levels};
 use lueur_core::yeelight::Effect;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -82,6 +82,8 @@ pub struct Handle {
     stop: Arc<AtomicBool>,
     /// Whether the bulbs settle on a warm glow when the loop ends.
     settle: Arc<AtomicBool>,
+    /// Set by the thread once it has wholly finished, settling included.
+    done: Arc<AtomicBool>,
     live: Arc<Mutex<LiveSettings>>,
     thread: Option<JoinHandle<()>>,
     /// Human-readable summary of what started, for the UI/status.
@@ -114,8 +116,10 @@ impl Handle {
         }
     }
 
+    /// The loop plays, or settles the bulbs after ending by itself: they are
+    /// still its own until it has finished.
     pub fn is_running(&self) -> bool {
-        !self.stop.load(Ordering::SeqCst)
+        !self.stop.load(Ordering::SeqCst) && !self.done.load(Ordering::SeqCst)
     }
 }
 
@@ -234,6 +238,16 @@ fn connect(
     Ok((connected, light_ids))
 }
 
+/// Called when a loop ends by itself, set once at launch.
+static ON_END: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+/// What to do when a loop ends without being stopped. It runs on the loop's
+/// own thread, which must not wait on itself: anything that looks at the
+/// running loops belongs on another thread.
+pub fn on_end(f: impl Fn() + Send + Sync + 'static) {
+    let _ = ON_END.set(Box::new(f));
+}
+
 /// Run `body` on its own thread over the connected lights; when it returns
 /// (stopped, or every bulb gone) the bulbs settle, unless handed over.
 fn spawn(
@@ -246,19 +260,28 @@ fn spawn(
     let live = Arc::new(Mutex::new(LiveSettings::of(config)));
     let stop = Arc::new(AtomicBool::new(false));
     let settle = Arc::new(AtomicBool::new(true));
+    let done = Arc::new(AtomicBool::new(false));
     let connected_lights = lights.len();
     let thread = {
         let live = Arc::clone(&live);
         let stop = Arc::clone(&stop);
         let settle = Arc::clone(&settle);
+        let done = Arc::clone(&done);
         std::thread::Builder::new()
             .name(format!("lueur-{}", mode.id()))
             .spawn(move || {
                 let mut lights = lights;
                 body(&mut lights, &live, &stop);
-                stop.store(true, Ordering::SeqCst);
                 if settle.load(Ordering::SeqCst) {
                     rest(&mut lights);
+                }
+                done.store(true, Ordering::SeqCst);
+                // Nobody asked it to stop: every bulb went, or the capture
+                // could not start. What shows it running must hear of it.
+                if !stop.load(Ordering::SeqCst)
+                    && let Some(ended) = ON_END.get()
+                {
+                    ended();
                 }
             })
             .map_err(AppError::internal)?
@@ -266,6 +289,7 @@ fn spawn(
     Ok(Handle {
         stop,
         settle,
+        done,
         live,
         thread: Some(thread),
         connected_lights,
@@ -351,7 +375,8 @@ pub struct Effects {
 
 impl Effects {
     fn lock(&self) -> MutexGuard<'_, Vec<Handle>> {
-        // A loop that ended by itself (every bulb gone) is forgotten here.
+        // A loop that ended by itself (every bulb gone) is forgotten here,
+        // once it has settled the bulbs: dropping it then waits for nothing.
         let mut running = self.running.lock().unwrap_or_else(|p| p.into_inner());
         running.retain(Handle::is_running);
         running

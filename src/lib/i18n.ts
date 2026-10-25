@@ -240,6 +240,7 @@ const en = {
 
   dismiss: "Dismiss",
   undo: "Undo",
+  retry: "Try again",
   redo: "Redo",
   added: "{name} added.",
   added_many: "{n} bulbs added.",
@@ -513,6 +514,7 @@ const fr: Record<Key, string> = {
 
   dismiss: "Fermer",
   undo: "Annuler",
+  retry: "Réessayer",
   redo: "Rétablir",
   added: "{name} ajoutée.",
   added_many: "{n} ampoules ajoutées.",

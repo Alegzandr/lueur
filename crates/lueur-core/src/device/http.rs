@@ -9,10 +9,14 @@
 
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, SocketAddrV4, TcpStream};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Bodies larger than this are refused: a bulb's answer is a few kilobytes.
 const MAX_RESPONSE: usize = 1 << 20;
+
+/// A whole response must arrive within this many read timeouts, so a device
+/// that trickles a byte at a time cannot hold a call open.
+const RESPONSE_TIMEOUTS: u32 = 2;
 
 /// A response: status code and body text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,9 +142,17 @@ fn exchange(
     req.push_str(body);
     stream.write_all(req.as_bytes())?;
 
+    let timeout = stream.read_timeout()?.unwrap_or(Duration::from_secs(2));
+    let deadline = Instant::now() + timeout * RESPONSE_TIMEOUTS;
     let mut raw = Vec::new();
     let mut buf = [0u8; 8192];
     let framed = loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            stream.set_read_timeout(Some(timeout))?;
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "response too slow"));
+        }
+        stream.set_read_timeout(Some(left.min(timeout)))?;
         match stream.read(&mut buf) {
             Ok(0) => break None,
             Ok(n) => {
@@ -166,6 +178,7 @@ fn exchange(
             }
         }
     };
+    stream.set_read_timeout(Some(timeout))?;
     let response = parse_response(&raw)?;
     let reusable = keep_alive && framed == Some(raw.len()) && !closing(&raw);
     Ok((response, reusable))
@@ -185,17 +198,22 @@ fn framed_len(raw: &[u8]) -> Option<usize> {
         return chunked_len(&raw[start..]).map(|len| start + len);
     }
     let len = header(&head, "content-length")?.parse::<usize>().ok()?;
-    (raw.len() >= start + len).then_some(start + len)
+    let end = start.checked_add(len)?;
+    (raw.len() >= end).then_some(end)
 }
 
 /// The length of a complete chunked body, its final empty chunk included.
-/// Trailers are not supported.
+/// Trailers are not supported. The sizes come from the device, so a chunk
+/// larger than any response we accept ends the search instead of wrapping.
 fn chunked_len(data: &[u8]) -> Option<usize> {
     let mut at = 0;
     loop {
         let line_end = at + find(&data[at..], b"\r\n")?;
         let size_text = std::str::from_utf8(&data[at..line_end]).ok()?;
         let size = usize::from_str_radix(size_text.split(';').next()?.trim(), 16).ok()?;
+        if size > MAX_RESPONSE {
+            return None;
+        }
         at = line_end + 2 + size + 2;
         if data.len() < at {
             return None;
@@ -314,6 +332,38 @@ mod tests {
         assert_eq!(framed_len(&raw), None, "the closing CRLF is still to come");
         raw.extend_from_slice(b"\r\n");
         assert_eq!(framed_len(&raw), Some(raw.len()));
+    }
+
+    #[test]
+    fn an_absurd_size_never_completes() {
+        let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nFFFFFFFFFFFFFFEC\r\n";
+        assert_eq!(framed_len(raw), None);
+        let raw = b"HTTP/1.1 200 OK\r\nContent-Length: 18446744073709551615\r\n\r\n";
+        assert_eq!(framed_len(raw), None);
+    }
+
+    #[test]
+    fn a_trickling_server_times_out() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut peer, _) = listener.accept().unwrap();
+            let _ = peer.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n");
+            for _ in 0..20 {
+                std::thread::sleep(Duration::from_millis(30));
+                if peer.write_all(b"x").is_err() {
+                    break;
+                }
+            }
+        });
+        let mut stream = connect(addr, Duration::from_millis(100)).unwrap();
+        let started = Instant::now();
+        // Whatever came by then is all there is: the call never waits longer.
+        let _ = exchange(&mut stream, addr, "GET", "/", None, false);
+        assert!(started.elapsed() < Duration::from_millis(400));
+        drop(stream);
+        server.join().unwrap();
     }
 
     #[test]

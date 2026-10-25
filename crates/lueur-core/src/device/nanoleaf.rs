@@ -105,11 +105,16 @@ pub fn discover(timeout: Duration, known: &[NanoleafPairing]) -> io::Result<Vec<
         if id.is_empty() {
             continue;
         }
-        let token = known
-            .iter()
-            .find(|k| k.id == id)
-            .map(|k| k.token.clone())
-            .unwrap_or_default();
+        let paired = known.iter().find(|k| k.id == id);
+        // As with Hue bridges: the token is for the controller at the address
+        // it was granted, unless nothing answers there any more.
+        if let Some(k) = paired
+            && k.ip != inst.ip
+            && answers(&k.ip)
+        {
+            continue;
+        }
+        let token = paired.map(|k| k.token.clone()).unwrap_or_default();
         out.push(DiscoveredDevice {
             id: format!("{ID_PREFIX}{id}"),
             ip: inst.ip,
@@ -123,6 +128,14 @@ pub fn discover(timeout: Duration, known: &[NanoleafPairing]) -> io::Result<Vec<
         });
     }
     Ok(out)
+}
+
+/// Whether a controller's API still listens at `ip`.
+fn answers(ip: &str) -> bool {
+    super::common::ipv4(ip).is_ok_and(|ip| {
+        let addr = std::net::SocketAddr::from((ip, PORT));
+        std::net::TcpStream::connect_timeout(&addr, TIMEOUT).is_ok()
+    })
 }
 
 /// Panel ids from a `panelLayout/layout` reply. Controllers and connectors

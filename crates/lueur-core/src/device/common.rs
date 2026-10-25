@@ -4,6 +4,7 @@
 
 use crate::color::{BulbOutput, MAX_BRIGHT, MIN_BRIGHT, Rgb};
 use crate::yeelight::Effect;
+use std::collections::HashMap;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
@@ -281,7 +282,29 @@ pub fn ipv4(ip: &str) -> io::Result<Ipv4Addr> {
             "not a LAN address",
         ));
     }
+    // One of our own addresses is reached from itself.
+    if local_ip_toward(addr).is_ok_and(|me| me == addr) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "an address of this computer",
+        ));
+    }
     Ok(addr)
+}
+
+/// Record a discovery reply for device `id`. The first reply stands, except
+/// that one sent from the address it names replaces one that was not: a host
+/// claiming another's id cannot move it. (A reply relayed across networks
+/// comes from the relay, so such a reply is still taken when it is all
+/// there is.)
+pub fn keep<T>(found: &mut HashMap<String, (T, bool)>, id: String, device: T, own: bool) {
+    match found.get(&id) {
+        Some((_, true)) => {}
+        Some((_, false)) if !own => {}
+        _ => {
+            found.insert(id, (device, own));
+        }
+    }
 }
 
 /// A UDP socket "connected" to one bulb, so sends are a single syscall and
@@ -353,8 +376,16 @@ mod tests {
 
     #[test]
     fn only_lan_addresses_are_bulbs() {
+        let me = local_ip_toward(Ipv4Addr::new(192, 168, 0, 1)).ok();
         for ok in ["192.168.1.5", "10.0.0.2", "172.16.4.1", "169.254.3.3"] {
+            // Unless the machine running the tests has that address.
+            if me.is_some_and(|me| me.to_string() == ok) {
+                continue;
+            }
             assert!(ipv4(ok).is_ok(), "{ok}");
+        }
+        if let Some(me) = me.filter(|me| me.is_private()) {
+            assert!(ipv4(&me.to_string()).is_err(), "our own {me}");
         }
         for bad in [
             "8.8.8.8",

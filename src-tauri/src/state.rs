@@ -32,6 +32,12 @@ impl AppState {
     pub fn load(data_dir: PathBuf) -> Self {
         let config = config::load(&data_dir).unwrap_or_else(|e| {
             eprintln!("lueur: failed to load config ({e}); using defaults");
+            // The next save would overwrite it: keep the unreadable file
+            // beside, where the room and the keys can still be recovered.
+            if matches!(e, config::ConfigError::Parse(_)) {
+                let path = data_dir.join(config::CONFIG_FILE_NAME);
+                let _ = std::fs::rename(&path, path.with_extension("json.bad"));
+            }
             AppConfig::default()
         });
         AppState {

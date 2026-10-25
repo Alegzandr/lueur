@@ -220,7 +220,8 @@ pub fn discover(timeout: Duration) -> io::Result<Vec<DiscoveredDevice>> {
                     STATE_SERVICE if payload.len() >= 5 && payload[0] == 1 => {
                         let port =
                             u32::from_le_bytes([payload[1], payload[2], payload[3], payload[4]]);
-                        let port = u16::try_from(port).unwrap_or(PORT);
+                        // Port 0 is no port at all.
+                        let port = u16::try_from(port).ok().filter(|&p| p != 0).unwrap_or(PORT);
                         if let std::collections::hash_map::Entry::Vacant(slot) = found.entry(mac) {
                             let _ = socket.send_to(&frame(GET_LABEL, mac, false, 1, &[]), from);
                             slot.insert(DiscoveredDevice {

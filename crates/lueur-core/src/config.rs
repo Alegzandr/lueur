@@ -313,7 +313,9 @@ pub fn save(data_dir: &Path, config: &AppConfig) -> Result<(), ConfigError> {
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     options
         .open(&tmp_path)
-        .and_then(|mut f| f.write_all(json.as_bytes()))
+        // On disk before the rename, or a power cut can leave an empty file
+        // where the old config was.
+        .and_then(|mut f| f.write_all(json.as_bytes()).and_then(|()| f.sync_all()))
         .map_err(ConfigError::Io)?;
     std::fs::rename(&tmp_path, &final_path).map_err(ConfigError::Io)?;
     Ok(())

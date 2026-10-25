@@ -88,6 +88,11 @@ impl DxgiSource {
             .as_ref()
             .ok_or_else(|| "no desktop image yet".to_string())
     }
+
+    /// The image the last successful grab returned.
+    pub fn frame(&self) -> Option<&Frame> {
+        self.frame.as_ref()
+    }
 }
 
 /// GPU objects sized for one desktop resolution.

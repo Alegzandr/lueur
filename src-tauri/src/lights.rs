@@ -433,7 +433,11 @@ fn apply_one(
 /// Show `wish` on one light, and record it. A slider drag calls this many
 /// times a second, so the record waits for the interface's next save to
 /// reach the disk.
+///
+/// Holds the effects' change lock, so an effect starting meanwhile either
+/// sees the light taken by hand or takes it after: never both at once.
 pub fn set_light(state: &AppState, light_id: &str, wish: LightState) -> AppResult<()> {
+    let _change = state.effects.change();
     let binding = manual_binding(state, light_id)?;
     let wish = wish.clamped();
     let wall = state.lock_config()?.room.wall;
@@ -443,6 +447,24 @@ pub fn set_light(state: &AppState, light_id: &str, wish: LightState) -> AppResul
         .states
         .insert(light_id.to_string(), wish);
     Ok(())
+}
+
+/// Show each wish on its light, all at once, without recording them: a fade
+/// passes through states nobody chose. Lights an effect drives are skipped,
+/// and a light that does not answer is left as it is.
+pub fn show_lights(state: &AppState, wishes: &[(String, LightState)]) {
+    let _change = state.effects.change();
+    let Ok(wall) = state.lock_config().map(|c| c.room.wall) else {
+        return;
+    };
+    std::thread::scope(|scope| {
+        for (id, wish) in wishes {
+            if let Ok(binding) = manual_binding(state, id) {
+                let wish = wish.clamped();
+                scope.spawn(move || apply_one(state, &binding, wish, wall));
+            }
+        }
+    });
 }
 
 /// Switch one light on or off, leaving its colour to the bulb. Allowed while

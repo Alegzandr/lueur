@@ -118,14 +118,15 @@ pub fn discover(timeout: Duration) -> io::Result<Vec<DiscoveredDevice>> {
         let _ = sender.send_to(scan.as_bytes(), SocketAddrV4::new(SCAN_ADDR, SCAN_PORT));
     }
 
-    let mut found: HashMap<String, DiscoveredDevice> = HashMap::new();
+    let mut found: HashMap<String, (DiscoveredDevice, bool)> = HashMap::new();
     let deadline = Instant::now() + timeout;
     let mut buf = [0u8; 2048];
     while Instant::now() < deadline {
         match listener.recv_from(&mut buf) {
-            Ok((n, _)) => {
+            Ok((n, from)) => {
                 if let Some(d) = parse_scan(&buf[..n]) {
-                    found.insert(d.id.clone(), d);
+                    let own = d.ip == from.ip().to_string();
+                    super::common::keep(&mut found, d.id.clone(), d, own);
                 }
             }
             Err(e)
@@ -134,7 +135,7 @@ pub fn discover(timeout: Duration) -> io::Result<Vec<DiscoveredDevice>> {
             Err(e) => return Err(e),
         }
     }
-    Ok(found.into_values().collect())
+    Ok(found.into_values().map(|(d, _)| d).collect())
 }
 
 /// A scan reply, if it is one.

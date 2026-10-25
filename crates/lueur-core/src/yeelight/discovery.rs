@@ -6,6 +6,7 @@
 //! footprint (and attack surface) minimal.
 
 use super::protocol::{self, DiscoveredDevice, SSDP_ADDR, SSDP_PORT};
+use crate::device::common::keep;
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::time::{Duration, Instant};
@@ -30,17 +31,19 @@ pub fn discover(timeout: Duration) -> std::io::Result<Vec<DiscoveredDevice>> {
         let _ = socket.send_to(msg.as_bytes(), target);
     }
 
-    let mut found: HashMap<String, DiscoveredDevice> = HashMap::new();
+    // Each bulb with whether its reply came from the address it gave.
+    let mut found: HashMap<String, (DiscoveredDevice, bool)> = HashMap::new();
     let deadline = Instant::now() + timeout;
     let mut buf = [0u8; 4096];
 
     while Instant::now() < deadline {
         match socket.recv_from(&mut buf) {
-            Ok((n, _addr)) => {
+            Ok((n, addr)) => {
                 if let Ok(text) = std::str::from_utf8(&buf[..n])
                     && let Some(dev) = protocol::parse_discovery(text)
                 {
-                    found.insert(dev.id.clone(), dev);
+                    let own = dev.ip == addr.ip().to_string();
+                    keep(&mut found, dev.id.clone(), dev, own);
                 }
             }
             Err(ref e)
@@ -54,7 +57,7 @@ pub fn discover(timeout: Duration) -> std::io::Result<Vec<DiscoveredDevice>> {
         }
     }
 
-    let mut devices: Vec<_> = found.into_values().collect();
+    let mut devices: Vec<_> = found.into_values().map(|(d, _)| d).collect();
     devices.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(devices)
 }
