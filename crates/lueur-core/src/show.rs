@@ -26,7 +26,7 @@ pub enum ShowKind {
     /// The lights play the track like a stage: punches, chases and drops.
     #[default]
     Music,
-    /// The whole colour wheel, turning slowly through the room.
+    /// A gradient across the room, gliding warm to cool and back.
     Rainbow,
     /// Ambers, reds and roses drifting into one another.
     Sunset,
@@ -116,59 +116,35 @@ impl ShowSettings {
     }
 }
 
-/// The rainbow's harmonies, from the warmest to the coolest: each one three
-/// colours that look good together, whether a single light plays the first
-/// or the room shares all three.
-///
-/// A light keeps its column from one harmony to the next, and no column ever
-/// moves far round the wheel, so the room glides from one association to the
-/// next without a muddy colour in between. The yellow-greens are left out on
-/// purpose: chartreuse and lime turn sickly on a bulb, so the journey turns
-/// back at the aurora rather than closing the wheel through them.
-const HARMONIES: &[[Rgb; 3]] = &[
-    // Embers: amber, red, gold.
-    [
-        Rgb::new(255, 120, 0),
-        Rgb::new(255, 15, 10),
-        Rgb::new(255, 185, 0),
-    ],
-    // Dusk: coral, raspberry, amber.
-    [
-        Rgb::new(255, 60, 20),
-        Rgb::new(255, 0, 100),
-        Rgb::new(255, 120, 0),
-    ],
-    // Peony: rose, fuchsia, coral.
-    [
-        Rgb::new(255, 0, 90),
-        Rgb::new(220, 0, 255),
-        Rgb::new(255, 50, 40),
-    ],
-    // Orchid: magenta, violet, rose.
-    [
-        Rgb::new(255, 0, 200),
-        Rgb::new(120, 0, 255),
-        Rgb::new(255, 0, 110),
-    ],
-    // Night: violet, deep blue, magenta.
-    [
-        Rgb::new(140, 0, 255),
-        Rgb::new(20, 50, 255),
-        Rgb::new(230, 0, 255),
-    ],
-    // Lagoon: blue, cyan, violet.
-    [
-        Rgb::new(0, 70, 255),
-        Rgb::new(0, 200, 255),
-        Rgb::new(110, 0, 255),
-    ],
-    // Aurora: turquoise, emerald, blue.
-    [
-        Rgb::new(0, 230, 210),
-        Rgb::new(0, 255, 120),
-        Rgb::new(0, 100, 255),
-    ],
+/// The rainbow's spectrum, from a golden amber to an emerald: the wheel
+/// walked the long way round, warm to cool, with every stop chosen for how it
+/// looks on a bulb rather than on a screen. Pure blue is lifted towards azure
+/// and pure magenta warmed a touch, so no stop reads dull or harsh, and the
+/// yellow-greens are left out: chartreuse and lime turn sickly on a bulb, so
+/// the spectrum stops at the emerald instead of closing the wheel through
+/// them.
+const SPECTRUM: &[Rgb] = &[
+    Rgb::new(255, 150, 0), // gold
+    Rgb::new(255, 90, 0),  // orange
+    Rgb::new(255, 20, 10), // red
+    Rgb::new(255, 0, 90),  // raspberry
+    Rgb::new(240, 0, 220), // magenta
+    Rgb::new(130, 0, 255), // violet
+    Rgb::new(30, 50, 255), // blue
+    Rgb::new(0, 130, 255), // azure
+    Rgb::new(0, 210, 240), // cyan
+    Rgb::new(0, 235, 180), // turquoise
+    Rgb::new(0, 255, 110), // emerald
 ];
+
+/// How many stops of the spectrum the room spans, from its leftmost light to
+/// its rightmost: wide enough for a real gradient (red, raspberry, magenta,
+/// violet), close enough that every pair of lights still sits well together
+/// and mixes into a colour on the walls.
+const ROOM_SPAN: f32 = 3.0;
+
+/// Seconds for the rainbow to sweep warm to cool and back.
+const RAINBOW_CYCLE: f32 = 60.0;
 
 /// Which colour of a harmony light `i` plays. Two lights side by side never
 /// share one, and the first and last of a harmony, the furthest apart, are
@@ -377,24 +353,46 @@ fn seed(light: usize, channel: u32) -> u32 {
     (light as u32).wrapping_mul(0x2c1b_3c6d) ^ channel.wrapping_mul(0x297a_2d39)
 }
 
-/// The rainbow: the room travels from harmony to harmony, warm to cool and
-/// back, six seconds each. It lingers a little on every harmony, where its
-/// colours sit best together, but never stops, so nothing seems to stall.
-/// Neighbouring colours stay close enough on the wheel that their light still
-/// blends on the walls instead of cancelling out.
-fn rainbow(t: f32, i: usize, bright: f32) -> BulbOutput {
-    // Below 1, so the journey slows on each harmony without halting there.
-    const LINGER: f32 = 0.6;
-    let x = t / 6.0;
-    let x = x - LINGER * (TAU * x).sin() / TAU;
-    // There and back again, without passing through the yellow-greens.
-    let last = (HARMONIES.len() - 1) as f32;
-    let pos = x.rem_euclid(2.0 * last);
-    let pos = if pos > last { 2.0 * last - pos } else { pos };
-    let k = (pos.floor() as usize).min(HARMONIES.len() - 2);
-    let c = column(i);
-    let rgb = blend(HARMONIES[k][c], HARMONIES[k + 1][c], pos - k as f32);
+/// The rainbow: a gradient laid across the room, left to right, gliding
+/// along the spectrum. Every light follows the one beside it, so the colours
+/// flow through the room as a wave rather than changing on their own; the
+/// sweep runs warm to cool and eases back like a pendulum, so it never
+/// lurches at the ends. `place` is where the light stands in the room, 0 at
+/// the left to 1 at the right.
+fn rainbow(t: f32, place: f32, bright: f32) -> BulbOutput {
+    let travel = (SPECTRUM.len() - 1) as f32 - ROOM_SPAN;
+    let sweep = 0.5 - 0.5 * (TAU * t / RAINBOW_CYCLE).cos();
+    let x = (travel * sweep + ROOM_SPAN * place) / (SPECTRUM.len() - 1) as f32;
+    let rgb = ramp(SPECTRUM, x);
     output(rgb, bright * even(rgb))
+}
+
+/// Where each light stands across the room, 0 at the left to 1 at the right.
+///
+/// Half its real position, half its rank: lights that stand close stay close
+/// in colour, yet a cluster never shares one colour while a lone light far
+/// off takes the rest of the gradient. Every step along the room is a step
+/// along the spectrum.
+fn places(fixtures: &[Fixture]) -> Vec<f32> {
+    let n = fixtures.len();
+    if n < 2 {
+        return vec![0.0; n];
+    }
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| fixtures[a].x.total_cmp(&fixtures[b].x).then(a.cmp(&b)));
+    let lo = fixtures[order[0]].x;
+    let width = fixtures[order[n - 1]].x - lo;
+    let mut out = vec![0.0; n];
+    for (rank, &i) in order.iter().enumerate() {
+        let by_rank = rank as f32 / (n - 1) as f32;
+        let by_x = if width > 1e-3 {
+            (fixtures[i].x - lo) / width
+        } else {
+            by_rank
+        };
+        out[i] = 0.5 * (by_rank + by_x);
+    }
+    out
 }
 
 /// The sunset: each light wanders through the warm colours at its own pace,
@@ -501,6 +499,8 @@ pub struct Show {
     kind: ShowKind,
     lights: usize,
     t: f32,
+    /// Where each light stands across the room, for the rainbow.
+    places: Vec<f32>,
     candle: Candle,
     stage: Stage,
     /// What [`Show::sharp`] answers for the shows that only ever glide.
@@ -515,6 +515,7 @@ impl Show {
             kind,
             lights,
             t: 0.0,
+            places: places(fixtures),
             candle: Candle::new(lights),
             stage: Stage::new(fixtures),
             smooth: vec![false; lights],
@@ -535,7 +536,7 @@ impl Show {
         match self.kind {
             ShowKind::Music => self.stage.frame(settings, levels, dt),
             ShowKind::Candle => self.candle.frame(settings, dt),
-            ShowKind::Rainbow => (0..n).map(|i| rainbow(t, i, bright)).collect(),
+            ShowKind::Rainbow => self.places.iter().map(|&p| rainbow(t, p, bright)).collect(),
             ShowKind::Sunset => (0..n).map(|i| sunset(t, i, n, bright)).collect(),
             ShowKind::Ocean => (0..n).map(|i| ocean(t, i, n, bright)).collect(),
         }
@@ -707,22 +708,34 @@ mod tests {
     }
 
     #[test]
-    fn the_rainbow_pairs_colours_that_go_together() {
-        // Distinct colours, never opposite ones that would cancel on the wall.
-        for frame in play(ShowKind::Rainbow, 3, 150.0) {
+    fn the_rainbow_lays_a_gradient_across_the_room() {
+        // Left to right, each light a step further along the spectrum, close
+        // enough to its neighbour to blend, never a sickly colour.
+        for frame in play(ShowKind::Rainbow, 4, 120.0) {
             for w in frame.windows(2) {
                 let g = gap(rgb(w[0]), rgb(w[1]));
-                assert!((20.0..=150.0).contains(&g), "lights {g}° apart");
+                assert!((8.0..=60.0).contains(&g), "lights {g}° apart");
             }
-            for o in frame {
-                assert!(!sickly(rgb(o)), "a sickly colour: {:?}", rgb(o));
+            for o in &frame {
+                assert!(!sickly(rgb(*o)), "a sickly colour: {:?}", rgb(*o));
             }
+            assert_ne!(rgb(frame[0]), rgb(frame[3]));
         }
     }
 
     #[test]
+    fn the_rainbow_flows_from_light_to_light() {
+        // The right light plays now what the left light played a moment ago.
+        let frames = play(ShowKind::Rainbow, 2, 30.0);
+        let later = frames
+            .iter()
+            .position(|f| gap(rgb(f[0]), rgb(frames[0][1])) < 3.0);
+        assert!(later.is_some_and(|k| k > 0), "the wave does not travel");
+    }
+
+    #[test]
     fn the_rainbow_goes_from_warm_to_cool_and_back() {
-        let frames = play(ShowKind::Rainbow, 1, 80.0);
+        let frames = play(ShowKind::Rainbow, 1, RAINBOW_CYCLE);
         let hue = |k: usize| hsv(rgb(frames[k][0])).0;
         let warm = |h: f32| !(60.0..=330.0).contains(&h);
         assert!(warm(hue(0)), "starts at {}°", hue(0));
@@ -739,14 +752,21 @@ mod tests {
     }
 
     #[test]
-    fn harmonies_never_lurch_across_the_wheel() {
-        // A light's column only ever travels a short way to the next harmony.
-        for w in HARMONIES.windows(2) {
-            for (a, b) in w[0].iter().zip(&w[1]) {
-                let g = gap(*a, *b);
-                assert!(g <= 60.0, "{a:?} -> {b:?}: {g}°");
-            }
+    fn the_spectrum_never_lurches_across_the_wheel() {
+        for w in SPECTRUM.windows(2) {
+            let g = gap(w[0], w[1]);
+            assert!(g <= 40.0, "{:?} -> {:?}: {g}°", w[0], w[1]);
+            assert!(!sickly(w[0]) && !sickly(w[1]));
         }
+    }
+
+    #[test]
+    fn places_follow_the_room_left_to_right() {
+        let mut room = Fixture::row(3);
+        room.swap(0, 2);
+        let p = places(&room);
+        assert_eq!(p, vec![1.0, 0.5, 0.0]);
+        assert_eq!(places(&Fixture::row(1)), vec![0.0]);
     }
 
     #[test]
