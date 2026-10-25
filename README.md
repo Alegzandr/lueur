@@ -182,6 +182,7 @@ owner to add you to their home instead.
   minimising goes to the tray (on Windows and Linux; a Mac minimises to the
   Dock). The tray menu says what the lights show, starts and stops the Ambilight
   and the effects and applies a mood, so you never have to leave a game.
+  Once an update is installed, it also restarts Lueur into it.
 - **At login.** *Open at login* and *Start hidden in the tray* in Settings;
   each light picks up the effect it was left playing.
 - **Keyboard.** <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>1</kbd>–<kbd>4</kbd>

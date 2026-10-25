@@ -3,7 +3,8 @@
 //! The tray is how Lueur is used mid-game, and how the lights are switched
 //! without opening the window: the menu says what the lights show, starts
 //! and stops the Ambilight and the effects, applies the moods, sets the
-//! sleep timer and turns every light on or off. What plays and what the
+//! sleep timer, turns every light on or off and, once an update is
+//! installed, restarts into it. What plays and what the
 //! room shows are ticked. Its labels follow the interface language the
 //! frontend reports, in the interface's words.
 
@@ -47,6 +48,8 @@ struct Labels {
     all_off: &'static str,
     open: &'static str,
     quit: &'static str,
+    /// The update installed while the app runs, a restart away.
+    update: &'static str,
     /// Leads the status line while something plays.
     playing: &'static str,
     by_hand: &'static str,
@@ -68,6 +71,7 @@ fn labels(lang: &str) -> Labels {
             all_off: "Tout éteindre",
             open: "Ouvrir Lueur",
             quit: "Quitter Lueur",
+            update: "Redémarrer pour mettre à jour",
             playing: "En cours\u{a0}: ",
             by_hand: "Lumières réglées à la main",
             dark: "Toutes les lumières sont éteintes",
@@ -85,6 +89,7 @@ fn labels(lang: &str) -> Labels {
             all_off: "All off",
             open: "Open Lueur",
             quit: "Quit Lueur",
+            update: "Restart to update",
             playing: "Playing: ",
             by_hand: "Lights set by hand",
             dark: "All lights are off",
@@ -219,17 +224,20 @@ struct Shown {
     now: Now,
     has_lights: bool,
     timer: Option<u32>,
+    /// The version installed and waiting for a restart, if any.
+    update: Option<String>,
 }
 
 /// What the tray showed when it was last brought up to date.
 static SHOWN: Mutex<Option<Shown>> = Mutex::new(None);
 
-fn shown(state: &AppState) -> Shown {
+fn shown(app: &AppHandle, state: &AppState) -> Shown {
     Shown {
         lang: language(state),
         now: now(state),
         has_lights: state.lock_config().is_ok_and(|c| !c.bindings.is_empty()),
         timer: crate::sleep::minutes(state),
+        update: crate::updater::ready(app),
     }
 }
 
@@ -313,7 +321,7 @@ fn build_menu(app: &AppHandle, shown: &Shown) -> tauri::Result<Menu<Wry>> {
     let all_off = MenuItem::with_id(app, "all_off", l.all_off, has_lights, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", l.open, true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", l.quit, true, None::<&str>)?;
-    Menu::with_items(
+    let menu = Menu::with_items(
         app,
         &[
             &status,
@@ -329,7 +337,15 @@ fn build_menu(app: &AppHandle, shown: &Shown) -> tauri::Result<Menu<Wry>> {
             &open,
             &quit,
         ],
-    )
+    )?;
+    // An update installed while the app runs is offered right under the
+    // status, as the title bar offers it.
+    if let Some(version) = &shown.update {
+        let label = format!("{} (v{version})", l.update);
+        let restart = MenuItem::with_id(app, "update", label, true, None::<&str>)?;
+        menu.insert_items(&[&restart, &PredefinedMenuItem::separator(app)?], 2)?;
+    }
+    Ok(menu)
 }
 
 /// The tooltip: the app's name and what its lights show.
@@ -339,7 +355,7 @@ fn tooltip(shown: &Shown) -> String {
 
 /// Build the tray icon and its menu.
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
-    let first = shown(&app.state::<AppState>());
+    let first = shown(app, &app.state::<AppState>());
     TrayIconBuilder::with_id(TRAY_ID)
         .tooltip(tooltip(&first))
         .icon(app.default_window_icon().cloned().expect("bundled icon"))
@@ -361,6 +377,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 let _ = crate::sleep::set(app, None);
             }
             "open" => focus_main(app),
+            "update" => crate::updater::restart_app(app.clone()),
             "quit" => {
                 if let Some(state) = app.try_state::<AppState>() {
                     lights::suspend(&state, false);
@@ -421,7 +438,7 @@ fn update(app: &AppHandle, always: bool) {
     let (Some(tray), Some(state)) = (app.tray_by_id(TRAY_ID), app.try_state::<AppState>()) else {
         return;
     };
-    let shown = shown(&state);
+    let shown = shown(app, &state);
     {
         let mut last = SHOWN.lock().unwrap_or_else(|p| p.into_inner());
         if !always && last.as_ref() == Some(&shown) {

@@ -94,6 +94,15 @@ pub fn update_ready(state: State<'_, UpdateState>) -> Option<String> {
     state.ready.lock().ok().and_then(|r| r.clone())
 }
 
+/// [`update_ready`], for the tray.
+pub fn ready(app: &AppHandle) -> Option<String> {
+    app.try_state::<UpdateState>()?
+        .ready
+        .lock()
+        .ok()
+        .and_then(|r| r.clone())
+}
+
 /// Restarts into the installed version.
 #[tauri::command]
 pub fn restart_app(app: AppHandle) {
@@ -269,6 +278,7 @@ async fn watch(app: AppHandle, mut wait: Duration) {
                     *r = Some(version.clone());
                 }
                 let _ = app.emit(UPDATE_READY, version);
+                crate::tray::refresh(&app);
                 // Installed: nothing more to do until the next restart.
                 return;
             }
