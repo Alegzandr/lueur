@@ -5,6 +5,7 @@ use crate::error::{AppError, AppResult};
 use crate::manual::Manual;
 use crate::runner;
 use crate::sleep;
+use crate::vault::{self, Vault};
 use lueur_core::config::{self, AppConfig};
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
@@ -14,6 +15,8 @@ use std::sync::{Mutex, MutexGuard};
 pub struct AppState {
     pub data_dir: PathBuf,
     pub config: Mutex<AppConfig>,
+    /// Where the credentials are kept on disk.
+    vault: Mutex<Vault>,
     /// The running effects, one per mode.
     pub effects: runner::Effects,
     /// Lights being set by hand.
@@ -40,15 +43,26 @@ impl AppState {
             }
             AppConfig::default()
         });
-        AppState {
+        // Credentials still in the config (an older version, or a session
+        // without the keyring) move into the vault right away.
+        let plain = vault::holds_credentials(&config);
+        let mut config = config;
+        let vault = Vault::open(&data_dir, &mut config);
+        let migrate = plain && matches!(vault, Vault::Ready { .. });
+        let state = AppState {
             data_dir,
             config: Mutex::new(config),
+            vault: Mutex::new(vault),
             effects: runner::Effects::default(),
             manual: Manual::default(),
             auto_owner: Mutex::new(auto::Owner::default()),
             sleep: sleep::Timer::default(),
             ui_language: Mutex::new("en"),
+        };
+        if migrate && let Err(e) = state.persist() {
+            eprintln!("lueur: could not move the credentials into the vault ({e:?})");
         }
+        state
     }
 
     /// The config, locked.
@@ -59,7 +73,12 @@ impl AppState {
     /// Persist the current in-memory config to disk.
     pub fn persist(&self) -> AppResult<()> {
         let cfg = self.lock_config()?;
-        config::save(&self.data_dir, &cfg).map_err(|e| AppError::new("save_failed").detail(e))
+        let on_disk = self
+            .vault
+            .lock()
+            .map_err(|_| AppError::poisoned())?
+            .seal(&self.data_dir, &cfg);
+        config::save(&self.data_dir, &on_disk).map_err(|e| AppError::new("save_failed").detail(e))
     }
 
     /// Does any effect drive some light?

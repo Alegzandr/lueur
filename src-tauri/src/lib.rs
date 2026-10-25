@@ -29,6 +29,7 @@ mod tray;
 mod tuya;
 mod tuya_cloud;
 mod updater;
+mod vault;
 
 use lueur_core::config::Appearance;
 use state::AppState;

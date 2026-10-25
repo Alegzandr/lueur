@@ -240,7 +240,9 @@ Lueur talks to your bulbs on your local network, and only at private
 addresses. Beyond that it sends exactly two kinds of traffic: the update
 check to GitHub over HTTPS, and Tuya's sign-in while you import Smart Life
 bulbs. Bulb and bridge credentials never leave the app, nor go into an
-exported configuration.
+exported configuration. On disk they are encrypted, with a key kept in your
+system's keyring (Credential Manager on Windows, the Keychain on macOS, the
+Secret Service on Linux).
 
 Settings live in a `lueur` folder in your user config folder (`%APPDATA%` on
 Windows, `~/Library/Application Support` on macOS, `~/.config` on Linux).

@@ -48,6 +48,9 @@ md-5 = "0.11.0"
 sha2 = "0.11.1"
 uuid = { version = "1.29.0", features = ["v4"] }
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+# The key that seals the credentials on disk (src/vault.rs), in the OS's own
+# keyring: Credential Manager, Keychain, Secret Service.
+keyring = "4.2.0"
 
 # Cross-platform screen capture (Windows/macOS/Linux). Version pinned by
 # `cargo generate-lockfile`; see README for the capture-backend notes.

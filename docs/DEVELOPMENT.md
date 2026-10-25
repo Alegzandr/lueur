@@ -23,6 +23,8 @@ lueur/
 │   ├─ tuya.rs            Tuya LAN control (rustuya), discovery by key
 │   ├─ tuya_cloud.rs      Smart Life QR sign-in that imports local keys
 │   ├─ commands.rs        Validated IPC surface
+│   ├─ secrets.rs         Credentials kept from the UI and from exports
+│   ├─ vault.rs           Credentials sealed on disk, the key in the OS keyring
 │   ├─ tray.rs            Tray menu: start/stop, open, quit
 │   ├─ error.rs           Errors sent as codes the UI words in its language
 │   ├─ install.rs         Windows: silent per-user install and uninstall
