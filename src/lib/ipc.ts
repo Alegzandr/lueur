@@ -4,7 +4,7 @@
 // plain `vite` browser preview), so the UI can be developed without the shell.
 
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-import { DEFAULT_STATE, MOODS } from "./scenes";
+import { DEFAULT_STATE, MOODS, dimmedOnly } from "./scenes";
 import {
   defaultConfig,
   type AppConfig,
@@ -225,8 +225,9 @@ export async function setLightPower(lightId: string, on: boolean): Promise<void>
 export async function setLightState(lightId: string, state: LightState): Promise<void> {
   if (!inTauri()) {
     const c = previewCfg();
+    const now = c.states[lightId] ?? DEFAULT_STATE;
     c.states[lightId] = state;
-    c.natural = (c.natural ?? []).filter((id) => id !== lightId);
+    if (!dimmedOnly(now, state)) c.natural = (c.natural ?? []).filter((id) => id !== lightId);
     return;
   }
   return invoke<void>("set_light_state", { lightId, state });

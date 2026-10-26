@@ -754,50 +754,79 @@ pub fn apply_scene(state: &AppState, id: &str, ids: Option<&[String]>) -> AppRes
 }
 
 /// Have `ids` follow the natural light or stop following it, without
-/// touching the lights.
+/// touching the lights. Either way they take the curve's brightness again.
 pub fn set_natural(state: &AppState, ids: &[String], on: bool) -> AppResult<()> {
     let mut cfg = state.lock_config()?;
-    let before = cfg.natural.clone();
+    let before = (cfg.natural.clone(), cfg.natural_scale.clone());
     for id in ids {
+        cfg.natural_scale.remove(id);
         if on {
             cfg.natural.insert(id.clone());
         } else {
             cfg.natural.remove(id);
         }
     }
-    if cfg.natural == before {
+    if (&cfg.natural, &cfg.natural_scale) == (&before.0, &before.1) {
         return Ok(());
     }
     drop(cfg);
     state.persist()
 }
 
+/// A light is about to be set to `wish` by hand. One that follows the
+/// natural light and only has its brightness changed keeps following it,
+/// as much brighter or dimmer than the curve as it now is; any other change
+/// takes it off. A slider drag calls this many times a second, so the
+/// record waits for the interface's next save to reach the disk.
+pub fn set_by_hand(state: &AppState, light_id: &str, wish: LightState) -> AppResult<()> {
+    let mut cfg = state.lock_config()?;
+    let now = cfg.states.get(light_id).copied().unwrap_or_default();
+    let dimmed = cfg.natural.contains(light_id) && wish.on && now.on && wish.tint == now.tint;
+    if !dimmed {
+        drop(cfg);
+        return set_natural(state, &[light_id.to_string()], false);
+    }
+    let curve = crate::natural::now().bright.max(1);
+    let scale = f32::from(wish.clamped().bright) / f32::from(curve);
+    cfg.natural_scale.insert(light_id.to_string(), scale);
+    Ok(())
+}
+
+/// The natural light's `wish` for a light set `scale` times as bright as the
+/// curve, if it was set at all.
+fn scaled(wish: LightState, scale: Option<f32>) -> LightState {
+    match scale {
+        Some(scale) => LightState {
+            bright: (f32::from(wish.bright) * scale).round().min(100.0) as u8,
+            ..wish
+        }
+        .clamped(),
+        None => wish,
+    }
+}
+
 /// Bring every light that follows the natural light, is on, and free, to
-/// what it shows now. Lights already there are left alone, so this is cheap to call
+/// what it shows now, as much brighter or dimmer as it was set by hand. Lights already there are left alone, so this is cheap to call
 /// often. `true` if any light was changed.
 pub fn follow_natural(state: &AppState, wish: LightState) -> AppResult<bool> {
     let driven = state.effects.driven_ids();
-    let behind: Vec<String> = {
+    let behind: BTreeMap<String, LightState> = {
         let cfg = state.lock_config()?;
         cfg.bindings
             .iter()
             .map(|b| &b.light_id)
-            .filter(|id| cfg.natural.contains(*id))
-            .filter(|id| {
-                let now = cfg.states.get(*id).copied().unwrap_or_default();
-                now.on && now != wish && !driven.contains(id)
+            .filter(|id| cfg.natural.contains(*id) && !driven.contains(id))
+            .filter_map(|id| {
+                let wish = scaled(wish, cfg.natural_scale.get(id).copied());
+                let now = cfg.states.get(id).copied().unwrap_or_default();
+                (now.on && now != wish).then(|| (id.clone(), wish))
             })
-            .cloned()
             .collect()
     };
     if behind.is_empty() {
         return Ok(false);
     }
-    apply_many(
-        state,
-        |b| behind.contains(&b.light_id).then_some(wish),
-        false,
-    )?;
+    apply_many(state, |b| behind.get(&b.light_id).copied(), false)?;
     Ok(true)
 }
 
@@ -841,6 +870,17 @@ mod tests {
         ]))
         .unwrap();
         cfg
+    }
+
+    #[test]
+    fn a_dimmed_natural_light_keeps_its_share_of_the_curve() {
+        let evening = scene::natural_at(20 * 60);
+        assert_eq!(scaled(evening, None), evening);
+        let half = scaled(evening, Some(0.5));
+        assert_eq!(half.tint, evening.tint);
+        assert_eq!(half.bright, (f32::from(evening.bright) / 2.0).round() as u8);
+        // Set brighter than the curve at noon: never past full brightness.
+        assert_eq!(scaled(scene::natural_at(12 * 60), Some(3.0)).bright, 100);
     }
 
     #[test]

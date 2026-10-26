@@ -210,6 +210,11 @@ pub struct AppConfig {
     /// [`AppConfig::from_json`] turns it into every light with a bulb.
     #[serde(default, deserialize_with = "natural_lights")]
     pub natural: BTreeSet<String>,
+    /// How much brighter or dimmer than the natural light's curve each of
+    /// its lights was set by hand, as a factor, by room light id. A light
+    /// with no entry follows the curve as is.
+    #[serde(default)]
+    pub natural_scale: BTreeMap<String, f32>,
     /// What each light plays (`ambilight` or a show's id), keyed by room
     /// light id, as the user last chose it: the next launch picks it up
     /// again. A light set by hand has no entry.
@@ -259,6 +264,7 @@ impl Default for AppConfig {
             show: ShowSettings::default(),
             audio: AudioSource::default(),
             natural: BTreeSet::new(),
+            natural_scale: BTreeMap::new(),
             modes: BTreeMap::new(),
             safety: SafetySettings::default(),
         }

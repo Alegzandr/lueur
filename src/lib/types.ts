@@ -237,8 +237,8 @@ export interface AppConfig {
   show: ShowSettings;
   audio: AudioSource;
   /** The lights that follow the time of day, by room light id. The backend
-   *  switches them (moods, lights set by hand) and ignores the copy the
-   *  interface saves. */
+   *  switches them (moods, lights set by hand other than dimmed) and ignores
+   *  the copy the interface saves. */
   natural?: string[];
   /** What each light plays, by room light id, as last chosen; the backend
    *  owns it. */

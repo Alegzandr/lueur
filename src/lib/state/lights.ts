@@ -3,7 +3,7 @@
 
 import * as ipc from "../ipc";
 import { t } from "../i18n";
-import type { RgbTuple } from "../scenes";
+import { dimmedOnly, type RgbTuple } from "../scenes";
 import type { Endpoint, LightState } from "../types";
 import { app } from "./app.svelte";
 import { edit, persistNow, refreshStatus } from "./config.svelte";
@@ -96,11 +96,13 @@ async function send(lightId: string, s: LightState): Promise<void> {
 /** Change part of a light's state (brightness, white, colour) and show it.
  *  Touching a light that is off turns it on. */
 export function adjustLight(lightId: string, patch: Partial<LightState>): void {
-  const next: LightState = { ...lightState(lightId), on: true, ...patch };
+  const now = lightState(lightId);
+  const next: LightState = { ...now, on: true, ...patch };
   edit((c) => {
     c.states = { ...c.states, [lightId]: next };
-    // The backend takes it off the natural light too.
-    c.natural = (c.natural ?? []).filter((id) => id !== lightId);
+    // The backend takes it off the natural light too, unless only its
+    // brightness changed: then it keeps following, that much dimmer or brighter.
+    if (!dimmedOnly(now, next)) c.natural = (c.natural ?? []).filter((id) => id !== lightId);
   });
   void send(lightId, next);
 }

@@ -194,6 +194,7 @@ pub async fn save_config(app: AppHandle, mut config: AppConfig) -> AppResult<()>
             let repainted = guard.room.wall != config.room.wall;
             config.pairings = guard.pairings.clone();
             config.natural = guard.natural.clone();
+            config.natural_scale = guard.natural_scale.clone();
             config.modes = guard.modes.clone();
             config.states = guard.states.clone();
             validate_addresses(&config)?;
@@ -544,13 +545,14 @@ pub async fn set_light_power(app: AppHandle, light_id: String, on: bool) -> AppR
 /// Set a light by hand: on or off, brightness, white or colour. Called as a
 /// slider moves; the interface keeps at most one call per light in flight.
 /// The state is recorded once the bulb has it. A light set by hand no longer
-/// follows the natural light; the others still do.
+/// follows the natural light, unless only its brightness changed (see
+/// [`lights::set_by_hand`]); the others still do.
 #[tauri::command]
 pub async fn set_light_state(app: AppHandle, light_id: String, state: LightState) -> AppResult<()> {
     let handle = app.clone();
     let result = blocking(move || {
         let s = handle.state::<AppState>();
-        lights::set_natural(&s, std::slice::from_ref(&light_id), false)?;
+        lights::set_by_hand(&s, &light_id, state)?;
         lights::set_light(&s, &light_id, state)
     })
     .await;

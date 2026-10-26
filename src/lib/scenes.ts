@@ -22,6 +22,18 @@ export const NATURAL = "natural";
 /** A warm, comfortable white: what a light shows before anyone sets it. */
 export const DEFAULT_STATE: LightState = { on: true, bright: 80, tint: { mode: "white", kelvin: 2700 } };
 
+/** Whether going from `now` to `next` only changed the brightness of a light
+ *  that stays on: such a light keeps following the natural light (mirrors
+ *  `set_by_hand` in lights.rs). */
+export function dimmedOnly(now: LightState, next: LightState): boolean {
+  const [a, b] = [now.tint, next.tint];
+  const same =
+    a.mode === "white"
+      ? b.mode === "white" && a.kelvin === b.kelvin
+      : b.mode === "color" && a.r === b.r && a.g === b.g && a.b === b.b;
+  return now.on && next.on && same;
+}
+
 export const MIN_KELVIN = 2200;
 export const MAX_KELVIN = 6500;
 
