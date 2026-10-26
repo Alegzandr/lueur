@@ -17,6 +17,7 @@
     openTuya,
     pair,
     PAIR_WINDOW_MS,
+    removeLight,
     renameLight,
     scan,
     signInTuya,
@@ -461,6 +462,12 @@
               </button>
               <button class="btn plain sm" title={t("unassign_tip")} onclick={() => unassign(l.id)}>
                 {t("unassign")}
+              </button>
+            {:else}
+              <!-- A light left without its bulb, say one paired again from
+                   another account and added anew, can go from here too. -->
+              <button class="btn plain sm danger" onclick={() => removeLight(l.id)}>
+                {t("remove_light")}
               </button>
             {/if}
           </div>
