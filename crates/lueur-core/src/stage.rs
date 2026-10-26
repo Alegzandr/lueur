@@ -1014,19 +1014,32 @@ fn cast(fixtures: &[Fixture]) -> Vec<Part> {
 enum Pattern {
     /// All of them, every beat.
     Together,
-    /// One after another across the room, left to right.
+    /// One after another across the room, left to right: each light holds
+    /// the beat until the next takes it over, then goes out.
     Chase,
     /// From the middle out to the ends, ring by ring.
     CentreOut,
-    /// Across and back again.
+    /// Across and back again, handed on like a chase.
     Bounce,
-    /// Every other light, every other beat.
+    /// Every other light holds the beat in its colour and hands it to the
+    /// others on the next: the room turns over on every beat.
     Alternate,
     /// From the ends in to the middle, ring by ring.
     OutsideIn,
     /// The left half on the kick, the right half on the snare.
     Split,
+    /// Every light on, every other one in the second colour: the two swap
+    /// on every beat.
+    Swap,
+    /// Every light on in the harmony's three colours, which move one light
+    /// along on every beat.
+    Carousel,
 }
+
+/// How bright a light holding the beat burns between two beats: one
+/// handing the beat on, and every light while they all trade colours.
+const PASS_HOLD: f32 = 0.6;
+const SHARED_HOLD: f32 = 0.4;
 
 /// How far light `rank` of `k` (left to right) stands from the middle, in
 /// rings: 0 for the middle one (or two). And how many rings there are.
@@ -1041,13 +1054,20 @@ impl Pattern {
     fn for_lights(k: usize) -> &'static [Pattern] {
         match k {
             0 | 1 => &[Pattern::Together],
-            2 => &[Pattern::Together, Pattern::Alternate, Pattern::Split],
+            2 => &[
+                Pattern::Together,
+                Pattern::Alternate,
+                Pattern::Swap,
+                Pattern::Split,
+            ],
             _ => &[
                 Pattern::Together,
                 Pattern::Chase,
                 Pattern::CentreOut,
+                Pattern::Swap,
                 Pattern::Alternate,
                 Pattern::Bounce,
+                Pattern::Carousel,
                 Pattern::OutsideIn,
                 Pattern::Split,
             ],
@@ -1059,7 +1079,7 @@ impl Pattern {
         let b = b as usize;
         let (r, rings) = ring(rank, k);
         let on = match self {
-            Pattern::Together => true,
+            Pattern::Together | Pattern::Swap | Pattern::Carousel => true,
             Pattern::Chase => rank == b % k,
             Pattern::CentreOut => r == b % rings,
             Pattern::OutsideIn => r == rings - 1 - b % rings,
@@ -1077,7 +1097,7 @@ impl Pattern {
     /// How much of a snare the light `rank` of `k` takes, after beat `b`.
     fn snare(self, rank: usize, k: usize, b: u32) -> f32 {
         match self {
-            Pattern::Together => 0.4,
+            Pattern::Together | Pattern::Swap | Pattern::Carousel => 0.4,
             Pattern::Split => {
                 if rank < k.div_ceil(2) {
                     0.0
@@ -1090,15 +1110,37 @@ impl Pattern {
         }
     }
 
-    /// Whether light `rank` of `k` strikes in the second of the two hit
-    /// colours rather than the first: the two sides of a pattern that has
-    /// sides answer each other in colour too.
-    fn second(self, rank: usize, k: usize) -> bool {
+    /// How bright light `rank` of `k` holds on after beat `b` until the
+    /// next, if it holds the beat at all: in the patterns that hand it on,
+    /// the light that has it keeps it, and goes out as the next one takes
+    /// it.
+    fn hold(self, rank: usize, k: usize, b: u32) -> f32 {
         match self {
-            Pattern::Alternate => rank % 2 == 1,
-            Pattern::Split => rank >= k.div_ceil(2),
-            Pattern::CentreOut | Pattern::OutsideIn => ring(rank, k).0 % 2 == 1,
-            _ => false,
+            Pattern::Chase | Pattern::Bounce | Pattern::Alternate => {
+                PASS_HOLD * self.beat(rank, k, b)
+            }
+            Pattern::Swap | Pattern::Carousel => SHARED_HOLD,
+            _ => 0.0,
+        }
+    }
+
+    /// Which colour light `rank` of `k` strikes in on beat `b`: 0 the first
+    /// hit colour, 1 the second, 2 the back colour. The two sides of a
+    /// pattern that has sides answer each other in colour too, and some
+    /// trade their colours on every beat.
+    fn colour(self, rank: usize, k: usize, b: u32) -> usize {
+        let b = b as usize;
+        match self {
+            // The half that has the beat strikes in its own colour: the
+            // colours turn over with it.
+            Pattern::Alternate => rank % 2,
+            Pattern::Split => usize::from(rank >= k.div_ceil(2)),
+            Pattern::CentreOut | Pattern::OutsideIn => ring(rank, k).0 % 2,
+            Pattern::Swap => (rank + b) % 2,
+            // Each light takes the colour its left neighbour had: the
+            // colours travel left to right.
+            Pattern::Carousel => (rank + 2 * b) % 3,
+            _ => 0,
         }
     }
 }
@@ -1166,6 +1208,17 @@ struct Lamp {
     white: f32,
     /// A hit landed on the last frame: send it sharp, not faded in.
     sharp: bool,
+    /// How much it still burns in the colour of a beat it holds (0..=1),
+    /// at `hold`: while `holding` it keeps the beat, once it hands it on it
+    /// goes out.
+    glow: f32,
+    hold: f32,
+    holding: bool,
+    /// A wash's share of the way from the room's colour to the second hit
+    /// colour: neighbouring washes trade the two, bar by bar.
+    tint: f32,
+    /// Every other light across the room.
+    odd: bool,
 }
 
 impl Lamp {
@@ -1202,8 +1255,11 @@ fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
 /// the party harmonies at a time, in two roles: the room rests in a back
 /// colour and the punches strike in the other two, fading back into it. The
 /// roles turn with every phrase, the harmony moves on every few phrases and
-/// at every drop, and the beats play only the brightness, from near dark, and
-/// where it lands in the room.
+/// at every drop, and the beats play the brightness, from near dark, and
+/// where it lands in the room. The lights play off one another: one holds
+/// the beat and hands it to the next, two halves turn over, the colours
+/// trade places or travel along the room, and the washes trade theirs bar
+/// by bar.
 #[derive(Debug, Clone)]
 pub struct Stage {
     lamps: Vec<Lamp>,
@@ -1290,6 +1346,11 @@ impl Stage {
                 flash: 0.0,
                 white: 0.0,
                 sharp: false,
+                glow: 0.0,
+                hold: 0.0,
+                holding: false,
+                tint: 0.0,
+                odd: room.iter().position(|&o| o == i).unwrap_or(0) % 2 == 1,
             })
             .collect();
         Stage {
@@ -1413,10 +1474,13 @@ impl Stage {
         self.held = 0.0;
         self.roll = 0;
         self.roll_due = 0.0;
-        if section == Section::Hold {
-            for lamp in &mut self.lamps {
+        for lamp in &mut self.lamps {
+            // A beat is held only within a groove.
+            lamp.holding = false;
+            if section == Section::Hold {
                 lamp.flash = 0.0;
                 lamp.white = 0.0;
+                lamp.glow = 0.0;
             }
         }
     }
@@ -1577,10 +1641,17 @@ impl Stage {
         // A hit fades out just before the next beat comes, like a pumping
         // sidechain, but never quicker than the bulb can show.
         let pump = self.period / 3.0;
+        // A light holding the beat lets go if the beats stop coming, and
+        // one that handed it on goes out within the beat, as the next one
+        // comes up.
+        let kept = self.since_pulse < 2.0 * self.period;
         for lamp in &mut self.lamps {
             let fade = lamp.fade.max(pump);
             lamp.flash *= (-dt / fade).exp();
             lamp.white *= (-dt / (0.6 * fade)).exp();
+            if !(lamp.holding && kept) {
+                lamp.glow *= (-dt / lamp.fade.max(0.25 * self.period)).exp();
+            }
             lamp.sharp = false;
         }
         self.held += dt;
@@ -1644,6 +1715,21 @@ impl Stage {
                 }
             }
         }
+        // In a groove the washes trade the room's colour and the second hit
+        // colour, a bar each, gliding over a beat: the room moves with the
+        // stage instead of resting under it.
+        let grooving = matches!(self.section, Section::Groove | Section::Drop);
+        let bar = self.beat / 4;
+        for lamp in &mut self.lamps {
+            if lamp.part == Part::Wash {
+                let target = if grooving && (bar % 2 == 1) != lamp.odd {
+                    1.0
+                } else {
+                    0.0
+                };
+                lamp.tint += (target - lamp.tint) * follow(dt, lamp.fade.max(self.period));
+            }
+        }
 
         let outputs = self.light(settings);
         for (sharp, lamp) in self.sharp.iter_mut().zip(&self.lamps) {
@@ -1672,7 +1758,17 @@ impl Stage {
             let (k, b) = (self.punches, self.beat);
             for lamp in &mut self.lamps {
                 match lamp.part {
-                    Part::Punch => lamp.hit(s * pattern.beat(lamp.rank, k, b), false),
+                    Part::Punch => {
+                        lamp.hit(s * pattern.beat(lamp.rank, k, b), false);
+                        // The beat moves on: who holds it now, and who
+                        // hands it on.
+                        let hold = pattern.hold(lamp.rank, k, b);
+                        lamp.holding = hold > 0.0;
+                        if lamp.holding {
+                            lamp.glow = 1.0;
+                            lamp.hold = s * hold;
+                        }
+                    }
                     // The wash only feels the strongest beats, softly.
                     Part::Wash => lamp.hit(0.25 * (s - 0.6).max(0.0) / 0.4, false),
                     Part::Accent => {}
@@ -1771,6 +1867,7 @@ impl Stage {
     /// What each light shows now.
     fn light(&self, settings: &ShowSettings) -> Vec<BulbOutput> {
         let (back, hit, alt) = self.roles();
+        let colours = [hit, alt, back];
         let pattern = self.pattern();
         let bright = settings.bright();
         let swell = self.swell.clamp(0.0, 1.0).powf(2.5);
@@ -1799,15 +1896,11 @@ impl Stage {
                     // From near dark, so every beat lands.
                     Part::Punch => (
                         0.04 + 0.16 * swell,
-                        if pattern.second(lamp.rank, self.punches) {
-                            alt
-                        } else {
-                            hit
-                        },
+                        colours[pattern.colour(lamp.rank, self.punches, self.beat)],
                     ),
                     Part::Wash => (
                         0.15 + 0.55 * self.bass.clamp(0.0, 1.0).powf(1.5) + 0.15 * swell,
-                        rest,
+                        mix(rest, alt, lamp.tint),
                     ),
                     Part::Accent => (0.05 + 0.2 * self.shimmer + 0.15 * swell, alt),
                 };
@@ -1826,7 +1919,10 @@ impl Stage {
                     Section::Build => base + (0.5 - base).max(0.0) * climb,
                     Section::Groove | Section::Drop => base,
                 };
-                let level = base + (1.0 - base) * lamp.flash;
+                // A light holding the beat burns on in its colour between
+                // the beats, and the beats punch on top.
+                let lit = lamp.flash.max(lamp.glow * lamp.hold);
+                let level = base + (1.0 - base) * lit;
                 if lamp.white > 0.35 || (climb > 0.85 && lamp.part != Part::Wash) {
                     BulbOutput::White {
                         kelvin: WHITE_KELVIN,
@@ -1837,8 +1933,10 @@ impl Stage {
                     // room's; a build drains it towards white as it climbs.
                     let rgb = if calm {
                         rest
+                    } else if lamp.part == Part::Wash {
+                        strike
                     } else {
-                        mix(rest, strike, lamp.flash)
+                        mix(rest, strike, lamp.flash.max(lamp.glow))
                     };
                     let rgb = pale(rgb, 0.6 * climb);
                     output(rgb, level * bright * even(rgb))
@@ -2950,7 +3048,9 @@ mod tests {
             }
         }
         assert_eq!(stage.section, Section::Groove);
-        assert!(peak > 55, "the beats never punched: {peak}");
+        // A beat at 0.8 strikes in its colour at full chroma, which the
+        // brightest hues dim a little: well clear of the dark between.
+        assert!(peak >= 50, "the beats never punched: {peak}");
     }
 
     #[test]
@@ -2972,5 +3072,104 @@ mod tests {
             last = rgb(stage.frame(&s, Levels::default(), 0.025)[0]);
         }
         assert_ne!(first, last);
+    }
+
+    /// A stage of three in a groove, on `pattern`.
+    fn playing(pattern: Pattern) -> Stage {
+        let mut stage = Stage::new(&Fixture::row(3));
+        stage.enter(Section::Groove);
+        let at = Pattern::for_lights(3)
+            .iter()
+            .position(|&p| p == pattern)
+            .unwrap() as u32;
+        stage.phrases = at * PHRASES_PER_LOOK;
+        assert_eq!(stage.pattern(), pattern);
+        stage
+    }
+
+    #[test]
+    fn a_chase_hands_the_beat_on() {
+        // The light that has the beat holds it to the next one, the others
+        // dark; as the next takes it, it goes out within the beat.
+        let s = ShowSettings::default();
+        let mut stage = playing(Pattern::Chase);
+        let mut f = stage.frame(&s, beat(1.0), 0.025);
+        for _ in 0..19 {
+            f = stage.frame(&s, between(), 0.025);
+        }
+        let holder = (0..3).max_by_key(|&i| f[i].bright()).unwrap();
+        assert!(f[holder].bright() > 30, "{f:?}");
+        assert!((0..3).all(|i| i == holder || f[i].bright() < 15), "{f:?}");
+        let f = stage.frame(&s, beat(1.0), 0.025);
+        let next = (0..3).max_by_key(|&i| f[i].bright()).unwrap();
+        assert_ne!(next, holder);
+        let held = f[holder].bright();
+        let mut f = f;
+        for _ in 0..8 {
+            f = stage.frame(&s, between(), 0.025);
+        }
+        assert!(f[holder].bright() < held / 2, "{held} -> {f:?}");
+        assert!(f[next].bright() > 30, "{f:?}");
+    }
+
+    #[test]
+    fn a_swap_trades_the_colours_on_every_beat() {
+        let s = ShowSettings::default();
+        let mut stage = playing(Pattern::Swap);
+        let mut struck = Vec::new();
+        for _ in 0..2 {
+            let f = stage.frame(&s, beat(1.0), 0.025);
+            struck.push([rgb(f[0]), rgb(f[1]), rgb(f[2])]);
+            for _ in 0..19 {
+                let f = stage.frame(&s, between(), 0.025);
+                // Every light burns on between the beats.
+                assert!(f.iter().all(|o| o.bright() > 20), "{f:?}");
+            }
+        }
+        let [a, b] = [struck[0], struck[1]];
+        assert_ne!(a[0], a[1]);
+        assert_eq!((a[0], a[1], a[2]), (b[1], b[0], b[1]));
+    }
+
+    #[test]
+    fn a_carousel_moves_the_colours_along() {
+        let s = ShowSettings::default();
+        let mut stage = playing(Pattern::Carousel);
+        let mut struck = Vec::new();
+        for _ in 0..3 {
+            let f = stage.frame(&s, beat(1.0), 0.025);
+            struck.push([rgb(f[0]), rgb(f[1]), rgb(f[2])]);
+            for _ in 0..19 {
+                stage.frame(&s, between(), 0.025);
+            }
+        }
+        // Three colours, one a light, each one light further right on
+        // the next beat.
+        assert!(struck[0][0] != struck[0][1] && struck[0][1] != struck[0][2]);
+        for w in struck.windows(2) {
+            for r in 0..3 {
+                assert_eq!(w[1][(r + 1) % 3], w[0][r]);
+            }
+        }
+    }
+
+    #[test]
+    fn the_washes_trade_colours_with_the_bars() {
+        // Two Hues beside two Yeelights: the Hues glide between the room's
+        // colour and the second hit colour, a bar each, out of step.
+        let mut fixtures = Fixture::row(4);
+        for f in &mut fixtures[..2] {
+            f.interval = Duration::from_millis(200);
+        }
+        let s = ShowSettings::default();
+        let mut stage = Stage::new(&fixtures);
+        assert_eq!(stage.lamps[0].part, Part::Wash);
+        assert_eq!(stage.lamps[1].part, Part::Wash);
+        stage.enter(Section::Groove);
+        let frames = groove(&mut stage, &s, 12);
+        let apart = frames.iter().any(|f| rgb(f[0]) != rgb(f[1]));
+        assert!(apart, "the washes never parted");
+        let first = rgb(frames[0][0]);
+        assert!(frames.iter().any(|f| rgb(f[0]) != first));
     }
 }
