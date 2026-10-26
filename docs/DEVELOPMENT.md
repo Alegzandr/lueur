@@ -47,8 +47,10 @@ lueur/
 │   └─ lib.rs             Tray, autostart, single-instance, window handling
 └─ src/                   Svelte 5 (runes) + TypeScript frontend
     ├─ lib/state.svelte.ts  App state and every action the UI can take
+    ├─ lib/state/           …split by concern: config, effects, lights, devices
     ├─ lib/i18n.ts          English and French strings
     ├─ lib/views/           Lighting, Room, Bulbs, Settings
+    │                       (lighting/ and room/ hold their pieces)
     ├─ lib/ui/              Shared controls (Slider, Switch, Segmented, Row…)
     └─ styles/app.css       Design tokens, light and dark themes
 ```
