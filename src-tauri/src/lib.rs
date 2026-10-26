@@ -10,6 +10,7 @@
 
 mod audio;
 mod auto;
+mod awake;
 mod capture;
 mod commands;
 mod devices;
@@ -223,8 +224,14 @@ pub fn run() {
                     .unwrap_or(true)
             };
             match event {
-                // Close-to-tray: hide instead of quitting.
-                WindowEvent::CloseRequested { api, .. } if to_tray() => {
+                // Close-to-tray: hide instead of quitting. A sleep timer
+                // keeps Lueur running too, whatever the setting: the tray
+                // sets one without asking to keep running, and quitting
+                // would leave the lights on.
+                WindowEvent::CloseRequested { api, .. }
+                    if to_tray()
+                        || sleep::minutes(&window.app_handle().state::<AppState>()).is_some() =>
+                {
                     let _ = window.hide();
                     api.prevent_close();
                 }

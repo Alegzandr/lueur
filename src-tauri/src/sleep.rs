@@ -120,6 +120,8 @@ pub fn set(app: &AppHandle, minutes: Option<u32>) -> AppResult<Option<Status>> {
 
 fn run(app: &AppHandle, generation: u64) {
     let state = app.state::<AppState>();
+    // Until the lights are out or the timer is cancelled.
+    let _awake = crate::awake::Awake::hold();
     loop {
         if !state.sleep.current(generation) {
             return;

@@ -40,7 +40,7 @@ the track on your lights like a stage, Rainbow, Sunset, Ocean and Candle)
 and moods (Natural light, Daylight, Reading, Relax and Night light), on the
 whole room or on the lights you pick. Each bulb also has its power,
 brightness, white and colour, here or in the tray menu, and a sleep timer
-fades everything off at night.
+fades everything off at night, after a preset or any number of minutes.
 
 Lueur only reads the screen, the way OBS or Discord do, so it is safe to run
 next to anti-cheat ([details below](#competitive-games-and-anti-cheat)). It
@@ -183,6 +183,9 @@ owner to add you to their home instead.
   Dock). The tray menu says what the lights show, starts and stops the Ambilight
   and the effects and applies a mood, so you never have to leave a game.
   Once an update is installed, it also restarts Lueur into it.
+- **Sleep timer.** While it runs, Lueur stays open even when closing the
+  window would quit it, and keeps the computer from going to sleep by itself
+  (on Windows and macOS). Shut the computer down and the lights stay on.
 - **At login.** *Open at login* and *Start hidden in the tray* in Settings;
   each light picks up the effect it was left playing.
 - **Keyboard.** <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>1</kbd>–<kbd>4</kbd>

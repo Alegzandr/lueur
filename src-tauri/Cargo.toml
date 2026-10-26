@@ -67,7 +67,8 @@ tauri-plugin-opener = "2"
 
 # Desktop Duplication and GDI capture (see src/capture/dxgi.rs, gdi.rs), the
 # capture benchmark's CPU time, the per-user install (src/install.rs) and one
-# application's sound for the music show (src/audio/apps.rs). Same `windows`
+# application's sound for the music show (src/audio/apps.rs), and keeping
+# the computer awake for the sleep timer (src/awake.rs). Same `windows`
 # version xcap already pulls in, so it adds no second copy.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
@@ -84,6 +85,7 @@ windows = { version = "0.62", features = [
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_LibraryLoader",
+    "Win32_System_Power",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_System_Variant",
