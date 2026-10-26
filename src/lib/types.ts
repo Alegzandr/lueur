@@ -175,7 +175,7 @@ export interface ShowSettings {
   bright: number;
   /** 1..=100; 50 is each show's natural pace. */
   speed: number;
-  /** The music may flash white on drops and snares, at most three a second. */
+  /** The music may flash white on its drops, at most three a second. */
   flashes: boolean;
   /** How late the sound reaches the ear, ms, for the music to wait on
    *  (`DELAY_MS` in show.rs: -150..=500). */

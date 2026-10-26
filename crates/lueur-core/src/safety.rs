@@ -794,11 +794,21 @@ mod tests {
         assert!(swing > 30, "the guard froze the show: {swing}");
     }
 
-    /// Loud music with a snare every 0.125 s, as close as the analyser lets
-    /// them come, white allowed: far more white flashes than three a second.
+    /// A drop into loud music with a snare every 0.125 s, as close as the
+    /// analyser lets them come, white allowed: far more white flashes than
+    /// three a second.
     fn white_storm() -> Vec<Vec<BulbOutput>> {
         let s = ShowSettings::default();
         let mut stage = Stage::new(&Fixture::row(4));
+        // A long breakdown first, so the kick lands as a drop: white is kept
+        // for the drops.
+        let calm = Levels {
+            energy: 1.0,
+            ..Levels::default()
+        };
+        for _ in 0..280 {
+            stage.frame(&s, calm, 0.025);
+        }
         let mut frames = Vec::new();
         for k in 0..240 {
             let l = Levels {

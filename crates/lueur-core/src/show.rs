@@ -87,8 +87,9 @@ pub struct ShowSettings {
     pub bright: u8,
     /// 1..=100; 50 is each show's natural pace.
     pub speed: u8,
-    /// The music may flash white on drops and snares, never more than three
-    /// times a second: the show's guard ([`crate::safety::FlashGuard::show`])
+    /// The music may flash white on its drops and the snares just after,
+    /// never in a gentle track and never more than three times a second: the
+    /// show's guard ([`crate::safety::FlashGuard::show`])
     /// holds them to that even with the protection off.
     pub flashes: bool,
     /// How late the sound reaches the ear after the computer plays it,
@@ -279,6 +280,37 @@ pub(crate) const PARTY: &[[Rgb; 3]] = &[
         Rgb::new(0, 255, 120),
         Rgb::new(0, 170, 255),
         Rgb::new(120, 0, 255),
+    ],
+];
+
+/// The music's harmonies for a slow or gentle track (a ballad, a band
+/// without drums): warm and a little pale, the ambers and powdered roses a
+/// lighting desk keeps for a quiet song. Neon is for a track that earns it.
+/// Like the party's, every way round them steers clear of the yellow-greens.
+pub(crate) const SOFT: &[[Rgb; 3]] = &[
+    // Amber: amber, rose, gold.
+    [
+        Rgb::new(255, 120, 20),
+        Rgb::new(255, 70, 100),
+        Rgb::new(255, 165, 60),
+    ],
+    // Powder: powdered rose, peach, lavender.
+    [
+        Rgb::new(255, 110, 150),
+        Rgb::new(255, 150, 100),
+        Rgb::new(185, 130, 255),
+    ],
+    // Dusk: coral, plum, amber.
+    [
+        Rgb::new(255, 90, 60),
+        Rgb::new(200, 60, 180),
+        Rgb::new(255, 140, 40),
+    ],
+    // Moonlight: lavender, soft blue, rose.
+    [
+        Rgb::new(160, 140, 255),
+        Rgb::new(110, 160, 255),
+        Rgb::new(255, 130, 185),
     ],
 ];
 

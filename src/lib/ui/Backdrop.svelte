@@ -77,7 +77,10 @@
   // and the pools add up as light does. Then each pixel is dithered: a faint
   // glow spans few of the 256 levels a screen shows, and rounded to them it
   // falls into bands. A pixel's own noise, under a level either way, scatters
-  // the steps so the eye reads the slope between them.
+  // the steps so the eye reads the slope between them. The glow is laid on
+  // the page's own background here, and the canvas drawn opaque: left
+  // translucent, the page would blend it in after the dither, and on a light
+  // background that blend takes nearly all the noise away.
   const FRAGMENT = `
     precision highp float;
     uniform vec4 pools[${MAX_POOLS}];
@@ -85,6 +88,7 @@
     uniform int count;
     uniform float strength;
     uniform float saturation;
+    uniform vec3 background;
     const float EDGE = 0.011109; // exp(-4.5), where the bell meets 0
 
     float hash(vec2 p) {
@@ -103,25 +107,21 @@
         float a = pools[i].w * (exp(-4.5 * t * t) - EDGE) / (1.0 - EDGE);
         sum += vec4(colours[i] * a, a);
       }
-      if (sum.a <= 0.0) {
-        gl_FragColor = vec4(0.0);
-        return;
-      }
       sum = min(sum, 1.0);
       // More saturated, as coloured light on a wall looks.
       float grey = dot(sum.rgb, vec3(0.2126, 0.7152, 0.0722));
       sum.rgb = clamp(mix(vec3(grey), sum.rgb, saturation), 0.0, sum.a);
       sum *= strength;
+      vec3 lit = sum.rgb + background * (1.0 - sum.a);
       float noise = (hash(xy) + hash(xy + 17.17) - 1.0) / 255.0;
-      vec4 dithered = clamp(sum + noise, 0.0, 1.0);
-      gl_FragColor = vec4(min(dithered.rgb, dithered.a), dithered.a);
+      gl_FragColor = vec4(clamp(lit + noise, 0.0, 1.0), 1.0);
     }
   `;
 
   let canvas: HTMLCanvasElement;
 
   $effect(() => {
-    const gl = canvas.getContext("webgl", { antialias: false, depth: false, premultipliedAlpha: true });
+    const gl = canvas.getContext("webgl", { alpha: false, antialias: false, depth: false });
     if (!gl) return;
     const program = link(gl);
     if (!program) return;
@@ -137,6 +137,7 @@
       count: gl.getUniformLocation(program, "count"),
       strength: gl.getUniformLocation(program, "strength"),
       saturation: gl.getUniformLocation(program, "saturation"),
+      background: gl.getUniformLocation(program, "background"),
     };
     const pools = new Float32Array(MAX_POOLS * 4);
     const colours = new Float32Array(MAX_POOLS * 3);
@@ -144,7 +145,8 @@
     const still = matchMedia("(prefers-reduced-motion: reduce)");
     // What each zone's pool shows on screen, eased toward what its light shows.
     const shown = new Map<string, { rgb: RgbTuple; level: number; x: number; y: number }>();
-    let last = performance.now();
+    const born = performance.now();
+    let last = born;
     let raf = 0;
 
     const resize = () => {
@@ -153,6 +155,9 @@
       canvas.width = Math.max(1, Math.round(canvas.clientWidth * devicePixelRatio));
       canvas.height = Math.max(1, Math.round(canvas.clientHeight * devicePixelRatio));
       gl.viewport(0, 0, canvas.width, canvas.height);
+      // Resizing clears the canvas, and opaque it would show black until the
+      // next frame: draw it again at once, with the last frame's pools.
+      if (canvas.dataset.ready !== undefined) gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     };
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
@@ -207,14 +212,19 @@
       const style = getComputedStyle(canvas);
       const strength = parseFloat(style.getPropertyValue("--backdrop")) || 0.7;
       const saturation = parseFloat(style.getPropertyValue("--backdrop-saturation")) || 1;
+      // The glow comes in gently when the view opens: faded here rather than
+      // by the canvas's opacity, which would blend the dither away again.
+      const arrival = 1 - Math.pow(1 - Math.min(1, (now - born) / 600), 3);
       gl.uniform4fv(where.pools, pools);
       gl.uniform3fv(where.colours, colours);
       gl.uniform1i(where.count, n);
-      gl.uniform1f(where.strength, strength);
+      gl.uniform1f(where.strength, strength * arrival);
+      gl.uniform3fv(where.background, rgbOf(style.getPropertyValue("--bg")));
       gl.uniform1f(where.saturation, saturation);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      canvas.dataset.ready = "";
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
@@ -223,6 +233,22 @@
       observer.disconnect();
     };
   });
+
+  // The theme's background, as the shader takes it. The page writes it in
+  // oklch, which a 2D canvas paints and reads back as plain sRGB.
+  let bgSource = "";
+  let bgRgb: [number, number, number] = [0, 0, 0];
+  function rgbOf(css: string): [number, number, number] {
+    if (css === bgSource) return bgRgb;
+    const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    if (!ctx) return bgRgb;
+    ctx.fillStyle = css.trim() || "#000";
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+    bgSource = css;
+    bgRgb = [r / 255, g / 255, b / 255];
+    return bgRgb;
+  }
 
   function link(gl: WebGLRenderingContext): WebGLProgram | null {
     const program = gl.createProgram();
@@ -254,11 +280,9 @@
     width: 100%;
     height: 100%;
     pointer-events: none;
-    animation: arrive 600ms var(--ease);
   }
-  @keyframes arrive {
-    from {
-      opacity: 0;
-    }
+  /* Opaque, an unpainted canvas shows black. */
+  .backdrop:not([data-ready]) {
+    visibility: hidden;
   }
 </style>

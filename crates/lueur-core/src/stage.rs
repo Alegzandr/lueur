@@ -10,14 +10,19 @@
 //! patterns that travel across the room, the slow or distant ones wash it in
 //! colour, a light at the ceiling answers the snare. Like a lighting desk at a
 //! concert, the colours change with the phrase and the beats play the
-//! brightness and the movement. And the show follows the shape of the track:
-//! one deep colour in a breakdown, a quickening chase whitening through a
-//! build, dark for the breath before the drop, everything at once when it
-//! lands.
+//! brightness and the movement, the one of each bar leading. And the show
+//! follows the shape of the track: one deep colour in a breakdown, a
+//! quickening chase whitening through a build, dark for the breath before the
+//! drop, everything at once when it lands. It dresses each track for what it
+//! is: the looks follow how hard the music plays (lit and trading colours in
+//! a verse, travelling in the body of the track, bursting at its peak, and a
+//! chorus comes back to its own), a ballad plays in warm, pale colours and a
+//! club track in neon, white is kept for the drops, and a track in half time
+//! is struck in half time.
 
 use crate::color::{BulbOutput, Rgb};
 use crate::geometry::{Light, Screen};
-use crate::show::{PARTY, ShowSettings, blend, even, output};
+use crate::show::{PARTY, SOFT, ShowSettings, blend, even, output};
 use crate::sync::{Lag, timing};
 use std::collections::VecDeque;
 use std::f32::consts::TAU;
@@ -1047,31 +1052,37 @@ fn ring(rank: usize, k: usize) -> (usize, usize) {
     ((2 * rank).abs_diff(k.saturating_sub(1)) / 2, k.div_ceil(2))
 }
 
+/// How hard a passage plays, as the looks are chosen for it: a verse, the
+/// body of the track, its chorus.
+const GENTLE: usize = 0;
+const DRIVING: usize = 1;
+const PEAK: usize = 2;
+
 impl Pattern {
-    /// The patterns `k` punching lights can play, in the order the show
-    /// moves through them. The ones that need a middle and two ends wait for
-    /// three lights.
-    fn for_lights(k: usize) -> &'static [Pattern] {
-        match k {
-            0 | 1 => &[Pattern::Together],
-            2 => &[
-                Pattern::Together,
-                Pattern::Alternate,
-                Pattern::Swap,
-                Pattern::Split,
-            ],
-            _ => &[
-                Pattern::Together,
-                Pattern::Chase,
-                Pattern::CentreOut,
-                Pattern::Swap,
-                Pattern::Alternate,
-                Pattern::Bounce,
-                Pattern::Carousel,
-                Pattern::OutsideIn,
-                Pattern::Split,
-            ],
-        }
+    /// The patterns `k` punching lights can play, by how hard the music
+    /// plays, the way a lighting desk keeps its looks: in a gentle passage
+    /// every light stays lit and the colours trade places; in the body of
+    /// the track the beat travels across the room; at its peak the room
+    /// strikes at once or bursts from the middle. The ones that need a
+    /// middle and two ends wait for three lights.
+    fn for_lights(k: usize, tier: usize) -> &'static [Pattern] {
+        const ONE: [&[Pattern]; 3] = [&[Pattern::Together]; 3];
+        const TWO: [&[Pattern]; 3] = [
+            &[Pattern::Swap, Pattern::Alternate],
+            &[Pattern::Split, Pattern::Alternate],
+            &[Pattern::Together],
+        ];
+        const MORE: [&[Pattern]; 3] = [
+            &[Pattern::Swap, Pattern::Carousel, Pattern::Alternate],
+            &[Pattern::Chase, Pattern::Bounce, Pattern::Split],
+            &[Pattern::Together, Pattern::CentreOut, Pattern::OutsideIn],
+        ];
+        let tiers = match k {
+            0 | 1 => &ONE,
+            2 => &TWO,
+            _ => &MORE,
+        };
+        tiers[tier.min(PEAK)]
     }
 
     /// How much of beat `b` the light `rank` of `k` (left to right) takes.
@@ -1192,6 +1203,51 @@ const TURN: f32 = 0.2;
 /// Beats a phrase found late must have run before the colours still move
 /// on for it; nearer the last change, only the count is set right.
 const LATE_TURN: u32 = 6;
+/// How hard a beat strikes off the one of its bar: the one leads the bar,
+/// so the eye counts it the way the body does.
+const OFF_BEAT: f32 = 0.8;
+/// How far a bar's sound may sit under the loudest bars lately before it
+/// reads as no longer at the peak, and before it reads as gentle; and how
+/// much it must clear a line by to cross it, so a bar on the line does not
+/// flip the look back and forth.
+const PEAK_GAP: f32 = 0.06;
+const GENTLE_GAP: f32 = 0.15;
+const TIER_MARGIN: f32 = 0.02;
+/// How fast the loudest bars lately are forgotten, per bar: a loud chorus
+/// stays the measure for the minute or so after it.
+const PEAK_FORGET: f32 = 0.005;
+/// Kicks a beat under which a track is gentle, whatever its tempo, and under
+/// which a slow one is (and the more it takes to be a party again): a ballad
+/// has a kick on the one at most, a club track one on every beat.
+const SOFT_KICKS: (f32, f32) = (0.3, 0.55);
+const PARTY_KICKS: (f32, f32) = (0.4, 0.65);
+/// Under this tempo, beats a minute, a track is slow.
+const SLOW_BPM: f32 = 96.0;
+/// How much of a snare's weight on each beat of the bar is kept from one
+/// beat to the next: the last few bars count.
+const SNARE_MEMORY: f32 = 0.95;
+/// How close to a beat a snare must fall to count as on it, as a share of
+/// a beat.
+const SNARE_ON_BEAT: f32 = 0.2;
+/// The half-time feel: the snare on one beat of the bar and not on the one
+/// across from it, this sure (snares heard on it, give or take) and this
+/// lopsided. It lets go when the other beat catches up this far.
+const HALF_SURE: f32 = 3.0;
+const HALF_LOPSIDED: f32 = 0.3;
+const HALF_GONE: f32 = 0.6;
+/// The slowest tempo read in half time, seconds a beat: below 120 beats a
+/// minute a snare on the three is a slow groove, not a halved one.
+const HALF_PERIOD: f32 = 0.5;
+
+/// The track's mood, which sets the colours the show plays in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mood {
+    /// Driven by the kick, at a pace: the party's neon.
+    Party,
+    /// Slow, or with little or no kick: warm, paler colours, never a white
+    /// flash.
+    Soft,
+}
 
 /// One light on the stage.
 #[derive(Debug, Clone, Copy)]
@@ -1252,11 +1308,11 @@ fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
 /// The music show.
 ///
 /// It plays like a lighting desk at a concert. Its colours come from one of
-/// the party harmonies at a time, in two roles: the room rests in a back
-/// colour and the punches strike in the other two, fading back into it. The
-/// roles turn with every phrase, the harmony moves on every few phrases and
-/// at every drop, and the beats play the brightness, from near dark, and
-/// where it lands in the room. The lights play off one another: one holds
+/// the harmonies of the track's mood at a time, in two roles: the room rests
+/// in a back colour and the punches strike in the other two, fading back into
+/// it. The roles turn with every phrase, the harmony moves on every few
+/// phrases, at every drop and when the mood changes, and the beats play the
+/// brightness, from near dark, and where it lands in the room. The lights play off one another: one holds
 /// the beat and hands it to the next, two halves turn over, the colours
 /// trade places or travel along the room, and the washes trade theirs bar
 /// by bar.
@@ -1317,6 +1373,36 @@ pub struct Stage {
     lag: Lag,
     /// Seconds until the clock's next beat goes out, as last heard.
     due: Option<f32>,
+    /// The pattern playing, how hard the passage it was chosen for plays,
+    /// and the phrase it began on.
+    look: Pattern,
+    tier: usize,
+    look_from: u32,
+    /// Which look of each tier plays when the music comes back to it: the
+    /// chorus finds its own look again.
+    looks: [usize; 3],
+    /// The look moved on to the next of its tier as this phrase began.
+    rotated: bool,
+    /// How hard the last bar read, waiting for the next to agree before the
+    /// look follows it.
+    tier_heard: Option<usize>,
+    /// The sound of the loudest bars lately, against which a bar reads.
+    peak: f32,
+    mood: Mood,
+    /// Whether the clock is sure of the tempo.
+    locked: bool,
+    /// Kicks a second, lately.
+    kicks: f32,
+    /// Beats counted in all, and seconds since the last.
+    beats: u32,
+    since_beat: f32,
+    /// How many snares fell on each beat of the bar lately, by `beats`.
+    snares: [f32; 4],
+    /// The track plays in half time (or the clock counts it twice as fast
+    /// as it feels): only every other beat is struck, those whose place in
+    /// the bar matches `half_on`, the beat the snare lands on.
+    half: bool,
+    half_on: usize,
 }
 
 impl Stage {
@@ -1385,6 +1471,21 @@ impl Stage {
             waits: vec![0.0; n],
             lag: Lag::default(),
             due: None,
+            look: Pattern::for_lights(order.len(), PEAK)[0],
+            tier: PEAK,
+            look_from: 0,
+            looks: [0; 3],
+            rotated: false,
+            tier_heard: None,
+            peak: 0.0,
+            mood: Mood::Party,
+            locked: false,
+            kicks: 0.0,
+            beats: 0,
+            since_beat: 0.0,
+            snares: [0.0; 4],
+            half: false,
+            half_on: 0,
         }
     }
 
@@ -1439,12 +1540,88 @@ impl Stage {
         if self.section == Section::Drop {
             return Pattern::Together;
         }
-        let all = Pattern::for_lights(self.punches);
-        all[(self.phrases / PHRASES_PER_LOOK) as usize % all.len()]
+        self.look
+    }
+
+    /// Play the look of `tier` its turn has come to, from this phrase.
+    fn set_look(&mut self, tier: usize) {
+        let all = Pattern::for_lights(self.punches, tier);
+        self.tier = tier;
+        self.look = all[self.looks[tier] % all.len()];
+        self.look_from = self.phrases;
+    }
+
+    /// A bar has just begun: read how hard the one before it played against
+    /// the loudest lately, and once two bars agree that the music has moved
+    /// up or down a tier, change the look to that tier's.
+    fn read_bar(&mut self) {
+        let Some(sound) = self.last_bar() else {
+            return;
+        };
+        self.peak = sound.max(self.peak - PEAK_FORGET);
+        let gap = self.peak - sound;
+        // Crossing a line takes clearing it, from either side.
+        let past = |line: f32, rising: bool| {
+            if rising {
+                gap < line - TIER_MARGIN
+            } else {
+                gap <= line + TIER_MARGIN
+            }
+        };
+        let tier = if past(PEAK_GAP, self.tier < PEAK) {
+            PEAK
+        } else if past(GENTLE_GAP, self.tier < DRIVING) {
+            DRIVING
+        } else {
+            GENTLE
+        };
+        if tier != self.tier && self.tier_heard == Some(tier) {
+            // A look that moved on as this phrase began was for a phrase its
+            // tier never played: it is still that tier's next.
+            if self.rotated && self.look_from == self.phrases {
+                self.looks[self.tier] -= 1;
+            }
+            self.rotated = false;
+            self.set_look(tier);
+        }
+        self.tier_heard = Some(tier);
+    }
+
+    /// How the last bar sounded, the mix, the middle and the treble together
+    /// (each 0..=1): a chorus brings the hats and the voices up as well as
+    /// the level. None until a bar has been heard.
+    fn last_bar(&self) -> Option<f32> {
+        let n = self.sounds.len();
+        (n >= 4).then(|| {
+            self.sounds
+                .range(n - 4..)
+                .map(|[e, _, m, t]| (e + m + t) / 3.0)
+                .sum::<f32>()
+                / 4.0
+        })
     }
 
     fn harmony(&self) -> &'static [Rgb; 3] {
-        &PARTY[(self.phrases / PHRASES_PER_HARMONY) as usize % PARTY.len()]
+        let all = match self.mood {
+            Mood::Party => PARTY,
+            Mood::Soft => SOFT,
+        };
+        &all[(self.phrases / PHRASES_PER_HARMONY) as usize % all.len()]
+    }
+
+    /// The mood the track plays in, now: kept until it plainly changes.
+    fn heard_mood(&self) -> Mood {
+        if !self.locked {
+            return self.mood;
+        }
+        let per_beat = self.kicks * self.period;
+        let slow = 60.0 / self.period < SLOW_BPM;
+        let gentle = |(any, slowly): (f32, f32)| per_beat < any || (slow && per_beat < slowly);
+        match self.mood {
+            Mood::Party if gentle(SOFT_KICKS) => Mood::Soft,
+            Mood::Soft if !gentle(PARTY_KICKS) => Mood::Party,
+            mood => mood,
+        }
     }
 
     /// The colours of the phrase: the back colour the room rests in, and the
@@ -1456,12 +1633,14 @@ impl Stage {
         (h[(p + 1) % 3], h[p % 3], h[(p + 2) % 3])
     }
 
-    /// Whether the white flashes are on. How often they may go out is not
-    /// the show's to decide: the show's guard
+    /// Whether the white flashes are on: never in a gentle track. White is
+    /// kept for the drops, where it means something; flashed on every loud
+    /// snare it soon means nothing, and tires the eye. How often they may go
+    /// out is not the show's to decide: the show's guard
     /// ([`crate::safety::FlashGuard::show`]) keeps them to three a second,
     /// protection on or off.
     fn white(&self, settings: &ShowSettings) -> bool {
-        settings.flashes
+        settings.flashes && self.mood == Mood::Party
     }
 
     fn enter(&mut self, section: Section) {
@@ -1496,10 +1675,22 @@ impl Stage {
         }
     }
 
-    /// The colours move on to the next phrase's.
+    /// The colours move on to the next phrase's. If the track's mood has
+    /// changed, they move into the other mood's harmonies; if the look has
+    /// played its while, the next look of its tier takes over.
     fn turn(&mut self) {
         self.phrases += 1;
         self.since_turn = 0;
+        let mood = self.heard_mood();
+        if mood != self.mood {
+            self.mood = mood;
+            self.phrases = (self.phrases / PHRASES_PER_HARMONY + 1) * PHRASES_PER_HARMONY;
+        }
+        self.rotated = self.phrases.saturating_sub(self.look_from) >= PHRASES_PER_LOOK;
+        if self.rotated {
+            self.looks[self.tier] += 1;
+            self.set_look(self.tier);
+        }
     }
 
     /// Count a beat: the first of a phrase after a fresh start, otherwise
@@ -1628,6 +1819,9 @@ impl Stage {
         self.phrases = (self.phrases / PHRASES_PER_HARMONY + 1) * PHRASES_PER_HARMONY;
         self.since_turn = 0;
         self.start_phrase(levels);
+        // What follows a drop is the track at its peak.
+        self.set_look(PEAK);
+        self.tier_heard = None;
         let white = self.white(settings);
         for lamp in &mut self.lamps {
             lamp.hit(1.0, white);
@@ -1638,23 +1832,28 @@ impl Stage {
     pub fn frame(&mut self, settings: &ShowSettings, levels: Levels, dt: f32) -> Vec<BulbOutput> {
         (self.lead, self.waits) = timing(&self.fixtures, settings.delay());
         self.due = levels.due;
-        // A hit fades out just before the next beat comes, like a pumping
-        // sidechain, but never quicker than the bulb can show.
-        let pump = self.period / 3.0;
+        // A hit fades out just before the next beat struck comes, like a
+        // pumping sidechain, but never quicker than the bulb can show.
+        let felt = self.felt_period();
+        let pump = felt / 3.0;
         // A light holding the beat lets go if the beats stop coming, and
         // one that handed it on goes out within the beat, as the next one
         // comes up.
-        let kept = self.since_pulse < 2.0 * self.period;
+        let kept = self.since_pulse < 2.0 * felt;
         for lamp in &mut self.lamps {
             let fade = lamp.fade.max(pump);
             lamp.flash *= (-dt / fade).exp();
             lamp.white *= (-dt / (0.6 * fade)).exp();
             if !(lamp.holding && kept) {
-                lamp.glow *= (-dt / lamp.fade.max(0.25 * self.period)).exp();
+                lamp.glow *= (-dt / lamp.fade.max(0.25 * felt)).exp();
             }
             lamp.sharp = false;
         }
         self.held += dt;
+        self.since_beat += dt;
+        self.locked = levels.tempo.is_some();
+        let kick = if levels.kick { 1.0 / dt.max(1e-3) } else { 0.0 };
+        self.kicks += (kick - self.kicks) * follow(dt, 6.0);
         // A sure clock in music still at its level plays the beat as if it
         // were a kick: through the kicks a loud bass hides, and all along a
         // track that has none (a band without drums). A breakdown drops the
@@ -1727,7 +1926,7 @@ impl Stage {
                 } else {
                     0.0
                 };
-                lamp.tint += (target - lamp.tint) * follow(dt, lamp.fade.max(self.period));
+                lamp.tint += (target - lamp.tint) * follow(dt, lamp.fade.max(felt));
             }
         }
 
@@ -1754,37 +1953,50 @@ impl Stage {
                 }
                 self.beat = into;
             }
-            let pattern = self.pattern();
-            let (k, b) = (self.punches, self.beat);
-            for lamp in &mut self.lamps {
-                match lamp.part {
-                    Part::Punch => {
-                        lamp.hit(s * pattern.beat(lamp.rank, k, b), false);
-                        // The beat moves on: who holds it now, and who
-                        // hands it on.
-                        let hold = pattern.hold(lamp.rank, k, b);
-                        lamp.holding = hold > 0.0;
-                        if lamp.holding {
-                            lamp.glow = 1.0;
-                            lamp.hold = s * hold;
+            self.beats = self.beats.wrapping_add(1);
+            self.since_beat = 0.0;
+            self.feel_half();
+            if self.beat.is_multiple_of(4) {
+                self.read_bar();
+            }
+            if let Some(stress) = self.stress() {
+                let s = s * stress;
+                let pattern = self.pattern();
+                let (k, b) = (self.punches, self.step());
+                // A phrase opening swells the room as well as the stage.
+                let opening = self.beat == 0;
+                for lamp in &mut self.lamps {
+                    match lamp.part {
+                        Part::Punch => {
+                            lamp.hit(s * pattern.beat(lamp.rank, k, b), false);
+                            // The beat moves on: who holds it now, and who
+                            // hands it on.
+                            let hold = pattern.hold(lamp.rank, k, b);
+                            lamp.holding = hold > 0.0;
+                            if lamp.holding {
+                                lamp.glow = 1.0;
+                                lamp.hold = s * hold;
+                            }
                         }
+                        // The wash only feels the strongest beats, softly.
+                        Part::Wash => {
+                            let swell = if opening { 0.4 * s } else { 0.0 };
+                            lamp.hit(swell.max(0.25 * (s - 0.6).max(0.0) / 0.4), false);
+                        }
+                        Part::Accent => {}
                     }
-                    // The wash only feels the strongest beats, softly.
-                    Part::Wash => lamp.hit(0.25 * (s - 0.6).max(0.0) / 0.4, false),
-                    Part::Accent => {}
                 }
             }
         }
         if let Some(s) = levels.snare {
-            // In a drop, and in loud music, the snare cracks white.
-            let loud = self.section == Section::Drop || self.swell > 0.75;
+            self.place_snare();
+            // In a drop the snare cracks white; elsewhere white is spent.
             let has_accent = self.lamps.iter().any(|l| l.part == Part::Accent);
-            let white =
-                loud && (has_accent || self.section == Section::Drop) && self.white(settings);
+            let white = self.section == Section::Drop && self.white(settings);
             if has_accent {
                 self.accent(s, white);
             } else {
-                let (pattern, k, b) = (self.pattern(), self.punches, self.beat);
+                let (pattern, k, b) = (self.pattern(), self.punches, self.step());
                 for lamp in &mut self.lamps {
                     if lamp.part == Part::Punch {
                         let share = pattern.snare(lamp.rank, k, b);
@@ -1856,6 +2068,87 @@ impl Stage {
         ((self.swell - 0.4) / 0.4).clamp(0.0, 1.0)
     }
 
+    /// Seconds between two beats struck: twice the clock's in half time.
+    fn felt_period(&self) -> f32 {
+        if self.half {
+            2.0 * self.period
+        } else {
+            self.period
+        }
+    }
+
+    /// How hard the beat just counted strikes, against the strongest: the
+    /// one of the bar leads. None for a beat half time leaves out.
+    fn stress(&self) -> Option<f32> {
+        if self.half {
+            // The snare lands on the three; the one is across the bar.
+            let at = self.beats as usize % 4;
+            let one = (self.half_on + 2) % 4;
+            if at % 2 != one % 2 {
+                return None;
+            }
+            return Some(if at == one { 1.0 } else { OFF_BEAT });
+        }
+        Some(if self.beat.is_multiple_of(4) {
+            1.0
+        } else {
+            OFF_BEAT
+        })
+    }
+
+    /// The beat the patterns move on: every other one in half time.
+    fn step(&self) -> u32 {
+        if self.half { self.beat / 2 } else { self.beat }
+    }
+
+    /// Note which beat of the bar a snare just heard fell on, if it fell on
+    /// one: the last beat counted or the next, as they reach the ear (each
+    /// goes out [`Stage::lead`] early).
+    fn place_snare(&mut self) {
+        let p = self.period;
+        let off = self.since_beat - self.lead;
+        let (at, by) = if off < 0.5 * p {
+            (self.beats, off.abs())
+        } else {
+            (self.beats.wrapping_add(1), p - off)
+        };
+        if by < SNARE_ON_BEAT * p {
+            self.snares[at as usize % 4] += 1.0;
+        }
+    }
+
+    /// A beat was counted: the snares heard on each beat of the bar fade a
+    /// little, and the show reads whether the track plays in half time. In
+    /// a rock or a club groove the snare lands on the two and the four, two
+    /// beats apart; in half time (trap, dubstep, a heavy chorus) it lands on
+    /// the three alone, four apart, and the body feels a beat on every other
+    /// one the clock counts. The same reading puts right a clock that counts
+    /// a slow track twice over.
+    fn feel_half(&mut self) {
+        for s in &mut self.snares {
+            *s *= SNARE_MEMORY;
+        }
+        let (on, top) = self
+            .snares
+            .iter()
+            .copied()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .unwrap_or((0, 0.0));
+        let across = self.snares[(on + 2) % 4];
+        let fast = self.locked && self.period <= HALF_PERIOD;
+        if !self.half {
+            if fast && top >= HALF_SURE && across < HALF_LOPSIDED * top {
+                self.half = true;
+                self.half_on = on;
+            }
+        } else if !fast || top < 0.5 * HALF_SURE || across > HALF_GONE * top {
+            self.half = false;
+        } else {
+            self.half_on = on;
+        }
+    }
+
     fn accent(&mut self, amount: f32, white: bool) {
         for lamp in &mut self.lamps {
             if lamp.part == Part::Accent {
@@ -1893,10 +2186,14 @@ impl Stage {
             .map(|lamp| {
                 // What it glows at between hits, and the colour it strikes in.
                 let (base, strike) = match lamp.part {
-                    // From near dark, so every beat lands.
+                    // From near dark, so every beat lands; a gentle track
+                    // keeps a little more glow between its beats.
                     Part::Punch => (
-                        0.04 + 0.16 * swell,
-                        colours[pattern.colour(lamp.rank, self.punches, self.beat)],
+                        match self.mood {
+                            Mood::Party => 0.04 + 0.16 * swell,
+                            Mood::Soft => 0.1 + 0.2 * swell,
+                        },
+                        colours[pattern.colour(lamp.rank, self.punches, self.step())],
                     ),
                     Part::Wash => (
                         0.15 + 0.55 * self.bass.clamp(0.0, 1.0).powf(1.5) + 0.15 * swell,
@@ -1936,7 +2233,10 @@ impl Stage {
                     } else if lamp.part == Part::Wash {
                         strike
                     } else {
-                        mix(rest, strike, lamp.flash.max(lamp.glow))
+                        // A beat off the one strikes less hard, in the
+                        // same colour.
+                        let struck = lamp.flash.max(lamp.glow) / OFF_BEAT;
+                        mix(rest, strike, struck)
                     };
                     let rgb = pale(rgb, 0.6 * climb);
                     output(rgb, level * bright * even(rgb))
@@ -2331,8 +2631,7 @@ mod tests {
         let s = ShowSettings::default();
         let mut stage = Stage::new(&Fixture::row(3));
         stage.enter(Section::Groove);
-        stage.phrases = PHRASES_PER_LOOK; // Chase.
-        assert_eq!(stage.pattern(), Pattern::Chase);
+        stage.look = Pattern::Chase;
         let mut order = Vec::new();
         for _ in 0..3 {
             let f = stage.frame(&s, beat(1.0), 0.025);
@@ -2453,10 +2752,8 @@ mod tests {
             .collect();
         assert_eq!(punches.len(), 4);
         stage.enter(Section::Groove);
-        let all = Pattern::for_lights(4);
-        let at = |p: Pattern| all.iter().position(|&q| q == p).unwrap() as u32;
         for (pattern, first) in [(Pattern::CentreOut, [1, 2]), (Pattern::OutsideIn, [0, 3])] {
-            stage.phrases = at(pattern) * PHRASES_PER_LOOK;
+            stage.look = pattern;
             stage.beat = 0;
             assert_eq!(stage.pattern(), pattern);
             // The first beat of the phrase is beat 1: the second ring, then
@@ -2464,8 +2761,9 @@ mod tests {
             let mut lit = Vec::new();
             for _ in 0..2 {
                 let f = stage.frame(&s, beat(1.0), 0.025);
+                // Off the one, the beats strike a little softer.
                 let on: Vec<usize> = (0..punches.len())
-                    .filter(|&r| f[punches[r]].bright() > 55)
+                    .filter(|&r| f[punches[r]].bright() > 40)
                     .collect();
                 lit.push(on);
                 for _ in 0..19 {
@@ -2529,6 +2827,8 @@ mod tests {
             kick: true,
             ..loud
         };
+        // On the one of the bar, which strikes hardest.
+        stage.beat = PHRASE_BEATS - 1;
         let flash = stage.frame(&s, hit, 0.025)[0].bright();
         assert!(flash >= s.bright - 5 && flash <= s.bright, "{flash}");
         assert!(flash - between >= 20, "{between} -> {flash}");
@@ -3078,12 +3378,7 @@ mod tests {
     fn playing(pattern: Pattern) -> Stage {
         let mut stage = Stage::new(&Fixture::row(3));
         stage.enter(Section::Groove);
-        let at = Pattern::for_lights(3)
-            .iter()
-            .position(|&p| p == pattern)
-            .unwrap() as u32;
-        stage.phrases = at * PHRASES_PER_LOOK;
-        assert_eq!(stage.pattern(), pattern);
+        stage.look = pattern;
         stage
     }
 
@@ -3151,6 +3446,177 @@ mod tests {
                 assert_eq!(w[1][(r + 1) % 3], w[0][r]);
             }
         }
+    }
+
+    /// Play `beats` beats `period` apart at `sound`, one 25 ms frame at a
+    /// time with the clock sure of it; `hits(j)` says whether beat `j` comes
+    /// with a kick, and whether a snare lands on it.
+    fn drive(
+        stage: &mut Stage,
+        s: &ShowSettings,
+        period: f32,
+        beats: u32,
+        sound: Levels,
+        hits: impl Fn(u32) -> (bool, bool),
+    ) -> Vec<Vec<BulbOutput>> {
+        let per = (period / 0.025).round() as u32;
+        let mut frames = Vec::new();
+        for k in 0..beats * per {
+            let mut l = Levels {
+                tempo: Some(period),
+                ..sound
+            };
+            if k % per == 0 {
+                let (kick, snare) = hits(k / per);
+                l.beat = Some(1.0);
+                l.kick = kick;
+                l.snare = snare.then_some(0.9);
+            }
+            frames.push(stage.frame(s, l, 0.025));
+        }
+        frames
+    }
+
+    #[test]
+    fn the_look_follows_how_hard_the_music_plays() {
+        // A chorus, a quiet verse, the chorus again: the verse gets a look
+        // where every light stays lit, and the chorus comes back to its own.
+        let s = ShowSettings::default();
+        let mut stage = Stage::new(&Fixture::row(3));
+        stage.enter(Section::Groove);
+        let chorus = Levels {
+            energy: 0.9,
+            bass: 0.9,
+            mid: 0.8,
+            treble: 0.8,
+            ..Levels::default()
+        };
+        let verse = Levels {
+            energy: 0.6,
+            bass: 0.7,
+            mid: 0.2,
+            treble: 0.1,
+            ..Levels::default()
+        };
+        let four = |j: u32| (true, j % 2 == 1);
+        drive(&mut stage, &s, 0.5, 24, chorus, four);
+        assert_eq!(stage.tier, PEAK);
+        let chorus_look = stage.look;
+        assert!(Pattern::for_lights(3, PEAK).contains(&chorus_look));
+        drive(&mut stage, &s, 0.5, 16, verse, four);
+        assert_eq!(stage.tier, GENTLE);
+        assert!(Pattern::for_lights(3, GENTLE).contains(&stage.look));
+        drive(&mut stage, &s, 0.5, 12, chorus, four);
+        assert_eq!(stage.tier, PEAK);
+        assert_eq!(stage.look, chorus_look);
+    }
+
+    #[test]
+    fn the_one_of_the_bar_strikes_hardest() {
+        let s = ShowSettings::default();
+        let mut stage = playing(Pattern::Together);
+        settle(&mut stage, 0.8);
+        let frames = groove(&mut stage, &s, 8);
+        // The first beat counted is the two: the fourth, the one of the
+        // second bar.
+        let at = |j: usize| frames[j * 20][0].bright();
+        assert!(
+            at(3) > at(4) + 5,
+            "{} on the one, {} on the two",
+            at(3),
+            at(4)
+        );
+    }
+
+    #[test]
+    fn a_slow_gentle_track_plays_warm_and_never_white() {
+        let s = ShowSettings::default();
+        let sound = Levels {
+            energy: 0.7,
+            bass: 0.6,
+            ..Levels::default()
+        };
+        // 86 beats a minute, a kick on the one of each bar.
+        let mut ballad = Stage::new(&Fixture::row(3));
+        ballad.enter(Section::Groove);
+        drive(&mut ballad, &s, 0.7, 48, sound, |j| {
+            (j % 4 == 0, j % 4 == 2)
+        });
+        assert_eq!(ballad.mood, Mood::Soft);
+        assert!(SOFT.contains(ballad.harmony()));
+        // Even its drop stays in colour.
+        ballad.enter(Section::Hold);
+        let out = ballad.frame(&s, beat(1.0), 0.025);
+        assert_eq!(ballad.section, Section::Drop);
+        assert!(out.iter().all(|o| matches!(o, BulbOutput::Color { .. })));
+        // A club track, a kick on every beat: the party.
+        let mut club = Stage::new(&Fixture::row(3));
+        club.enter(Section::Groove);
+        club.mood = Mood::Soft;
+        drive(&mut club, &s, 0.47, 48, sound, |j| (true, j % 2 == 1));
+        assert_eq!(club.mood, Mood::Party);
+        assert!(PARTY.contains(club.harmony()));
+    }
+
+    #[test]
+    fn a_snare_on_the_three_plays_in_half_time() {
+        let s = ShowSettings::default();
+        let sound = Levels {
+            energy: 0.8,
+            bass: 0.8,
+            ..Levels::default()
+        };
+        // 140 beats a minute, the snare on the three alone: half time.
+        let mut trap = playing(Pattern::Together);
+        let frames = drive(&mut trap, &s, 0.425, 32, sound, |j| {
+            (j % 4 == 0, j % 4 == 2)
+        });
+        assert!(trap.half);
+        // Late on, the beats struck come every other one, somewhere in the
+        // room.
+        let per = 17;
+        let lit: Vec<bool> = (24..32)
+            .map(|j| frames[j * per].iter().any(|o| o.bright() > 40))
+            .collect();
+        assert!(
+            lit.windows(2).all(|w| w[0] != w[1]),
+            "every other beat should strike: {lit:?}"
+        );
+        // The same tempo, the snare on the two and the four: a full beat.
+        let mut rock = playing(Pattern::Together);
+        drive(&mut rock, &s, 0.425, 32, sound, |j| {
+            (j % 2 == 0, j % 2 == 1)
+        });
+        assert!(!rock.half);
+        // And a slow groove with its snare on the three is no half time.
+        let mut slow = playing(Pattern::Together);
+        drive(&mut slow, &s, 0.7, 32, sound, |j| (j % 4 == 0, j % 4 == 2));
+        assert!(!slow.half);
+    }
+
+    #[test]
+    fn a_loud_snare_off_the_drop_stays_in_colour() {
+        // White is spent on the drops: a loud chorus's snares crack in
+        // colour, even with the white flashes on.
+        let s = ShowSettings::default();
+        let mut fixtures = Fixture::row(4);
+        fixtures[1].height = 0.9;
+        let mut stage = Stage::new(&fixtures);
+        stage.enter(Section::Groove);
+        let loud = Levels {
+            energy: 1.0,
+            bass: 1.0,
+            ..Levels::default()
+        };
+        settle(&mut stage, 1.0);
+        let frames = drive(&mut stage, &s, 0.5, 16, loud, |j| (true, j % 2 == 1));
+        assert!(
+            frames
+                .iter()
+                .flatten()
+                .all(|o| matches!(o, BulbOutput::Color { .. })),
+            "a white flash outside a drop"
+        );
     }
 
     #[test]
