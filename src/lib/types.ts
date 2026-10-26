@@ -294,6 +294,15 @@ export interface EffectGroup {
   light_ids: string[];
 }
 
+/** What a driven light shows, one zone of it: a colour or a white, as sent
+ *  to its bulb (`Glow` in runner.rs). */
+export interface Glow {
+  rgb: [number, number, number] | null;
+  kelvin: number | null;
+  /** 0..=100. */
+  bright: number;
+}
+
 /** A room light whose bulb something else drives. */
 export interface Elsewhere {
   light_id: string;

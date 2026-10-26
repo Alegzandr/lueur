@@ -8,6 +8,7 @@
   import Logo from "./lib/ui/Logo.svelte";
   import TitleBar from "./lib/ui/TitleBar.svelte";
   import Toasts from "./lib/ui/Toasts.svelte";
+  import Backdrop from "./lib/ui/Backdrop.svelte";
   import UpdateButton from "./lib/ui/UpdateButton.svelte";
   import Lighting from "./lib/views/Lighting.svelte";
   import Room from "./lib/views/Room.svelte";
@@ -158,6 +159,8 @@
   </aside>
 
   <main class="content">
+    <!-- Behind the lighting, what the bulbs do: outside the scroll, so it stays put. -->
+    {#if app.view === "lighting"}<Backdrop />{/if}
     {#if OWN_TITLEBAR}
       <TitleBar />
     {:else if app.updateReady}
@@ -310,10 +313,16 @@
   }
 
   .content {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
+  }
+  .content > :global(.backdrop) {
+    z-index: -1;
   }
   .topbar {
     display: flex;

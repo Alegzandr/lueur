@@ -11,6 +11,7 @@ import {
   type AudioSources,
   type DiscoveredDevice,
   type EffectStatus,
+  type Glow,
   type Endpoint,
   type LightState,
   type Mode,
@@ -329,6 +330,22 @@ export async function restartEffect(): Promise<EffectStatus> {
 export async function effectStatus(): Promise<EffectStatus> {
   if (!inTauri()) return previewStatus();
   return invoke<EffectStatus>("effect_status");
+}
+
+/** What every light an effect drives was last sent, zone by zone. The
+ *  browser preview has no bulbs: its lights drift round the wheel. */
+export async function lightGlows(): Promise<Record<string, Glow[]>> {
+  if (!inTauri()) {
+    const t = performance.now() / 1000;
+    return Object.fromEntries(
+      Object.keys(previewModes).map((id, i) => {
+        const h = (t * 40 + i * 70) % 360;
+        const f = (n: number) => Math.round(255 * Math.max(0, Math.min(1, Math.abs(((h / 60 + n) % 6) - 3) - 1)));
+        return [id, [{ rgb: [f(0), f(4), f(2)], kelvin: null, bright: 80 }]];
+      }),
+    );
+  }
+  return invoke<Record<string, Glow[]>>("light_glows");
 }
 
 /** Take a light's bulb from the other computer or app that drives it. */

@@ -160,6 +160,7 @@ pub fn run() {
             commands::set_lights_mode,
             commands::restart_effect,
             commands::effect_status,
+            commands::light_glows,
             commands::take_light,
             commands::set_sleep_timer,
             commands::sleep_timer,

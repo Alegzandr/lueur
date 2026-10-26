@@ -99,6 +99,9 @@
   --dur: 140ms;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 
+  /* How strongly the lights' glow shows behind the Lighting view. */
+  --backdrop: 0.75;
+
   color-scheme: light;
 }
 
@@ -146,6 +149,7 @@
     --float: 0 0 0 0.5px oklch(1 0 0 / 0.1), 0 14px 36px -8px oklch(0 0 0 / 0.65);
     --focus: oklch(0.8 0.14 72);
     --control-line: oklch(0.54 0 0);
+    --backdrop: 0.7;
     color-scheme: dark;
   }
 }
@@ -190,6 +194,7 @@
   --float: 0 0 0 0.5px oklch(1 0 0 / 0.1), 0 14px 36px -8px oklch(0 0 0 / 0.65);
   --focus: oklch(0.8 0.14 72);
   --control-line: oklch(0.54 0 0);
+  --backdrop: 0.7;
   color-scheme: dark;
 }
 

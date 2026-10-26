@@ -23,7 +23,7 @@ use crate::capture::{self, MonitorInfo};
 use crate::devices;
 use crate::error::{AppError, AppResult};
 use crate::lights::{self, PowerResult, unreachable, validate_ip};
-use crate::runner::{LiveSettings, Mode};
+use crate::runner::{self, LiveSettings, Mode};
 use crate::secrets;
 use crate::sleep::Status as SleepStatus;
 use crate::state::AppState;
@@ -33,6 +33,7 @@ use lueur_core::config::AppConfig;
 use lueur_core::device::relink::Link;
 use lueur_core::device::{self, DeviceKind, DiscoveredDevice, Endpoint, hue, nanoleaf};
 use lueur_core::scene::LightState;
+use std::collections::HashMap;
 use std::io;
 use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
@@ -694,6 +695,13 @@ pub fn set_window_theme(window: tauri::WebviewWindow, theme: Option<String>) {
 #[tauri::command]
 pub fn effect_status(state: State<AppState>) -> AppResult<EffectStatus> {
     Ok(status(&state))
+}
+
+/// What every light an effect drives was last sent, zone by zone, so the
+/// window can show the room as it plays.
+#[tauri::command]
+pub fn light_glows() -> HashMap<String, Vec<runner::Glow>> {
+    runner::glows()
 }
 
 /// Take a light's bulb from the other computer or app that drives it, so
