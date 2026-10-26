@@ -173,8 +173,9 @@ export function lightState(lightId: string): LightState {
   return app.config.states?.[lightId] ?? DEFAULT_STATE;
 }
 
+/** A light an effect drives is on, whatever it was last set to by hand. */
 export function isOn(lightId: string): boolean {
-  return lightState(lightId).on;
+  return isDriven(lightId) || lightState(lightId).on;
 }
 
 /** True while the running ambilight or show sets this light's colour. */
@@ -378,12 +379,15 @@ export async function restartEffect(): Promise<void> {
 
 export async function setLightPower(lightId: string, on: boolean): Promise<void> {
   app.powerBusy[lightId] = true;
+  // Off takes the light out of its effect (the backend does it).
+  const driven = isDriven(lightId);
   try {
     await ipc.setLightPower(lightId, on);
     recorded(lightId, { ...lightState(lightId), on });
   } catch (e) {
     fail(e);
   } finally {
+    if (driven && !on) await refreshStatus();
     delete app.powerBusy[lightId];
   }
 }

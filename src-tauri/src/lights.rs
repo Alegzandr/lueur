@@ -590,11 +590,17 @@ pub fn show_lights(state: &AppState, wishes: &[(String, LightState)]) {
     });
 }
 
-/// Switch one light on or off, leaving its colour to the bulb. Allowed while
-/// the ambilight drives it: a bulb switched off stays off, the stream only
-/// sets colours.
+/// Switch one light on or off, leaving its colour to the bulb. Off takes the
+/// light out of the effect playing on it first: a stream does not leave a
+/// bulb off (a Yeelight leaves music mode and is opened again, a Tuya bulb
+/// is switched on with the next frame), so switching it off under the loop
+/// only made the bulb drop out and come back.
 pub fn set_light_power(state: &AppState, light_id: &str, on: bool) -> AppResult<()> {
     let binding = binding(state, light_id)?;
+    if !on && state.effects.mode_of(light_id).is_some() {
+        crate::auto::user_took_over(state);
+        move_lights(state, &[light_id.to_string()], None, false)?;
+    }
     state.manual.release(light_id);
     power_one(&binding.endpoint(), on).map_err(|e| named_for(state, light_id, e))?;
     remember(state, |states| {
