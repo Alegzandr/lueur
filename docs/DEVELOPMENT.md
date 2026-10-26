@@ -18,7 +18,7 @@ lueur/
 │   ├─ device/            Every family behind one stream/power/identify API:
 │   │                     WiZ, LIFX, Govee, Hue, Nanoleaf, Tuya DP encoding;
 │   │                     entertainment.rs streams to a Hue bridge over
-│   │                     dtls.rs, a DTLS 1.2 PSK client on ring;
+│   │                     dtls/, a DTLS 1.2 PSK client on ring;
 │   │                     wire.rs traces what each stream sends,
 │   │                     relink.rs brings dropped bulbs back, lease.rs
 │   │                     shares bulbs with other computers running Lueur
@@ -30,7 +30,7 @@ lueur/
 │   │  ├─ screencast.rs  Wayland: ScreenCast portal + PipeWire stream
 │   │  ├─ scale.rs       CPU shrink of a full-size frame (PipeWire)
 │   │  └─ bench.rs       What examples/capture_bench.rs measures
-│   ├─ runner.rs          The live capture→compute→push loop
+│   ├─ runner/            The live capture→compute→push loops
 │   ├─ devices.rs         Dispatch between the core families and Tuya
 │   ├─ tuya.rs            Tuya LAN control (rustuya), discovery by key
 │   ├─ tuya_cloud.rs      Smart Life QR sign-in that imports local keys
@@ -129,7 +129,7 @@ beside the username and as secret: sealed, blanked for the interface and
 left out of exports. The lamps of a bridge with one take a seat each in a
 single stream per bridge (`device/entertainment.rs`): Lueur's own
 entertainment area, named *Lueur*, set up over the CLIP v2 API with every
-lamp asking, then HueStream frames over DTLS 1.2 PSK (`device/dtls.rs`, on
+lamp asking, then HueStream frames over DTLS 1.2 PSK (`device/dtls/`, on
 `ring`, no new crate). A bridge that will not stream (another app streams,
 a lamp it cannot stream to, a round bridge without HTTPS) leaves its lamps
 on the REST API, and is tried again after half a minute.
