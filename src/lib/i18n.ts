@@ -16,9 +16,6 @@ const en = {
   nav_room: "Room",
   nav_bulbs: "Bulbs",
   nav_settings: "Settings",
-  state_no_answer: "No bulb answering",
-  stop: "Stop",
-  wait: "One moment",
   unbound_badge: "Lights without a bulb",
 
   setup_title: "Getting started",
@@ -379,9 +376,6 @@ const fr: Record<Key, string> = {
   nav_room: "Pièce",
   nav_bulbs: "Ampoules",
   nav_settings: "Réglages",
-  state_no_answer: "Aucune ampoule ne répond",
-  stop: "Arrêter",
-  wait: "Un instant",
   unbound_badge: "Lumières sans ampoule",
 
   setup_title: "Pour commencer",
@@ -734,7 +728,6 @@ const fr: Record<Key, string> = {
 };
 
 const enCounts = {
-  n_bulbs_following: ["{n} bulb following", "{n} bulbs following"],
   n_found: ["{n} found", "{n} found"],
   n_lights: ["{n} light", "{n} lights"],
   tuya_added: ["{n} Smart Life bulb was added to your room.", "{n} Smart Life bulbs were added to your room."],
@@ -746,7 +739,6 @@ const enCounts = {
 };
 type CountKey = keyof typeof enCounts;
 const frCounts: Record<CountKey, string[]> = {
-  n_bulbs_following: ["{n} ampoule active", "{n} ampoules actives"],
   n_found: ["{n} trouvée", "{n} trouvées"],
   n_lights: ["{n} lumière", "{n} lumières"],
   tuya_added: ["{n} ampoule Smart Life a été ajoutée à votre pièce.", "{n} ampoules Smart Life ont été ajoutées à votre pièce."],

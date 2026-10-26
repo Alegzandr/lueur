@@ -65,11 +65,82 @@
 
   // --- Drawing ---
 
+  /** How many zones the backdrop draws at most; more than any room holds. */
+  const MAX_POOLS = 32;
+
+  const VERTEX = `
+    attribute vec2 corner;
+    void main() { gl_Position = vec4(corner, 0.0, 1.0); }
+  `;
+
+  // Each pool falls off as a bell, so no ring marks where a slope changes,
+  // and the pools add up as light does. Then each pixel is dithered: a faint
+  // glow spans few of the 256 levels a screen shows, and rounded to them it
+  // falls into bands. A pixel's own noise, under a level either way, scatters
+  // the steps so the eye reads the slope between them.
+  const FRAGMENT = `
+    precision highp float;
+    uniform vec4 pools[${MAX_POOLS}];
+    uniform vec3 colours[${MAX_POOLS}];
+    uniform int count;
+    uniform float strength;
+    uniform float saturation;
+    const float EDGE = 0.011109; // exp(-4.5), where the bell meets 0
+
+    float hash(vec2 p) {
+      vec3 q = fract(p.xyx * 0.1031);
+      q += dot(q, q.yzx + 33.33);
+      return fract((q.x + q.y) * q.z);
+    }
+
+    void main() {
+      vec2 xy = gl_FragCoord.xy;
+      vec4 sum = vec4(0.0);
+      for (int i = 0; i < ${MAX_POOLS}; i++) {
+        if (i >= count) break;
+        float t = distance(xy, pools[i].xy) / pools[i].z;
+        if (t >= 1.0) continue;
+        float a = pools[i].w * (exp(-4.5 * t * t) - EDGE) / (1.0 - EDGE);
+        sum += vec4(colours[i] * a, a);
+      }
+      if (sum.a <= 0.0) {
+        gl_FragColor = vec4(0.0);
+        return;
+      }
+      sum = min(sum, 1.0);
+      // More saturated, as coloured light on a wall looks.
+      float grey = dot(sum.rgb, vec3(0.2126, 0.7152, 0.0722));
+      sum.rgb = clamp(mix(vec3(grey), sum.rgb, saturation), 0.0, sum.a);
+      sum *= strength;
+      float noise = (hash(xy) + hash(xy + 17.17) - 1.0) / 255.0;
+      vec4 dithered = clamp(sum + noise, 0.0, 1.0);
+      gl_FragColor = vec4(min(dithered.rgb, dithered.a), dithered.a);
+    }
+  `;
+
   let canvas: HTMLCanvasElement;
 
   $effect(() => {
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const gl = canvas.getContext("webgl", { antialias: false, depth: false, premultipliedAlpha: true });
+    if (!gl) return;
+    const program = link(gl);
+    if (!program) return;
+    gl.useProgram(program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const corner = gl.getAttribLocation(program, "corner");
+    gl.enableVertexAttribArray(corner);
+    gl.vertexAttribPointer(corner, 2, gl.FLOAT, false, 0, 0);
+    const where = {
+      pools: gl.getUniformLocation(program, "pools"),
+      colours: gl.getUniformLocation(program, "colours"),
+      count: gl.getUniformLocation(program, "count"),
+      strength: gl.getUniformLocation(program, "strength"),
+      saturation: gl.getUniformLocation(program, "saturation"),
+    };
+    const pools = new Float32Array(MAX_POOLS * 4);
+    const colours = new Float32Array(MAX_POOLS * 3);
+
     const still = matchMedia("(prefers-reduced-motion: reduce)");
     // What each zone's pool shows on screen, eased toward what its light shows.
     const shown = new Map<string, { rgb: RgbTuple; level: number; x: number; y: number }>();
@@ -77,9 +148,11 @@
     let raf = 0;
 
     const resize = () => {
-      // A third of the size is plenty for soft light, and cheap.
-      canvas.width = Math.max(1, Math.round(canvas.clientWidth / 3));
-      canvas.height = Math.max(1, Math.round(canvas.clientHeight / 3));
+      // Drawn pixel for pixel: the dither only hides the bands at the size
+      // the screen shows them.
+      canvas.width = Math.max(1, Math.round(canvas.clientWidth * devicePixelRatio));
+      canvas.height = Math.max(1, Math.round(canvas.clientHeight * devicePixelRatio));
+      gl.viewport(0, 0, canvas.width, canvas.height);
     };
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
@@ -89,9 +162,6 @@
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
       const { width: w, height: h } = canvas;
-      ctx.globalCompositeOperation = "source-over";
-      ctx.clearRect(0, 0, w, h);
-      ctx.globalCompositeOperation = "lighter";
 
       const seen = new Set<string>();
       for (const spot of spots) {
@@ -103,10 +173,11 @@
           // A light with several zones spreads them side by side.
           const x = spot.x + (j - (zones.length - 1) / 2) * 0.05;
           const s = shown.get(key) ?? { rgb, level: 0, x, y: spot.y };
-          // A frame lands as fast as on the bulb: a beat at once, then the
-          // glide the bulb itself makes. Set by hand, it fades gently. Reduced
-          // motion keeps the colours but never flashes them.
-          const tau = still.matches ? 1.5 : driven ? (level > s.level ? 0.01 : 0.05) : 0.35;
+          // A frame swells in quickly and ebbs a little slower: the beat still
+          // shows, but a pool this large never flashes on screen, whatever
+          // the tempo (the bulbs keep their own speed). Set by hand, it fades
+          // gently. Reduced motion keeps the colours but only drifts.
+          const tau = still.matches ? 1.5 : driven ? (level > s.level ? 0.06 : 0.15) : 0.35;
           const k = 1 - Math.exp(-dt / tau);
           s.rgb = s.rgb.map((c, i) => c + (rgb[i] - c) * k) as RgbTuple;
           s.level += (level - s.level) * k;
@@ -115,6 +186,7 @@
           shown.set(key, s);
         });
       }
+      let n = 0;
       for (const [key, s] of shown) {
         // Lights turned off or stopped fade out rather than vanish.
         if (!seen.has(key)) {
@@ -124,8 +196,25 @@
             continue;
           }
         }
-        pool(ctx, s.x * w, s.y * h, Math.max(w, h) * (0.32 + 0.12 * s.level), s.rgb, s.level);
+        if (n === MAX_POOLS) continue;
+        // The eye reads a dim bulb as brighter than its share of full power.
+        pools.set([s.x * w, (1 - s.y) * h, Math.max(w, h) * (0.32 + 0.12 * s.level), 0.75 * Math.pow(s.level, 0.6)], n * 4);
+        colours.set(s.rgb.map((c) => c / 255), n * 3);
+        n++;
       }
+
+      // The theme sets how strongly the glow shows, and how pure.
+      const style = getComputedStyle(canvas);
+      const strength = parseFloat(style.getPropertyValue("--backdrop")) || 0.7;
+      const saturation = parseFloat(style.getPropertyValue("--backdrop-saturation")) || 1;
+      gl.uniform4fv(where.pools, pools);
+      gl.uniform3fv(where.colours, colours);
+      gl.uniform1i(where.count, n);
+      gl.uniform1f(where.strength, strength);
+      gl.uniform1f(where.saturation, saturation);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
@@ -135,16 +224,24 @@
     };
   });
 
-  function pool(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, [cr, cg, cb]: RgbTuple, level: number) {
-    // The eye reads a dim bulb as brighter than its share of full power.
-    const a = Math.pow(level, 0.6);
-    const c = `${Math.round(cr)} ${Math.round(cg)} ${Math.round(cb)}`;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, `rgb(${c} / ${0.75 * a})`);
-    g.addColorStop(0.45, `rgb(${c} / ${0.3 * a})`);
-    g.addColorStop(1, `rgb(${c} / 0)`);
-    ctx.fillStyle = g;
-    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  function link(gl: WebGLRenderingContext): WebGLProgram | null {
+    const program = gl.createProgram();
+    for (const [type, source] of [
+      [gl.VERTEX_SHADER, VERTEX],
+      [gl.FRAGMENT_SHADER, FRAGMENT],
+    ] as const) {
+      const shader = gl.createShader(type);
+      if (!shader) return null;
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      gl.attachShader(program, shader);
+    }
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.warn("backdrop:", gl.getProgramInfoLog(program));
+      return null;
+    }
+    return program;
   }
 </script>
 
@@ -157,8 +254,6 @@
     width: 100%;
     height: 100%;
     pointer-events: none;
-    opacity: var(--backdrop);
-    filter: blur(24px) saturate(1.15);
     animation: arrive 600ms var(--ease);
   }
   @keyframes arrive {

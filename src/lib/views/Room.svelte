@@ -1207,7 +1207,7 @@
     opacity: 1;
   }
   .bulb {
-    filter: drop-shadow(0 calc(1px * var(--k)) calc(2px * var(--k)) oklch(0 0 0 / 0.3));
+    filter: drop-shadow(0 calc(1px * var(--k)) calc(2px * var(--k)) var(--pin-shadow));
     stroke: var(--plan-floor);
     stroke-width: calc(2.5px * var(--k));
   }

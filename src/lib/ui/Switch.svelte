@@ -57,9 +57,7 @@
     height: 15px;
     border-radius: 50%;
     background: #fff;
-    box-shadow:
-      0 0 0 0.5px oklch(0 0 0 / 0.08),
-      0 1px 2.5px oklch(0 0 0 / 0.28);
+    box-shadow: var(--knob-shadow);
     transition: transform 220ms var(--ease);
   }
   .switch:active:not(:disabled) .knob {

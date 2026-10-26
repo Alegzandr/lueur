@@ -499,6 +499,7 @@
                 class="swatch"
                 class:lit={b && isOn(l.id)}
                 class:off={b && !isOn(l.id)}
+                class:driven
                 style="--c:{b && !driven ? tintCss(s.tint) : 'var(--line-strong)'}{driven ? `;background:${modeSwatch(lm, s)}` : ''}"
                 aria-hidden="true"
               ></span>
@@ -867,8 +868,8 @@
     border-radius: 4px;
     background: linear-gradient(90deg, oklch(0.66 0.16 55), oklch(0.45 0.12 300), oklch(0.6 0.16 250));
     box-shadow:
-      0 0 0 3px oklch(0.2 0 0),
-      0 10px 18px -6px oklch(0 0 0 / 0.5);
+      0 0 0 3px var(--bezel),
+      var(--bezel-shadow);
   }
   .tile-text {
     display: flex;
@@ -920,8 +921,6 @@
   .mood-text {
     display: flex;
     flex-direction: column;
-  }
-  .mood-text {
     gap: 3px;
   }
   .mood.active {
@@ -930,19 +929,30 @@
   .mood.pending .mood-dot {
     animation: breathe 800ms var(--ease) infinite alternate;
   }
+  /* A dimmer mood is a fainter dot; the fade is on the fill alone, so the
+     edge that keeps Daylight visible on a white tile stays whole. */
   .mood-dot {
     width: 14px;
     height: 14px;
     flex: none;
     border-radius: 50%;
-    background: var(--c);
-    opacity: var(--a);
-    box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.15);
+    background: color-mix(in oklab, var(--c) calc(var(--a) * 100%), transparent);
+    box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.14);
   }
 
+  /* The section titles sit on the lights' glow, not on a card: a step darker
+     than elsewhere, and a halo of the page's own ground under the letters,
+     so they keep 4.5:1 however bright the room is. */
+  .group-title {
+    color: var(--text-2);
+    text-shadow:
+      0 0 2px var(--bg),
+      0 0 6px var(--bg),
+      0 0 14px var(--bg);
+  }
   /* Who it goes to, in the neutral ink of a selection. */
   .for {
-    color: var(--text-2);
+    color: var(--text);
     font-weight: 500;
   }
 
@@ -977,9 +987,18 @@
       box-shadow 400ms var(--ease),
       background 300ms var(--ease);
   }
+  /* A hairline keeps a near-white bulb visible on a white card. */
   .swatch.lit {
     box-shadow:
+      inset 0 0 0 0.5px oklch(0 0 0 / 0.18),
       0 0 0 3px color-mix(in oklab, var(--c) 28%, transparent);
+  }
+  /* An effect's swatch is a gradient, with no one colour to haze: the halo
+     is the amber of something running instead of a grey that reads as off. */
+  .swatch.lit.driven {
+    box-shadow:
+      inset 0 0 0 0.5px oklch(0 0 0 / 0.18),
+      0 0 0 3px var(--active-soft);
   }
   .swatch.off {
     background: transparent;
@@ -1154,7 +1173,7 @@
   .kelvin::-webkit-slider-runnable-track {
     height: 8px;
     background: linear-gradient(to right, var(--warm), var(--mid), var(--cool));
-    box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.12);
+    box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.12);
   }
   .kelvin::-webkit-slider-thumb {
     margin-top: -5px;
@@ -1162,6 +1181,7 @@
   .kelvin::-moz-range-track {
     height: 8px;
     background: linear-gradient(to right, var(--warm), var(--mid), var(--cool));
+    box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.12);
   }
   .kelvin::-moz-range-progress {
     background: transparent;

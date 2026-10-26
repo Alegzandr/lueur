@@ -22,12 +22,12 @@
   --line: oklch(0.9 0 0);
   --line-strong: oklch(0.83 0 0);
 
-  --text: oklch(0.2 0 0);
-  --text-2: oklch(0.43 0 0);
-  --text-3: oklch(0.52 0 0);
+  --text: oklch(0.19 0 0);
+  --text-2: oklch(0.4 0 0);
+  --text-3: oklch(0.49 0 0);
 
-  --ink: oklch(0.24 0 0);
-  --ink-hover: oklch(0.16 0 0);
+  --ink: oklch(0.27 0 0);
+  --ink-hover: oklch(0.21 0 0);
   --on-ink: oklch(0.99 0 0);
 
   --glow: oklch(0.76 0.15 70);
@@ -40,7 +40,7 @@
   --active: oklch(0.58 0.13 62);
   --active-text: oklch(0.5 0.12 60);
   --active-soft: oklch(0.76 0.15 70 / 0.16);
-  --select: oklch(0.3 0 0);
+  --select: oklch(0.34 0 0);
   --select-soft: oklch(0 0 0 / 0.045);
 
   --ok: oklch(0.58 0.14 150);
@@ -59,14 +59,24 @@
   --plan-bg: oklch(0.955 0 0);
   --plan-grid: oklch(0.87 0 0);
   --plan-floor: oklch(1 0 0);
-  --plan-wall: oklch(0.28 0 0);
+  --plan-wall: oklch(0.5 0 0);
 
   /* Raised controls: a hairline, a soft contact shadow, a lit top edge. */
   --control-bg: linear-gradient(oklch(1 0 0), oklch(0.985 0 0));
-  --control-edge: 0 0 0 0.5px oklch(0 0 0 / 0.16), 0 1px 1.5px oklch(0 0 0 / 0.08);
+  /* On paper a half-pixel edge melts into the grey around it: light edges
+     are a whole pixel, fainter, with a shadow that lifts a card off the page. */
+  --control-edge: 0 0 0 1px oklch(0 0 0 / 0.1), 0 1px 2px oklch(0 0 0 / 0.07);
   --control-hi: inset 0 1px 0 oklch(1 0 0 / 0.9);
-  --card-edge: 0 0 0 0.5px oklch(0 0 0 / 0.1), 0 1px 2px oklch(0 0 0 / 0.04);
-  --float: 0 0 0 0.5px oklch(0 0 0 / 0.12), 0 12px 32px -8px oklch(0 0 0 / 0.22);
+  --card-edge: 0 0 0 1px oklch(0 0 0 / 0.065), 0 1px 2px oklch(0 0 0 / 0.04), 0 4px 12px -6px oklch(0 0 0 / 0.08);
+  --float: 0 0 0 1px oklch(0 0 0 / 0.06), 0 2px 6px -2px oklch(0 0 0 / 0.06), 0 12px 32px -10px oklch(0 0 0 / 0.16);
+  /* Shadows on paper stay faint and nothing is drawn in pure black: deep
+     shadows and near-black parts are the dark theme's, and give it away. */
+  --thumb-edge: 0 0 0 1px oklch(0 0 0 / 0.1);
+  --thumb-shadow: var(--thumb-edge), 0 1px 2px oklch(0 0 0 / 0.12);
+  --knob-shadow: 0 0 0 0.5px oklch(0 0 0 / 0.08), 0 1px 2px oklch(0 0 0 / 0.16);
+  --pin-shadow: oklch(0 0 0 / 0.16);
+  --bezel: oklch(0.42 0 0);
+  --bezel-shadow: 0 8px 16px -8px oklch(0 0 0 / 0.2);
   /* Keyboard focus: amber like the rest of the chrome, dark enough to read
      at 3:1 on every surface. An outline, so components' own shadows keep it. */
   --focus: oklch(0.6 0.13 64);
@@ -99,8 +109,11 @@
   --dur: 140ms;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 
-  /* How strongly the lights' glow shows behind the Lighting view. */
-  --backdrop: 0.75;
+  /* How strongly the lights' glow shows behind the Lighting view, and how
+     saturated. On paper a glow reads as a coloured tint, not a haze: less of
+     it, purer. */
+  --backdrop: 0.6;
+  --backdrop-saturation: 1.5;
 
   color-scheme: light;
 }
@@ -149,7 +162,14 @@
     --float: 0 0 0 0.5px oklch(1 0 0 / 0.1), 0 14px 36px -8px oklch(0 0 0 / 0.65);
     --focus: oklch(0.8 0.14 72);
     --control-line: oklch(0.54 0 0);
+    --thumb-edge: 0 0 0 0.5px oklch(0 0 0 / 0.22);
+    --thumb-shadow: var(--thumb-edge), 0 1px 3px oklch(0 0 0 / 0.22);
+    --knob-shadow: 0 0 0 0.5px oklch(0 0 0 / 0.08), 0 1px 2.5px oklch(0 0 0 / 0.28);
+    --pin-shadow: oklch(0 0 0 / 0.3);
+    --bezel: oklch(0.2 0 0);
+    --bezel-shadow: 0 10px 18px -6px oklch(0 0 0 / 0.5);
     --backdrop: 0.7;
+    --backdrop-saturation: 1.15;
     color-scheme: dark;
   }
 }
@@ -194,7 +214,14 @@
   --float: 0 0 0 0.5px oklch(1 0 0 / 0.1), 0 14px 36px -8px oklch(0 0 0 / 0.65);
   --focus: oklch(0.8 0.14 72);
   --control-line: oklch(0.54 0 0);
+  --thumb-edge: 0 0 0 0.5px oklch(0 0 0 / 0.22);
+  --thumb-shadow: var(--thumb-edge), 0 1px 3px oklch(0 0 0 / 0.22);
+  --knob-shadow: 0 0 0 0.5px oklch(0 0 0 / 0.08), 0 1px 2.5px oklch(0 0 0 / 0.28);
+  --pin-shadow: oklch(0 0 0 / 0.3);
+  --bezel: oklch(0.2 0 0);
+  --bezel-shadow: 0 10px 18px -6px oklch(0 0 0 / 0.5);
   --backdrop: 0.7;
+  --backdrop-saturation: 1.15;
   color-scheme: dark;
 }
 
@@ -507,9 +534,7 @@ input[type="range"]::-webkit-slider-thumb {
   margin-top: -7px;
   border-radius: 50%;
   background: linear-gradient(oklch(1 0 0), oklch(0.97 0 0));
-  box-shadow:
-    0 0 0 0.5px oklch(0 0 0 / 0.22),
-    0 1px 3px oklch(0 0 0 / 0.22);
+  box-shadow: var(--thumb-shadow);
   transition:
     transform var(--dur) var(--ease),
     box-shadow var(--dur) var(--ease);
@@ -525,13 +550,13 @@ input[type="range"]:focus-visible {
 }
 input[type="range"]:focus-visible::-webkit-slider-thumb {
   box-shadow:
-    0 0 0 0.5px oklch(0 0 0 / 0.22),
+    var(--thumb-edge),
     0 0 0 2px var(--surface),
     0 0 0 4px var(--focus);
 }
 input[type="range"]:focus-visible::-moz-range-thumb {
   box-shadow:
-    0 0 0 0.5px oklch(0 0 0 / 0.22),
+    var(--thumb-edge),
     0 0 0 2px var(--surface),
     0 0 0 4px var(--focus);
 }
@@ -551,9 +576,7 @@ input[type="range"]::-moz-range-thumb {
   border: none;
   border-radius: 50%;
   background: oklch(1 0 0);
-  box-shadow:
-    0 0 0 0.5px oklch(0 0 0 / 0.22),
-    0 1px 3px oklch(0 0 0 / 0.22);
+  box-shadow: var(--thumb-shadow);
 }
 
 /* Reduced motion: things arrive and change state at once, and nothing loops.

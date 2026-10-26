@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { app, bootstrap, fail, notify, refreshStatus, reloadStates, sleepChanged, toggleEffect, type View } from "./lib/state.svelte";
-  import { lang, t, tn } from "./lib/i18n";
+  import { lang, t } from "./lib/i18n";
   import { onAutoStarted, onEffectChanged, onLightsChanged, onSleepChanged, onUpdateReady, setUiLanguage, setWindowTheme, updateReady } from "./lib/ipc";
   import { MOD_KEY, OWN_TITLEBAR } from "./lib/platform";
   import Icon, { type IconName } from "./lib/ui/Icon.svelte";
@@ -111,11 +111,13 @@
       Lueur
     </div>
 
+    <!-- Settings sit apart at the foot, away from the views used day to day. -->
     <nav aria-label="Lueur">
       {#each nav as n (n.id)}
         <button
           class="nav-item"
           class:active={app.view === n.id}
+          class:foot={n.id === "settings"}
           aria-current={app.view === n.id ? "page" : undefined}
           title="{n.label()} ({MOD_KEY}{n.key})"
           onclick={() => (app.view = n.id)}
@@ -128,34 +130,6 @@
         </button>
       {/each}
     </nav>
-
-    <div class="foot">
-      <!-- Effects start from the Lighting view; this only shows one running, from any view. -->
-      {#if app.status.running}
-        <div class="power live">
-          <div class="state" role="status">
-            <span class="lamp" aria-hidden="true"></span>
-            <div>
-              <div class="state-title">{t(`mode_${app.status.mode ?? "mixed"}`)}</div>
-              <div class="state-sub">
-                {app.status.connected_lights === 0
-                  ? t("state_no_answer")
-                  : tn("n_bulbs_following", app.status.connected_lights)}
-              </div>
-            </div>
-          </div>
-          <button
-            class="btn power-btn"
-            disabled={app.busy}
-            title="{t('stop')} ({MOD_KEY}Enter)"
-            onclick={toggleEffect}
-          >
-            <Icon name="power" size={14} />
-            {app.busy ? t("wait") : t("stop")}
-          </button>
-        </div>
-      {/if}
-    </div>
   </aside>
 
   <main class="content">
@@ -214,25 +188,34 @@
     font-size: var(--t-lg);
     font-weight: 600;
   }
+  /* The mark is wider than the nav icons: centred on their column, it takes
+     no more room than they do, so the name lines up with the labels. */
+  .brand :global(svg) {
+    margin-inline: -3px;
+  }
   /* The whole row drags the window, logo included. */
   .brand[data-tauri-drag-region] :global(svg) {
     pointer-events: none;
   }
 
   nav {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: var(--s-1);
   }
   .nav-item {
     display: flex;
     align-items: center;
     gap: var(--s-2);
-    height: 30px;
+    height: 36px;
     padding: 0 var(--s-2);
     border-radius: var(--r-md);
     color: var(--text-2);
     text-align: left;
+    transition:
+      background-color var(--dur) var(--ease),
+      color var(--dur) var(--ease);
   }
   .nav-item:hover {
     background: var(--surface-hover);
@@ -263,53 +246,8 @@
     text-align: center;
   }
 
-  .foot {
+  .nav-item.foot {
     margin-top: auto;
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-2);
-  }
-
-  .power {
-    position: relative;
-    padding: var(--s-3);
-    border-radius: var(--r-lg);
-    background: var(--surface);
-    box-shadow: var(--card-edge);
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-3);
-    overflow: hidden;
-    isolation: isolate;
-  }
-  /* While an effect plays, a little of its light spills into the panel. */
-  .power.live::before {
-    content: "";
-    position: absolute;
-    inset: -40% -20% auto;
-    height: 120%;
-    z-index: -1;
-    background: radial-gradient(closest-side, var(--glow-soft), transparent);
-    opacity: 0.7;
-  }
-  .state {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--s-2);
-  }
-  .lamp {
-    --lamp: 8px;
-    margin-top: 5px;
-  }
-  .state-title {
-    font-weight: 600;
-  }
-  .state-sub {
-    font-size: var(--t-sm);
-    color: var(--text-3);
-  }
-  .power-btn {
-    width: 100%;
   }
 
   .content {
