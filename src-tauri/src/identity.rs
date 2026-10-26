@@ -227,6 +227,7 @@ mod tests {
                 ip: "192.168.1.2".into(),
                 username: "hue-secret".into(),
                 cert: cert.into(),
+                clientkey: String::new(),
             }],
             nanoleaf: vec![NanoleafPairing {
                 id: "n1".into(),
@@ -248,6 +249,7 @@ mod tests {
             fw_ver: None,
             kind,
             paired,
+            faster: false,
         }
     }
 
@@ -256,6 +258,7 @@ mod tests {
             username: String::new(),
             light: String::new(),
             cert: cert.into(),
+            clientkey: String::new(),
         };
         heard("hue:b1", ip, kind, false)
     }
@@ -308,6 +311,7 @@ mod tests {
                 username: String::new(),
                 light: "3".into(),
                 cert: PIN.into(),
+                clientkey: String::new(),
             },
             true,
         );

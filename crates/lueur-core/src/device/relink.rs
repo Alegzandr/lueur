@@ -146,6 +146,10 @@ pub struct Relink {
     backoff: Backoff,
     next_try: Instant,
     interval: Duration,
+    /// How long a command takes to show, and how many zones the light
+    /// plays as: those of the stream it opened with.
+    latency: Duration,
+    zones: usize,
     /// When the stream on trial was reopened (see [`RELINK_STABLE`]).
     trial: Option<Instant>,
     stable: Duration,
@@ -172,7 +176,11 @@ impl Relink {
     /// stream fails.
     pub fn new(stream: Box<dyn LightStream>, open: Opener) -> Self {
         let interval = stream.interval();
-        Self::with(Some(stream), open, interval, Link::Up)
+        let (latency, zones) = (stream.latency(), stream.zones());
+        let mut relink = Self::with(Some(stream), open, interval, Link::Up);
+        relink.latency = latency;
+        relink.zones = zones;
+        relink
     }
 
     /// A link whose bulb is busy (`Held` or `Taken`), opened by `open` once
@@ -194,6 +202,8 @@ impl Relink {
     ) -> Self {
         Relink {
             interval,
+            latency: super::DEFAULT_LATENCY,
+            zones: 1,
             open,
             stream,
             stale: None,
@@ -217,6 +227,13 @@ impl Relink {
     /// another computer holds it.
     pub fn gated(mut self, gate: Gate) -> Self {
         self.gate = Some(gate);
+        self
+    }
+
+    /// The time a command to the bulb takes to show, for a link whose bulb
+    /// is not open yet (see [`super::latency_of`]).
+    pub fn answering(mut self, latency: Duration) -> Self {
+        self.latency = latency;
         self
     }
 
@@ -250,10 +267,25 @@ impl Relink {
         self.interval
     }
 
+    /// How long a command takes to show (see [`LightStream::latency`]).
+    pub fn latency(&self) -> Duration {
+        self.latency
+    }
+
+    /// How many zones the light plays as (see [`LightStream::zones`]).
+    pub fn zones(&self) -> usize {
+        self.zones
+    }
+
     /// Send one frame if the bulb is there; otherwise move the reconnection
     /// along. A stream that opened since the last frame gets this one in
     /// full, since it has sent nothing yet.
     pub fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) {
+        self.push_zones(&[output], effect, duration_ms);
+    }
+
+    /// [`Relink::push`], with an output for each zone, left to right.
+    pub fn push_zones(&mut self, outputs: &[BulbOutput], effect: Effect, duration_ms: u32) {
         if !self.cleared() {
             return;
         }
@@ -261,7 +293,12 @@ impl Relink {
         let Some(stream) = self.stream.as_mut() else {
             return;
         };
-        match stream.push(output, effect, duration_ms) {
+        let sent = match outputs {
+            [] => return,
+            [output] => stream.push(*output, effect, duration_ms),
+            _ => stream.push_zones(outputs, effect, duration_ms),
+        };
+        match sent {
             Ok(()) => {
                 if self.trial.is_some_and(|t| t.elapsed() >= self.stable) {
                     log::info!(light = self.name.as_str(); "a light is back");

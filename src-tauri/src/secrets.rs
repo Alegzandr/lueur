@@ -12,7 +12,14 @@ use lueur_core::device::{DeviceKind, DiscoveredDevice, Pairings, hue, nanoleaf, 
 
 fn blank(kind: &mut DeviceKind) {
     match kind {
-        DeviceKind::Hue { username, .. } => username.clear(),
+        DeviceKind::Hue {
+            username,
+            clientkey,
+            ..
+        } => {
+            username.clear();
+            clientkey.clear();
+        }
         DeviceKind::Nanoleaf { token } => token.clear(),
         DeviceKind::Tuya { key, .. } => key.clear(),
         _ => {}
@@ -45,7 +52,12 @@ pub fn redact_devices(devices: &mut [DiscoveredDevice]) {
 /// whatever it held, so no copy can bring it back to the clear.
 pub fn restore(id: &str, ip: &str, kind: &mut DeviceKind, pairings: &Pairings) -> bool {
     match kind {
-        DeviceKind::Hue { username, cert, .. } => {
+        DeviceKind::Hue {
+            username,
+            cert,
+            clientkey,
+            ..
+        } => {
             // `hue:<bridge>:<light>`
             let bridge = id
                 .strip_prefix(hue::ID_PREFIX)
@@ -58,6 +70,7 @@ pub fn restore(id: &str, ip: &str, kind: &mut DeviceKind, pairings: &Pairings) -
                 Some(h) => {
                     username.clone_from(&h.username);
                     cert.clone_from(&h.cert);
+                    clientkey.clone_from(&h.clientkey);
                 }
                 None => return false,
             }
@@ -114,15 +127,22 @@ pub fn restore_bindings(cfg: &mut AppConfig, previous: &[DeviceBinding]) {
             let credential = before.kind.clone();
             match (&mut b.kind, credential) {
                 (
-                    DeviceKind::Hue { username, cert, .. },
+                    DeviceKind::Hue {
+                        username,
+                        cert,
+                        clientkey,
+                        ..
+                    },
                     DeviceKind::Hue {
                         username: u,
                         cert: c,
+                        clientkey: k,
                         ..
                     },
                 ) => {
                     *username = u;
                     *cert = c;
+                    *clientkey = k;
                 }
                 (DeviceKind::Nanoleaf { token }, DeviceKind::Nanoleaf { token: t }) => *token = t,
                 (DeviceKind::Tuya { key, .. }, DeviceKind::Tuya { key: k, .. }) => *key = k,
@@ -257,6 +277,7 @@ mod tests {
                 ip: "192.168.1.2".into(),
                 username: "hue-secret".into(),
                 cert: "c1".repeat(32),
+                clientkey: "hue-secret-key".into(),
             }],
             nanoleaf: vec![NanoleafPairing {
                 id: "n1".into(),
@@ -296,6 +317,7 @@ mod tests {
                         username: "hue-secret".into(),
                         light: "3".into(),
                         cert: "c1".repeat(32),
+                        clientkey: "hue-secret-key".into(),
                     },
                 ),
                 binding(
@@ -371,6 +393,7 @@ mod tests {
             ip: "192.168.1.4".into(),
             username: String::new(),
             cert: String::new(),
+            clientkey: String::new(),
         });
         merge_pairings(&mut here, imported);
         assert_eq!(here, pairings());
@@ -402,8 +425,10 @@ mod tests {
                 username: username.into(),
                 light: "3".into(),
                 cert: cert.into(),
+                clientkey: String::new(),
             },
             paired: true,
+            faster: false,
         }
     }
 

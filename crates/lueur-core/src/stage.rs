@@ -18,6 +18,7 @@
 use crate::color::{BulbOutput, Rgb};
 use crate::geometry::{Light, Screen};
 use crate::show::{PARTY, ShowSettings, blend, even, output};
+use crate::sync::{Lag, timing};
 use std::collections::VecDeque;
 use std::f32::consts::TAU;
 use std::time::Duration;
@@ -303,74 +304,106 @@ const ON_BEAT: f32 = 0.18;
 /// How sure the clock must be before it plays the beats itself.
 const SURE: i32 = 4;
 const SUREST: i32 = 8;
-/// Beats in a row with no kick before the clock lets go: a kick on every
-/// other beat (rock's one and three) keeps it, a breakdown does not.
+/// Beats in a row with nothing struck on them before the clock lets go: a
+/// kick on every other beat (rock's one and three) keeps it, a breakdown
+/// with nothing but a pad does not.
 const MISSES: u32 = 3;
-/// How early a beat goes out, so it reaches the bulb as the kick reaches the
-/// ear: the trip over the network and the LEDs' own rise.
+/// How early a beat goes out until the lights say how long they take, so it
+/// reaches the bulb as the kick reaches the ear: the trip over the network
+/// and the LEDs' own rise.
 pub const LEAD: f32 = 0.05;
-/// How far back the kicks the tempo is read from go, seconds.
+/// The earliest a beat may go out. Past this the clock would be guessing
+/// more than a short way ahead of what it heard.
+pub const MOST_LEAD: f32 = 0.25;
+/// How far back the hits the tempo is read from go, seconds.
 const MEMORY: f32 = 6.0;
+/// The most hits the tempo is read from: a snare roll must not make
+/// reading it slow.
+const MEMORY_HITS: usize = 48;
+/// The least time between two readings of the tempo while the clock is
+/// unsure, seconds.
+const REREAD: f32 = 0.25;
+
+/// What a hit is worth to the clock, by what struck it. The kick sets the
+/// beat; a snare, or a strum or a chord heard in the whole mix, keeps a
+/// track without a kick in time, and the kick's own clock in phase through
+/// a fill. Hi-hats do not count: they come so thick that they would keep
+/// any clock going.
+const KICK_WEIGHT: f32 = 1.0;
+const SNARE_WEIGHT: f32 = 0.6;
+const PULSE_WEIGHT: f32 = 0.5;
 /// The analyser's clock moves back by this many seconds whenever it reaches
 /// twice that, so an `f32` keeps it to the sample after hours of music.
 const CLOCK_SPAN: f32 = 600.0;
+/// The furthest past the last sample heard the clock reads the music to
+/// have got: about the longest gap between two packets of sound.
+const AHEAD: f32 = 0.04;
+/// A gap between two packets this much longer than usual is a stall, not
+/// the two clocks drifting apart.
+const STALL: f32 = 0.2;
 
-/// The beat's clock: the tempo, read from where the kicks fall, and when the
+/// The beat's clock: the tempo, read from where the hits fall, and when the
 /// next beat is due.
 ///
-/// Once the kicks agree on a tempo, the show plays the beats from this clock
+/// Once the hits agree on a tempo, the show plays the beats from this clock
 /// rather than from each kick as it is heard. A beat can then go out a little
 /// early, so it lands on the bulbs with the kick instead of after it, and a
 /// kick the ear hears but the bass did not show still gets its beat. Every
-/// kick heard on the beat pulls the clock back into phase; when they stop
-/// coming (a breakdown, the next track) it lets go, and every kick plays as
-/// it is heard until a tempo is found again.
+/// hit on the beat pulls the clock back into phase, the kick hardest; when
+/// they stop coming (a breakdown, the next track) it lets go, and every kick
+/// plays as it is heard until a tempo is found again. A track with no kick
+/// at all (a band without drums, a ballad) is read from its snares and its
+/// strums alone, and its beats come only from the clock.
 #[derive(Debug, Clone, Default)]
 struct Tempo {
-    /// When the recent kicks fell, seconds.
-    kicks: VecDeque<f32>,
+    /// When the recent hits fell, seconds, and what each is worth.
+    hits: VecDeque<(f32, f32)>,
     /// Seconds a beat; 0 while none is known.
     period: f32,
     /// When the next beat is due.
     next: f32,
     sure: i32,
-    /// Beats in a row that came without a kick.
+    /// Beats in a row that came with nothing struck on them.
     missed: u32,
     /// The next beat has already been played.
     played: bool,
     /// How hard the kicks have been landing.
     strength: f32,
+    /// When the tempo was last read.
+    read_at: f32,
 }
 
 impl Tempo {
     /// Move every time it holds `by` seconds earlier, with the clock.
     fn rewind(&mut self, by: f32) {
-        for k in &mut self.kicks {
+        for (k, _) in &mut self.hits {
             *k -= by;
         }
         self.next -= by;
+        self.read_at -= by;
     }
 
     fn locked(&self) -> bool {
         self.period > 0.0 && self.sure >= SURE
     }
 
+    fn remember(&mut self, t: f32, weight: f32) {
+        self.hits.push_back((t, weight));
+        while self.hits.len() > MEMORY_HITS
+            || self.hits.front().is_some_and(|&(k, _)| t - k > MEMORY)
+        {
+            self.hits.pop_front();
+        }
+    }
+
     /// A kick heard at `t`. Whether to play it as a beat.
     fn kick(&mut self, t: f32, strength: f32) -> bool {
-        self.kicks.push_back(t);
-        while self.kicks.front().is_some_and(|&k| t - k > MEMORY) {
-            self.kicks.pop_front();
-        }
+        self.remember(t, KICK_WEIGHT);
         self.strength += (strength - self.strength) * 0.3;
         if self.period > 0.0 && (t - self.next).abs() < ON_BEAT * self.period {
             // On the beat: pull the clock into phase and move on to the next.
             let play = !self.locked() || !self.played;
-            let e = t - self.next;
-            self.sure = (self.sure + 1).min(SUREST);
-            self.missed = 0;
-            self.period = (self.period + 0.05 * e).clamp(FASTEST, SLOWEST);
-            self.next += 0.5 * e + self.period;
-            self.played = false;
+            self.land(t, KICK_WEIGHT);
             return play;
         }
         if !self.locked() {
@@ -386,18 +419,46 @@ impl Tempo {
         from_beat > 0.3 * self.period
     }
 
-    /// Read the tempo from the recent kicks, and set the clock going from
-    /// the latest, at `t`.
+    /// Something other than a kick struck at `t`, worth `weight`: it is
+    /// never played as heard, it only keeps the clock.
     ///
-    /// Every pair of kicks votes for the tempos it is a whole number of beats
-    /// of; a pair one beat apart counts most, so half the tempo (which fits
-    /// every pair too) does not win. A slight lean towards 120 beats a minute
-    /// settles the rest.
+    /// Its window is narrower than a kick's, and one off the beat costs the
+    /// clock nothing: snares and strums fall between the beats all the time.
+    fn hit(&mut self, t: f32, weight: f32) {
+        self.remember(t, weight);
+        if self.period > 0.0 && (t - self.next).abs() < 0.6 * ON_BEAT * self.period {
+            self.land(t, weight);
+        } else if !self.locked() && t - self.read_at > REREAD {
+            self.find(t);
+        }
+    }
+
+    /// A hit worth `weight` landed on the beat due, at `t`: pull the clock
+    /// towards it and move on to the next.
+    fn land(&mut self, t: f32, weight: f32) {
+        let e = t - self.next;
+        self.sure = (self.sure + 1).min(SUREST);
+        self.missed = 0;
+        self.period = (self.period + 0.05 * weight * e).clamp(FASTEST, SLOWEST);
+        self.next += 0.5 * weight * e + self.period;
+        self.played = false;
+    }
+
+    /// Read the tempo from the recent hits, and set the clock going on the
+    /// beats they fall on, the first one after `t`.
+    ///
+    /// Every pair of hits votes for the tempos it is a whole number of beats
+    /// of, as much as both are worth; a pair one beat apart counts most, so
+    /// half the tempo (which fits every pair too) does not win. A slight
+    /// lean towards 120 beats a minute settles the rest. Then the beats are
+    /// laid where the most is struck on them: on the kicks, in a track that
+    /// has them, rather than on the offbeat strums.
     fn find(&mut self, t: f32) {
-        if self.kicks.len() < 4 {
+        self.read_at = t;
+        if self.hits.len() < 4 {
             return;
         }
-        let kicks: Vec<f32> = self.kicks.iter().copied().collect();
+        let hits: Vec<(f32, f32)> = self.hits.iter().copied().collect();
         let fit = |d: f32, p: f32| {
             let k = (d / p).round();
             if !(1.0..=4.0).contains(&k) {
@@ -412,9 +473,9 @@ impl Tempo {
             let p = FASTEST + (SLOWEST - FASTEST) * s as f32 / STEPS as f32;
             let lean = (p / 0.5).log2() / 0.7;
             let mut score = 0.0;
-            for (i, a) in kicks.iter().enumerate() {
-                for b in &kicks[i + 1..] {
-                    score += fit(b - a, p);
+            for (i, &(a, wa)) in hits.iter().enumerate() {
+                for &(b, wb) in &hits[i + 1..] {
+                    score += wa * wb * fit(b - a, p);
                 }
             }
             score *= (-0.5 * lean * lean).exp();
@@ -426,45 +487,68 @@ impl Tempo {
         if p == 0.0 {
             return;
         }
-        // How many of the kicks the beats through the latest one pass by.
-        let on = kicks
-            .iter()
-            .filter(|&&k| {
-                let x = (t - k) / p;
+        // The hits a grid of beats through `at` passes by, and what they
+        // are worth.
+        let on_grid = |at: f32| {
+            hits.iter().filter(move |&&(k, _)| {
+                let x = (at - k) / p;
                 (x - x.round()).abs() * p < 0.03
             })
-            .count() as i32;
+        };
+        let anchor = hits
+            .iter()
+            .map(|&(k, _)| (k, on_grid(k).map(|&(_, w)| w).sum::<f32>()))
+            .max_by(|a, b| a.1.total_cmp(&b.1).then(a.0.total_cmp(&b.0)))
+            .map_or(t, |(k, _)| k);
         self.period = p;
-        self.next = t + p;
-        self.sure = (on - 2).clamp(0, SUREST);
+        // The first beat of that grid after `t`; one just before it is the
+        // beat `t` struck.
+        self.next = anchor + (((t - anchor) / p + ON_BEAT).floor() + 1.0) * p;
+        self.sure = (on_grid(anchor).count() as i32 - 2).clamp(0, SUREST);
         self.missed = 0;
         self.played = false;
     }
 
-    /// The clock at `now`. Whether a beat is to be played from it.
-    fn tick(&mut self, now: f32, live: bool) -> bool {
+    /// The clock at `now`. Whether a beat is to be played from it, `lead`
+    /// seconds ahead of when it is due.
+    fn tick(&mut self, now: f32, live: bool, lead: f32) -> bool {
         if self.period == 0.0 {
             return false;
         }
         while now > self.next + ON_BEAT * self.period {
-            // A beat went by with no kick on it.
+            // A beat went by with nothing struck on it.
             self.missed += 1;
             self.next += self.period;
             self.played = false;
         }
         if self.missed >= MISSES {
             *self = Tempo {
-                kicks: std::mem::take(&mut self.kicks),
+                hits: std::mem::take(&mut self.hits),
                 strength: self.strength,
+                read_at: self.read_at,
                 ..Tempo::default()
             };
             return false;
         }
-        if live && self.locked() && !self.played && self.next - now <= LEAD {
+        if live && self.locked() && !self.played && self.next - now <= lead {
             self.played = true;
             return true;
         }
         false
+    }
+
+    /// Seconds from `now` until the clock plays its next beat, `lead`
+    /// seconds ahead of it; none while it is unsure.
+    fn due(&self, now: f32, lead: f32) -> Option<f32> {
+        if !self.locked() {
+            return None;
+        }
+        let next = if self.played {
+            self.next + self.period
+        } else {
+            self.next
+        };
+        Some((next - lead - now).max(0.0))
     }
 }
 
@@ -488,7 +572,22 @@ pub struct Levels {
     pub hat: Option<f32>,
     /// Seconds a beat, once the tempo is sure.
     pub tempo: Option<f32>,
+    /// How loud the middle (voices, snares, guitars) and the treble play,
+    /// each against its own level in the track, 0..=1.
+    pub mid: f32,
+    pub treble: f32,
+    /// Seconds until the clock plays its next beat, once the tempo is sure:
+    /// when to look again so it goes out on time.
+    pub due: Option<f32>,
 }
+
+/// The broadband ear: a strum, a chord, a stab, anything that starts at
+/// once across the mix.
+const PULSE: Ear = Ear {
+    follow: 0.15,
+    floor: 4.0,
+    rest: 0.1,
+};
 
 /// Turns raw samples into [`Levels`].
 ///
@@ -508,9 +607,17 @@ pub struct Analyzer {
     high: Band,
     /// Seconds of sound heard, give or take whole [`CLOCK_SPAN`]s.
     time: f32,
+    /// The caller's clock, seconds, moved back with `time`.
+    wall: f32,
+    /// How far the sound heard runs behind the caller's clock, at its
+    /// least (NaN until known): the sound arrives in packets, so the clock
+    /// is read between them as this far ahead of the last one.
+    behind: f32,
     /// Seconds since a kick was last heard.
     since_kick: f32,
     tempo: Tempo,
+    /// How early the clock's beats go out (see [`Analyzer::set_lead`]).
+    lead: f32,
 }
 
 impl Analyzer {
@@ -521,7 +628,7 @@ impl Analyzer {
             rate,
             hop: ((rate * HOP_SECS) as usize).max(1),
             count: 0,
-            mix: Band::new(Vec::new(), None),
+            mix: Band::new(Vec::new(), Some(PULSE)),
             // Two in a row, so the vocals and the snare's body stay out.
             low: Band::new(
                 vec![
@@ -546,13 +653,42 @@ impl Analyzer {
                 Some(HAT),
             ),
             time: 0.0,
+            wall: 0.0,
+            behind: f32::NAN,
             since_kick: 10.0,
             tempo: Tempo::default(),
+            lead: LEAD,
         }
     }
 
-    /// Read the mono samples captured since the last call.
+    /// How early the clock's beats go out, seconds: as long as the slowest
+    /// light takes to show one, less however late the sound reaches the ear
+    /// (see [`Stage::lead`]).
+    pub fn set_lead(&mut self, lead: f32) {
+        self.lead = if lead.is_finite() {
+            lead.clamp(0.0, MOST_LEAD)
+        } else {
+            LEAD
+        };
+    }
+
+    /// Read the mono samples captured since the last call, as if they came
+    /// in exactly as fast as they play.
     pub fn feed(&mut self, samples: &[f32]) -> Levels {
+        self.feed_after(samples, samples.len() as f32 / self.rate)
+    }
+
+    /// Read the mono samples captured since the last call, `elapsed`
+    /// seconds of the caller's clock ago.
+    ///
+    /// The sound comes in packets, a few hundredths of a second apart. The
+    /// caller's clock says how far the music has played since the last one,
+    /// so a beat due between two packets goes out on time rather than with
+    /// the next.
+    pub fn feed_after(&mut self, samples: &[f32], elapsed: f32) -> Levels {
+        if elapsed.is_finite() {
+            self.wall += elapsed.clamp(0.0, 1.0);
+        }
         let mut levels = Levels::default();
         for &s in samples {
             let s = if s.is_finite() {
@@ -569,10 +705,39 @@ impl Analyzer {
                 self.step(&mut levels);
             }
         }
+        // Where the music has got to by the caller's clock: a little past
+        // the last sample, never further than a packet's worth.
+        let gap = self.wall - self.time;
+        if self.behind.is_nan() || gap < self.behind || gap > self.behind + STALL {
+            // Earlier than ever, or a stall (nothing plays, and some systems
+            // then send nothing): the sound sets the clock again.
+            self.behind = gap;
+        } else {
+            // The two clocks drift apart, slowly.
+            self.behind += (gap - self.behind) * follow(elapsed.max(0.0), 10.0);
+        }
+        let now = self.time + (gap - self.behind).clamp(0.0, AHEAD);
+        if now > self.time && self.tempo.tick(now, self.live(), self.lead) {
+            levels.beat = Some(levels.beat.unwrap_or(0.0).max(self.tempo.strength));
+        }
         levels.energy = self.mix.level();
         levels.bass = self.low.level();
+        levels.mid = self.mid.level();
+        levels.treble = self.high.level();
         levels.tempo = self.tempo.locked().then_some(self.tempo.period);
+        // Into silence no beat plays, and nothing is worth waking for.
+        levels.due = self
+            .live()
+            .then(|| self.tempo.due(now, self.lead))
+            .flatten();
         levels
+    }
+
+    /// Whether the music plays: no beat plays into silence, however sure
+    /// the clock is. The envelope, not the last hop: just before a kick is
+    /// the quietest moment.
+    fn live(&self) -> bool {
+        self.mix.level() > 0.2
     }
 
     /// Close one hop, adding what it heard to `levels`.
@@ -583,10 +748,11 @@ impl Analyzer {
         self.time += dt;
         if self.time > 2.0 * CLOCK_SPAN {
             self.time -= CLOCK_SPAN;
+            self.wall -= CLOCK_SPAN;
             self.tempo.rewind(CLOCK_SPAN);
         }
         let steady = self.since_kick < 1.5;
-        self.mix.close(n, dt, steady);
+        let all = self.mix.close(n, dt, steady);
         let low = self.low.close(n, dt, steady);
         let mid = self.mid.close(n, dt, steady);
         let high = self.high.close(n, dt, steady);
@@ -608,17 +774,24 @@ impl Analyzer {
             self.since_kick + dt
         };
 
+        // Anything else that starts at once across the mix, for a track
+        // the drums do not carry.
+        let pulse = self
+            .mix
+            .hit(all, dt, warm && kick.is_none() && snare.is_none());
+
         let mut beat = None;
         if let Some(s) = kick {
             levels.kick = true;
             if self.tempo.kick(self.time, s) {
                 beat = Some(s);
             }
+        } else if snare.is_some() {
+            self.tempo.hit(self.time, SNARE_WEIGHT);
+        } else if pulse.is_some() {
+            self.tempo.hit(self.time, PULSE_WEIGHT);
         }
-        // No beat plays into silence, however sure the clock is. The
-        // envelope, not this hop: just before a kick is the quietest moment.
-        let live = self.mix.level() > 0.2;
-        if self.tempo.tick(self.time, live) {
+        if self.tempo.tick(self.time, self.live(), self.lead) {
             beat = Some(beat.unwrap_or(0.0).max(self.tempo.strength));
         }
         let most = |a: Option<f32>, b: Option<f32>| match (a, b) {
@@ -652,11 +825,19 @@ pub struct Fixture {
     pub height: f32,
     /// The shortest gap the bulb takes between two commands.
     pub interval: Duration,
+    /// How long a command takes to show: the trip to the bulb and its LEDs'
+    /// own rise.
+    pub latency: Duration,
 }
+
+/// How far either side of where it stands a light with several zones
+/// spreads them, in screen half-widths: a strip or a few panels, a stretch
+/// of wall rather than the whole room.
+const ZONE_SPAN: f32 = 0.5;
 
 impl Fixture {
     /// Where `light` stands, seen from the seat facing `screen`.
-    pub fn place(screen: &Screen, light: &Light, interval: Duration) -> Self {
+    pub fn place(screen: &Screen, light: &Light, interval: Duration, latency: Duration) -> Self {
         let half = (screen.width * 0.5).max(f32::EPSILON);
         let rel = light.pos - screen.center;
         Fixture {
@@ -664,7 +845,24 @@ impl Fixture {
             depth: rel.dot(screen.facing()) / half,
             height: light.height.clamp(0.0, 1.0),
             interval,
+            latency,
         }
+    }
+
+    /// The `n` zones of a light that colours several parts of itself (a
+    /// strip's segments, a layout's panels), left to right, spread across
+    /// the wall around where it stands: on the stage each is a light of its
+    /// own, so a chase runs along the strip.
+    pub fn zones(self, n: usize) -> Vec<Fixture> {
+        if n <= 1 {
+            return vec![self];
+        }
+        (0..n)
+            .map(|i| Fixture {
+                x: self.x + ZONE_SPAN * (2.0 * i as f32 / (n - 1) as f32 - 1.0),
+                ..self
+            })
+            .collect()
     }
 
     /// `n` quick lights in a row behind the screen, left to right: what a
@@ -680,11 +878,13 @@ impl Fixture {
                 depth: 0.0,
                 height: 0.5,
                 interval: Duration::ZERO,
+                latency: Duration::from_secs_f32(LEAD),
             })
             .collect()
     }
 
-    fn quick(&self) -> bool {
+    /// Whether the bulb answers fast enough to strike the beat.
+    pub fn quick(&self) -> bool {
         self.interval <= QUICK
     }
 }
@@ -877,6 +1077,19 @@ const QUICKEST_FADE: f32 = 0.08;
 const CALM_DRIFT_SECS: f32 = 30.0;
 /// Seconds for a breakdown's slow swell to roll across the room.
 const CALM_WAVE_SECS: f32 = 6.0;
+/// Beats compared on either side of where a phrase may have turned.
+const SIDE: usize = 4;
+/// How far the sound must move between those two sides (mix, bass, middle
+/// and treble together, each 0..=1) for a new phrase to have begun: new
+/// instruments coming in, or going.
+const TURN: f32 = 0.2;
+/// Beats a phrase found late must have run before the colours still move
+/// on for it; nearer the last change, only the count is set right.
+const LATE_TURN: u32 = 6;
+/// No kick for this long while the clock stays sure, at the track's usual
+/// level: a band without drums rather than a breakdown, and the show plays
+/// the clock's beats as if they were kicks.
+const KICKLESS_SECS: f32 = 16.0;
 
 /// One light on the stage.
 #[derive(Debug, Clone, Copy)]
@@ -953,15 +1166,39 @@ pub struct Stage {
     swell: f32,
     bass: f32,
     since_kick: f32,
+    /// Seconds since anything played the beat: a kick, or in a track
+    /// without one, the clock.
+    since_pulse: f32,
     /// Seconds a beat: the clock's, or a guess.
     period: f32,
     /// Beats into the current phrase, and phrases so far.
     beat: u32,
     phrases: u32,
+    /// The next beat counted is the first of a phrase.
+    starting: bool,
+    /// Beats since the colours last moved on.
+    since_turn: u32,
+    /// What the last beats sounded like (mix, bass, middle, treble), the
+    /// latest last, and the sound gathered since the last one.
+    sounds: VecDeque<[f32; 4]>,
+    gather: [f32; 4],
+    gathered: u32,
+    /// How far the sound moved at the last two beats compared, the latest
+    /// last.
+    turns: [f32; 2],
     /// Steps a build's chase has taken, and how far it is to the next.
     roll: usize,
     roll_due: f32,
     sharp: Vec<bool>,
+    /// Where each light stands and how fast it answers.
+    fixtures: Vec<Fixture>,
+    /// How early the beats go out, and how long each light waits on them
+    /// (see [`timing`]).
+    lead: f32,
+    waits: Vec<f32>,
+    lag: Lag,
+    /// Seconds until the clock's next beat goes out, as last heard.
+    due: Option<f32>,
 }
 
 impl Stage {
@@ -1006,19 +1243,60 @@ impl Stage {
             shimmer: 0.0,
             swell: 0.0,
             bass: 0.0,
-            since_kick: 10.0,
+            since_kick: 0.0,
+            since_pulse: 10.0,
             period: 0.5,
             beat: 0,
             phrases: 0,
+            starting: false,
+            since_turn: 0,
+            sounds: VecDeque::new(),
+            gather: [0.0; 4],
+            gathered: 0,
+            turns: [0.0; 2],
             roll: 0,
             roll_due: 0.0,
-            sharp: vec![false; fixtures.len()],
+            sharp: vec![false; n],
+            fixtures: fixtures.to_vec(),
+            lead: LEAD,
+            waits: vec![0.0; n],
+            lag: Lag::default(),
+            due: None,
         }
     }
 
     /// The lights that should be sent sharp this frame rather than faded in.
     pub fn sharp(&self) -> &[bool] {
         &self.sharp
+    }
+
+    /// How early the clock's beats should go out (see [`Analyzer::set_lead`]):
+    /// as long as the slowest light takes to show one, less the delay the
+    /// sound reaches the ear with.
+    pub fn lead(&self) -> f32 {
+        self.lead
+    }
+
+    /// Seconds until light `i` is due something sharp: the clock's next
+    /// beat, once it has waited its turn, or a hit it holds back. A light
+    /// that can only take a command now and then should keep its next one
+    /// for it.
+    pub fn due(&self, i: usize) -> Option<f32> {
+        let wait = self.waits.get(i).copied().unwrap_or(0.0);
+        let beat = self.due.map(|d| d + wait);
+        let held = self.lag.next_sharp(i, wait);
+        match (beat, held) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// Seconds until anything sharp is due on any light: when to compute
+    /// the next frame, at the latest, for it to go out on time.
+    pub fn next_due(&self) -> Option<f32> {
+        (0..self.lamps.len())
+            .filter_map(|i| self.due(i))
+            .min_by(f32::total_cmp)
     }
 
     fn pattern(&self) -> Pattern {
@@ -1051,6 +1329,11 @@ impl Stage {
     }
 
     fn enter(&mut self, section: Section) {
+        // What the beats sounded like is only compared within a groove.
+        if section != Section::Groove {
+            self.sounds.clear();
+            self.turns = [0.0; 2];
+        }
         self.section = section;
         self.held = 0.0;
         self.roll = 0;
@@ -1063,18 +1346,102 @@ impl Stage {
         }
     }
 
-    /// Read where the track is from what was heard this frame.
-    fn follow_track(&mut self, settings: &ShowSettings, levels: &Levels) {
-        let gone = self.since_kick > (2.5 * self.period).max(1.2);
-        let back = levels.kick;
+    /// The beat landing now is the first of a phrase. The clock may have
+    /// played it already, a little early: then it is counted here.
+    fn start_phrase(&mut self, levels: &Levels) {
+        if levels.beat.is_some() {
+            self.starting = true;
+        } else {
+            self.starting = false;
+            self.beat = 0;
+        }
+    }
+
+    /// The colours move on to the next phrase's.
+    fn turn(&mut self) {
+        self.phrases += 1;
+        self.since_turn = 0;
+    }
+
+    /// Count a beat: the first of a phrase after a fresh start, otherwise
+    /// the next. A phrase full, the colours move on, and a drop gives way to
+    /// the patterns.
+    fn count_beat(&mut self) {
+        self.since_turn += 1;
+        if self.starting {
+            self.starting = false;
+            self.beat = 0;
+            return;
+        }
+        self.beat += 1;
+        if self.beat >= PHRASE_BEATS {
+            self.beat = 0;
+            self.turn();
+            if self.section == Section::Drop {
+                self.enter(Section::Groove);
+            }
+        }
+    }
+
+    /// Note what the beat that just ended sounded like. If the sound moved
+    /// most a few beats back, a phrase began there: the beats since, then,
+    /// counting the one starting now.
+    ///
+    /// Four bars of four are counted from wherever the clock found the
+    /// beat, which is rarely where the track's phrases start. A phrase
+    /// starts where instruments come in or go (the hats enter, the bass
+    /// drops out), so the sound of the four beats before is set against
+    /// the four after, and where it moved most is the turn.
+    fn mark(&mut self) -> Option<u32> {
+        if self.gathered > 0 {
+            let n = self.gathered as f32;
+            self.sounds.push_back(self.gather.map(|v| v / n));
+        }
+        self.gather = [0.0; 4];
+        self.gathered = 0;
+        while self.sounds.len() > 2 * SIDE {
+            self.sounds.pop_front();
+        }
+        if self.sounds.len() < 2 * SIDE {
+            return None;
+        }
+        let mean = |from: usize| {
+            let mut m = [0.0f32; 4];
+            for s in self.sounds.range(from..from + SIDE) {
+                for (m, v) in m.iter_mut().zip(s) {
+                    *m += v / SIDE as f32;
+                }
+            }
+            m
+        };
+        let (before, after) = (mean(0), mean(SIDE));
+        let moved: f32 = before.iter().zip(&after).map(|(a, b)| (a - b).abs()).sum();
+        let [older, last] = self.turns;
+        self.turns = [last, moved];
+        // The last comparison, a beat ago, was the peak: it set the beats
+        // before its middle against those from it on, so the phrase began
+        // `SIDE` beats before that one, and this beat is the one after.
+        (last > TURN && last > older && last >= moved).then_some(SIDE as u32 + 1)
+    }
+
+    /// Read where the track is from what was heard this frame. `struck` is
+    /// whether something played the beat: a kick, or the clock in a track
+    /// without one.
+    fn follow_track(&mut self, settings: &ShowSettings, levels: &Levels, struck: bool) {
+        let gone = self.since_pulse > (2.5 * self.period).max(1.2);
+        let back = struck;
         match self.section {
             Section::Groove | Section::Drop if gone => self.enter(Section::Calm),
             Section::Calm if back => {
                 // After a long break the kick's return is a drop of its own.
-                if self.held > 6.0 {
-                    self.drop(settings);
+                // Either way it starts a phrase: the colours move on as it
+                // lands.
+                if self.held > 6.0 && levels.kick {
+                    self.drop(settings, levels);
                 } else {
                     self.enter(Section::Groove);
+                    self.turn();
+                    self.start_phrase(levels);
                 }
             }
             Section::Calm => {
@@ -1084,7 +1451,13 @@ impl Stage {
                     self.enter(Section::Build);
                 }
             }
-            Section::Build | Section::Hold if back => self.drop(settings),
+            Section::Build | Section::Hold if levels.kick => self.drop(settings, levels),
+            // A track without a kick does not drop: its beat just carries on.
+            Section::Build | Section::Hold if back => {
+                self.enter(Section::Groove);
+                self.turn();
+                self.start_phrase(levels);
+            }
             Section::Build => {
                 if self.short > 0.4 && levels.energy < 0.5 * self.short {
                     self.enter(Section::Hold);
@@ -1100,10 +1473,11 @@ impl Stage {
 
     /// The drop: everyone at once, white if allowed, then straight into a
     /// new harmony for a phrase of everyone together.
-    fn drop(&mut self, settings: &ShowSettings) {
+    fn drop(&mut self, settings: &ShowSettings, levels: &Levels) {
         self.enter(Section::Drop);
         self.phrases = (self.phrases / PHRASES_PER_HARMONY + 1) * PHRASES_PER_HARMONY;
-        self.beat = 0;
+        self.since_turn = 0;
+        self.start_phrase(levels);
         let white = self.white(settings);
         for lamp in &mut self.lamps {
             lamp.hit(1.0, white);
@@ -1112,6 +1486,8 @@ impl Stage {
 
     /// Advance by `dt` seconds with what the music is doing.
     pub fn frame(&mut self, settings: &ShowSettings, levels: Levels, dt: f32) -> Vec<BulbOutput> {
+        (self.lead, self.waits) = timing(&self.fixtures, settings.delay());
+        self.due = levels.due;
         // A hit fades out just before the next beat comes, like a pumping
         // sidechain, but never quicker than the bulb can show.
         let pump = self.period / 3.0;
@@ -1127,9 +1503,25 @@ impl Stage {
         } else {
             self.since_kick + dt
         };
+        // A track that has gone a long while without a kick, the clock
+        // still sure and the music at its usual level, has none: its clock
+        // plays the beat.
+        let kickless = self.since_kick > KICKLESS_SECS
+            && levels.tempo.is_some()
+            && self.short >= self.long - 0.1;
+        let pulse = levels.kick || (kickless && levels.beat.is_some());
+        self.since_pulse = if pulse { 0.0 } else { self.since_pulse + dt };
         if let Some(p) = levels.tempo {
             self.period = p;
         }
+        for (g, v) in
+            self.gather
+                .iter_mut()
+                .zip([levels.energy, levels.bass, levels.mid, levels.treble])
+        {
+            *g += v;
+        }
+        self.gathered += 1;
         let e = levels.energy;
         self.short += (e - self.short) * follow(dt, 1.0);
         self.recent += (e - self.recent) * follow(dt, 4.0);
@@ -1145,7 +1537,19 @@ impl Stage {
         let tau = if levels.bass > self.bass { 0.06 } else { 0.4 };
         self.bass += (levels.bass - self.bass) * follow(dt, tau);
 
-        self.follow_track(settings, &levels);
+        // A cymbal crashing in with the kick as the whole band jumps up a
+        // level is a phrase starting there and then, wherever the count is.
+        let crash = self.section == Section::Groove
+            && levels.kick
+            && levels.hat.is_some_and(|h| h >= 0.8)
+            && e > self.recent + 0.2
+            && self.beat != 0
+            && self.since_turn >= SIDE as u32;
+        if crash {
+            self.turn();
+            self.start_phrase(&levels);
+        }
+        self.follow_track(settings, &levels, pulse);
         match self.section {
             Section::Groove | Section::Drop => self.groove(settings, &levels),
             Section::Build => self.build(settings, &levels, dt),
@@ -1168,21 +1572,24 @@ impl Stage {
         for (sharp, lamp) in self.sharp.iter_mut().zip(&self.lamps) {
             *sharp = lamp.sharp;
         }
-        outputs
+        self.lag.run(dt, outputs, &mut self.sharp, &self.waits)
     }
 
     /// The beat is on: punch it in the current pattern, and answer the snare.
     fn groove(&mut self, settings: &ShowSettings, levels: &Levels) {
         if let Some(s) = levels.beat {
-            self.beat += 1;
-            if self.beat >= PHRASE_BEATS {
-                // A new phrase: the colours move on as it lands, and a drop
-                // gives way to the patterns.
-                self.beat = 0;
-                self.phrases += 1;
-                if self.section == Section::Drop {
-                    self.enter(Section::Groove);
+            let found = self.mark();
+            self.count_beat();
+            if let Some(into) = found
+                && self.beat != into
+            {
+                // The phrase began a few beats ago, not where the count
+                // has it. The colours move on now if they have not lately.
+                if self.since_turn > LATE_TURN {
+                    self.turn();
+                    self.since_turn = into;
                 }
+                self.beat = into;
             }
             let pattern = self.pattern();
             let (k, b) = (self.punches, self.beat);
@@ -1619,6 +2026,7 @@ mod tests {
             depth: 0.0,
             height,
             interval: q,
+            latency: q,
         };
         // Three alike: all three on the beat, so the patterns can travel.
         let three = [near(-1.0, 0.5), near(0.0, 0.5), near(1.0, 0.5)];
@@ -2053,6 +2461,284 @@ mod tests {
             b.iter().max().unwrap() - b.iter().min().unwrap()
         };
         assert!(swing(0) > 40, "the punch barely moves");
+    }
+
+    /// A stage that has heard the music at `energy` for a good while.
+    fn settle(stage: &mut Stage, energy: f32) {
+        (stage.short, stage.recent, stage.long) = (energy, energy, energy);
+    }
+
+    /// A band without drums at 100 beats a minute, one 25 ms frame at a
+    /// time: a strum on the one and the three, a snare (a rim, a clap) on
+    /// the two and the four. Each frame's levels.
+    fn unplugged(a: &mut Analyzer, rate: u32, secs: f32) -> Vec<Levels> {
+        let beat = 0.6;
+        let frame = (rate as f32 * 0.025) as usize;
+        let mut snare_band = Biquad::new(Pass::Band, rate as f32, 2200.0, 0.7);
+        let noise = hiss(0.5, (secs * rate as f32) as usize, 3);
+        let mut out = Vec::new();
+        let mut chunk = Vec::with_capacity(frame);
+        for (i, &hush) in noise.iter().enumerate() {
+            let t = i as f32 / rate as f32;
+            let n = (t / beat) as u32;
+            let into = t - n as f32 * beat;
+            let ring = (-into / 0.15).exp();
+            let s = if n.is_multiple_of(2) {
+                // A chord of E, well above the kick's band and under the
+                // snare's.
+                let chord: f32 = [330.0, 415.0, 494.0, 659.0]
+                    .iter()
+                    .map(|f| (TAU * f * t).sin())
+                    .sum();
+                0.15 * ring * chord
+            } else {
+                ring * snare_band.run(hush)
+            };
+            // A bass drone holds the bottom steady, as an organ or a
+            // synth would.
+            chunk.push(s + 0.1 * (TAU * 55.0 * t).sin());
+            if chunk.len() == frame {
+                out.push(a.feed(&chunk));
+                chunk.clear();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_track_without_a_kick_still_finds_its_tempo() {
+        let rate = 48_000;
+        let mut a = Analyzer::new(rate);
+        let frames = unplugged(&mut a, rate, 15.0);
+        assert!(
+            frames.iter().all(|l| !l.kick),
+            "a kick in a band without drums"
+        );
+        let tempo = frames.last().unwrap().tempo.expect("no tempo found");
+        assert!((tempo - 0.6).abs() < 0.01, "{tempo}");
+        // Its beats come from the clock, one a beat.
+        let beats = frames[frames.len() / 2..]
+            .iter()
+            .filter(|l| l.beat.is_some())
+            .count();
+        let expected = (7.5 / 0.6) as usize;
+        assert!(
+            beats.abs_diff(expected) <= 1,
+            "{beats} beats for {expected}"
+        );
+    }
+
+    #[test]
+    fn the_clock_reads_on_between_packets_of_sound() {
+        // The sound arrives 40 ms at a time and the show looks every 10 ms:
+        // a beat due between two packets goes out then, not with the next
+        // packet, and none is played twice.
+        let rate = 48_000;
+        let mut a = Analyzer::new(rate);
+        let packet = (rate as f32 * 0.04) as usize;
+        let beat = 0.5;
+        let total = (12.0 * rate as f32) as usize;
+        let (mut between, mut beats) = (0, 0);
+        let mut chunk = Vec::with_capacity(packet);
+        for i in 0..total {
+            let t = i as f32 / rate as f32;
+            let kick = if t % beat < 0.08 { 0.7 } else { 0.03 };
+            chunk.push(kick * (TAU * 55.0 * t).sin());
+            if chunk.len() < packet {
+                continue;
+            }
+            let late = t > 6.0;
+            let fired = a.feed_after(&chunk, 0.01).beat.is_some();
+            beats += usize::from(late && fired);
+            chunk.clear();
+            for _ in 0..3 {
+                let fired = a.feed_after(&[], 0.01).beat.is_some();
+                between += usize::from(late && fired);
+                beats += usize::from(late && fired);
+            }
+        }
+        assert!(between >= 4, "only {between} beats between packets");
+        let expected = (6.0 / beat) as usize;
+        assert!(
+            beats.abs_diff(expected) <= 1,
+            "{beats} beats for {expected}"
+        );
+    }
+
+    #[test]
+    fn a_quick_light_waits_for_the_slow_one() {
+        // Two lights struck together: the one that shows a command in no
+        // time waits a tenth of a second for the other, and is sent sharp
+        // when it does.
+        let mut fixtures = Fixture::row(2);
+        fixtures[0].latency = Duration::ZERO;
+        fixtures[1].latency = Duration::from_millis(100);
+        let s = ShowSettings::default();
+        let mut stage = Stage::new(&fixtures);
+        stage.enter(Section::Groove);
+        for _ in 0..4 {
+            stage.frame(&s, between(), 0.025);
+        }
+        let struck = stage.frame(&s, beat(1.0), 0.025);
+        assert!((stage.lead() - 0.1).abs() < 1e-6);
+        assert!(struck[1].bright() > 55 && stage.sharp()[1]);
+        assert!(struck[0].bright() < 30 && !stage.sharp()[0]);
+        assert!(stage.due(0).is_some_and(|d| d > 0.05 && d <= 0.1));
+        let mut shown_at = None;
+        for k in 1..=6 {
+            let f = stage.frame(&s, between(), 0.025);
+            if f[0].bright() > 55 && shown_at.is_none() {
+                shown_at = Some(k);
+                assert!(stage.sharp()[0]);
+            }
+        }
+        assert_eq!(shown_at, Some(4));
+    }
+
+    #[test]
+    fn the_phrase_is_set_right_where_the_sound_turns() {
+        // The count starts wherever the clock found the beat; the track's
+        // phrase starts at the 22nd beat heard, where the hats and the
+        // vocals come in. A few beats on, the count runs from there.
+        let s = ShowSettings::default();
+        let mut stage = Stage::new(&Fixture::row(3));
+        stage.enter(Section::Groove);
+        let verse = Levels {
+            energy: 0.6,
+            bass: 0.6,
+            mid: 0.2,
+            treble: 0.1,
+            ..Levels::default()
+        };
+        let chorus = Levels {
+            energy: 0.9,
+            bass: 0.9,
+            mid: 0.6,
+            treble: 0.7,
+            ..Levels::default()
+        };
+        for j in 1..=60u32 {
+            let sound = if j < 22 { verse } else { chorus };
+            let struck = Levels {
+                beat: Some(1.0),
+                kick: true,
+                ..sound
+            };
+            stage.frame(&s, struck, 0.025);
+            if j >= 28 {
+                assert_eq!(stage.beat, (j - 22) % PHRASE_BEATS, "beat {j}");
+            }
+            for _ in 0..19 {
+                stage.frame(&s, sound, 0.025);
+            }
+        }
+        // And a steady groove is never set anywhere.
+        let mut steady = Stage::new(&Fixture::row(3));
+        steady.enter(Section::Groove);
+        for j in 1..=60u32 {
+            steady.frame(&s, beat(1.0), 0.025);
+            assert_eq!(steady.beat, j % PHRASE_BEATS);
+            for _ in 0..19 {
+                steady.frame(&s, between(), 0.025);
+            }
+        }
+    }
+
+    #[test]
+    fn a_crash_on_a_jump_starts_a_phrase() {
+        let s = ShowSettings::default();
+        let mut stage = Stage::new(&Fixture::row(3));
+        stage.enter(Section::Groove);
+        // The verse sat at 0.6; the band jumps up as the cymbal crashes.
+        let verse = Levels {
+            energy: 0.6,
+            ..between()
+        };
+        settle(&mut stage, verse.energy);
+        for k in 0..7 * 20 {
+            let l = if k % 20 == 0 {
+                Levels {
+                    beat: Some(1.0),
+                    kick: true,
+                    ..verse
+                }
+            } else {
+                verse
+            };
+            stage.frame(&s, l, 0.025);
+        }
+        assert_eq!(stage.beat, 7);
+        let phrases = stage.phrases;
+        let crash = Levels {
+            energy: 1.0,
+            bass: 1.0,
+            beat: Some(1.0),
+            kick: true,
+            hat: Some(1.0),
+            ..Levels::default()
+        };
+        stage.frame(&s, crash, 0.025);
+        assert_eq!(stage.phrases, phrases + 1);
+        assert_eq!(stage.beat, 0);
+    }
+
+    #[test]
+    fn the_kick_coming_back_starts_a_phrase() {
+        let s = ShowSettings::default();
+        let mut stage = Stage::new(&Fixture::row(3));
+        stage.enter(Section::Groove);
+        settle(&mut stage, 0.6);
+        groove(&mut stage, &s, 5);
+        let calm = Levels {
+            energy: 0.5,
+            ..Levels::default()
+        };
+        for _ in 0..80 {
+            stage.frame(&s, calm, 0.025);
+        }
+        assert_eq!(stage.section, Section::Calm);
+        let phrases = stage.phrases;
+        stage.frame(&s, beat(1.0), 0.025);
+        assert_eq!(stage.section, Section::Groove);
+        assert_eq!((stage.phrases, stage.beat), (phrases + 1, 0));
+    }
+
+    #[test]
+    fn a_track_without_a_kick_grooves_on_the_clock() {
+        // Beats from the clock alone, no kick ever: a breakdown at first,
+        // then, the music carrying on at its level, a groove.
+        let s = ShowSettings::default();
+        let mut stage = Stage::new(&Fixture::row(3));
+        settle(&mut stage, 0.7);
+        let mut peak = 0;
+        for k in 0..(24.0 / 0.025) as usize {
+            let l = Levels {
+                energy: 0.7,
+                bass: 0.5,
+                beat: (k % 24 == 0).then_some(0.8),
+                tempo: Some(0.6),
+                ..Levels::default()
+            };
+            let f = stage.frame(&s, l, 0.025);
+            let t = k as f32 * 0.025;
+            if t < 10.0 {
+                assert_eq!(stage.section, Section::Calm, "at {t}");
+            }
+            if t > 20.0 {
+                peak = peak.max(f.iter().map(|o| o.bright()).max().unwrap());
+            }
+        }
+        assert_eq!(stage.section, Section::Groove);
+        assert!(peak > 55, "the beats never punched: {peak}");
+    }
+
+    #[test]
+    fn zones_spread_along_the_wall() {
+        let f = Fixture::row(1)[0];
+        let zones = f.zones(3);
+        let xs: Vec<f32> = zones.iter().map(|z| z.x).collect();
+        assert_eq!(xs, vec![-ZONE_SPAN, 0.0, ZONE_SPAN]);
+        assert_eq!(f.zones(1), vec![f]);
     }
 
     #[test]

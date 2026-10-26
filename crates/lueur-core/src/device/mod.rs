@@ -11,6 +11,8 @@
 //! as ready to use.
 
 pub mod common;
+pub mod dtls;
+pub mod entertainment;
 pub mod govee;
 pub mod http;
 pub mod hue;
@@ -60,6 +62,10 @@ pub enum DeviceKind {
         /// set, the username only goes over TLS to that certificate.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         cert: String,
+        /// The key the bridge streams with (see [`HueBridge::clientkey`]);
+        /// empty for a pairing made before Lueur asked for one.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        clientkey: String,
     },
     Nanoleaf {
         #[serde(default)]
@@ -135,6 +141,10 @@ pub struct DiscoveredDevice {
     /// the interface offers pairing instead of adding it.
     #[serde(default = "crate::default_true")]
     pub paired: bool,
+    /// Paired, but pairing it again would let it do more: a Hue bridge
+    /// paired before Lueur asked it for its streaming key.
+    #[serde(default)]
+    pub faster: bool,
 }
 
 impl DiscoveredDevice {
@@ -160,6 +170,7 @@ impl From<yeelight::DiscoveredDevice> for DiscoveredDevice {
             fw_ver: d.fw_ver,
             kind: DeviceKind::Yeelight,
             paired: true,
+            faster: false,
         }
     }
 }
@@ -178,6 +189,11 @@ pub struct HueBridge {
     /// the clear, and only at `ip`.
     #[serde(default)]
     pub cert: String,
+    /// The key the bridge's Entertainment API streams with, hex: as secret
+    /// as the username. Empty for a pairing made before Lueur asked for
+    /// one, which then drives its lamps one command at a time.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub clientkey: String,
 }
 
 /// A Nanoleaf controller Lueur holds a token for. Its API is HTTP only, so
@@ -276,11 +292,13 @@ impl fmt::Debug for DeviceKind {
                 username,
                 light,
                 cert,
+                clientkey,
             } => f
                 .debug_struct("Hue")
                 .field("username", &Masked(username))
                 .field("light", light)
                 .field("cert", cert)
+                .field("clientkey", &Masked(clientkey))
                 .finish(),
             DeviceKind::Nanoleaf { token } => f
                 .debug_struct("Nanoleaf")
@@ -303,6 +321,7 @@ impl fmt::Debug for HueBridge {
             .field("ip", &self.ip)
             .field("username", &Masked(&self.username))
             .field("cert", &self.cert)
+            .field("clientkey", &Masked(&self.clientkey))
             .finish()
     }
 }
@@ -342,9 +361,58 @@ pub trait LightStream: Send {
         Duration::ZERO
     }
 
+    /// How long a command takes to show: the trip to the bulb and its LEDs'
+    /// own rise. The music sends its beats that much ahead.
+    fn latency(&self) -> Duration {
+        DEFAULT_LATENCY
+    }
+
+    /// How many parts of itself the light colours on its own, left to right
+    /// (a strip's segments, a layout's panels): 1 for a bulb, never more
+    /// than [`MAX_ZONES`].
+    fn zones(&self) -> usize {
+        1
+    }
+
+    /// Send one frame with an output for each zone, left to right. However
+    /// many come, they are spread over the zones the light has; a light of
+    /// one zone shows the brightest.
+    fn push_zones(
+        &mut self,
+        outputs: &[BulbOutput],
+        effect: Effect,
+        duration_ms: u32,
+    ) -> io::Result<()> {
+        match outputs.iter().max_by_key(|o| o.bright()) {
+            Some(&output) => self.push(output, effect, duration_ms),
+            None => Ok(()),
+        }
+    }
+
     /// Leave the bulb on a gentle warm glow when the effect stops, so the room
     /// stays cosy rather than snapping to black (or to the last dark frame).
     fn rest(&mut self);
+}
+
+/// The most zones a light plays as (see [`LightStream::zones`]): a long
+/// strip's dozens of segments are grouped into this many, enough for a
+/// chase to run along it without drowning the rest of the room.
+pub const MAX_ZONES: usize = 8;
+
+/// What a command takes to show when nothing better is known.
+pub const DEFAULT_LATENCY: Duration = Duration::from_millis(50);
+
+/// Output `j` of `n` zones, from `outputs` spread over them.
+pub fn zone_output(outputs: &[BulbOutput], j: usize, n: usize) -> Option<BulbOutput> {
+    let len = outputs.len();
+    (len > 0).then(|| outputs[(j * len / n.max(1)).min(len - 1)])
+}
+
+/// Split `n` items laid left to right into at most [`MAX_ZONES`] runs of
+/// neighbours, as even as can be: the zone each item belongs to.
+pub fn group_zones(n: usize) -> Vec<usize> {
+    let zones = n.clamp(1, MAX_ZONES);
+    (0..n).map(|i| i * zones / n.max(1)).collect()
 }
 
 /// The colour temperature and brightness [`LightStream::rest`] settles on.
@@ -372,6 +440,10 @@ struct YeelightStream(Mailbox);
 impl LightStream for YeelightStream {
     fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
         self.0.push(output, effect, duration_ms)
+    }
+
+    fn latency(&self) -> Duration {
+        yeelight::LATENCY
     }
 
     fn rest(&mut self) {
@@ -411,14 +483,16 @@ pub fn open_stream(
             username,
             light,
             cert,
-        } => Box::new(hue::HueStream::open(
-            &ep.ip,
-            username,
-            light,
-            cert,
-            siblings.max(1),
-            wire,
-        )?),
+            clientkey,
+        } => {
+            let access = entertainment::Access {
+                ip: ep.ip.clone(),
+                username: username.clone(),
+                clientkey: clientkey.clone(),
+                cert: cert.clone(),
+            };
+            Box::new(hue::HueStream::open(&access, light, siblings.max(1), wire)?)
+        }
         DeviceKind::Nanoleaf { token } => Box::new(nanoleaf::NanoleafStream::open(
             &ep.ip, ep.port, token, wire,
         )?),
@@ -435,8 +509,25 @@ pub fn interval_of(kind: &DeviceKind, siblings: usize) -> Duration {
         DeviceKind::Wiz => wiz::FRAME_INTERVAL,
         DeviceKind::Lifx { .. } => lifx::FRAME_INTERVAL,
         DeviceKind::Govee => govee::FRAME_INTERVAL,
+        DeviceKind::Hue { clientkey, .. } if !clientkey.is_empty() => entertainment::INTERVAL,
         DeviceKind::Hue { .. } => hue::BRIDGE_INTERVAL * siblings.max(1) as u32,
         DeviceKind::Nanoleaf { .. } => nanoleaf::FRAME_INTERVAL,
+    }
+}
+
+/// How long a command to `kind` takes to show (see
+/// [`LightStream::latency`]), without opening a stream: for a light that
+/// waits for its bulb. Tuya's is the shell's.
+pub fn latency_of(kind: &DeviceKind) -> Duration {
+    match kind {
+        DeviceKind::Yeelight => yeelight::LATENCY,
+        DeviceKind::Wiz => wiz::LATENCY,
+        DeviceKind::Lifx { .. } => lifx::LATENCY,
+        DeviceKind::Govee => govee::LATENCY,
+        DeviceKind::Hue { clientkey, .. } if !clientkey.is_empty() => entertainment::LATENCY,
+        DeviceKind::Hue { .. } => hue::LATENCY,
+        DeviceKind::Nanoleaf { .. } => nanoleaf::LATENCY,
+        DeviceKind::Tuya { .. } => DEFAULT_LATENCY,
     }
 }
 
@@ -455,6 +546,7 @@ pub fn set_power(ep: &Endpoint, on: bool) -> io::Result<()> {
             username,
             light,
             cert,
+            ..
         } => hue::set_power(&ep.ip, username, light, cert, on),
         DeviceKind::Nanoleaf { token } => nanoleaf::set_power(&ep.ip, ep.port, token, on),
         DeviceKind::Tuya { .. } => Err(shell_only()),
@@ -476,10 +568,15 @@ pub fn identify(ep: &Endpoint, color: Rgb) -> io::Result<()> {
             ctrl.set_power(true)?;
             ctrl.set_rgb(color)
         }
-        // Everyone else: power on, then one frame on a fresh stream.
+        // Everyone else: power on, then one frame on a fresh stream. A Hue
+        // lamp's over REST: one frame is no reason to set a stream up.
         _ => {
             set_power(ep, true)?;
-            open_stream(ep, 1, false)?.push(output, Effect::Smooth, 300)
+            let mut ep = ep.clone();
+            if let DeviceKind::Hue { clientkey, .. } = &mut ep.kind {
+                clientkey.clear();
+            }
+            open_stream(&ep, 1, false)?.push(output, Effect::Smooth, 300)
         }
     }
 }
@@ -592,6 +689,7 @@ mod tests {
             username: "u".into(),
             light: "3".into(),
             cert: String::new(),
+            clientkey: String::new(),
         };
         let json = serde_json::to_string(&kind).unwrap();
         assert_eq!(json, r#"{"family":"hue","username":"u","light":"3"}"#);
@@ -609,6 +707,7 @@ mod tests {
                 username: String::new(),
                 light: String::new(),
                 cert: String::new(),
+                clientkey: String::new(),
             }
             .is_ready()
         );
@@ -633,6 +732,7 @@ mod tests {
                 username: String::new(),
                 light: String::new(),
                 cert: String::new(),
+                clientkey: String::new(),
             },
         };
         let err = set_power(&ep, true).unwrap_err();
@@ -662,6 +762,7 @@ mod tests {
                 username: "hue-secret".into(),
                 light: "1".into(),
                 cert: String::new(),
+                clientkey: "hue-secret-key".into(),
             },
             DeviceKind::Nanoleaf {
                 token: "nano-secret".into(),
@@ -691,6 +792,7 @@ mod tests {
                 ip: "192.168.1.2".into(),
                 username: "hue-secret".into(),
                 cert: String::new(),
+                clientkey: "hue-secret-key".into(),
             }],
             nanoleaf: vec![NanoleafPairing {
                 id: "n".into(),

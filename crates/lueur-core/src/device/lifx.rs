@@ -4,9 +4,11 @@
 //! brightness, kelvin), with a transition time per command, so the bulb does
 //! its own interpolation between frames.
 
-use super::common::{LastSent, Throttle, broadcast_targets, rgb_to_hsv, udp_to};
+use super::common::{LastSent, REFRESH, Throttle, broadcast_targets, rgb_to_hsv, udp_to};
 use super::wire::Wire;
-use super::{DeviceKind, DiscoveredDevice, LightStream, REST_BRIGHT, REST_KELVIN};
+use super::{
+    DeviceKind, DiscoveredDevice, LightStream, REST_BRIGHT, REST_KELVIN, group_zones, zone_output,
+};
 use crate::color::BulbOutput;
 use crate::yeelight::Effect;
 use std::collections::HashMap;
@@ -22,6 +24,15 @@ const GET_LABEL: u16 = 23;
 const STATE_LABEL: u16 = 25;
 const SET_COLOR: u16 = 102;
 const SET_LIGHT_POWER: u16 = 117;
+const SET_EXTENDED_COLOR_ZONES: u16 = 510;
+const GET_EXTENDED_COLOR_ZONES: u16 = 511;
+const STATE_EXTENDED_COLOR_ZONES: u16 = 512;
+/// What a bulb that is not a strip answers a strip's question with.
+const STATE_UNHANDLED: u16 = 223;
+/// Zones one `SetExtendedColorZones` carries.
+const EXTENDED_ZONES: usize = 82;
+/// How long a bulb has to say whether it is a strip.
+const ZONES_TIMEOUT: Duration = Duration::from_millis(300);
 
 const HEADER_LEN: usize = 36;
 /// Our `source` id; LIFX echoes it so replies can be told apart.
@@ -32,6 +43,8 @@ const MAX_KELVIN: u16 = 9000;
 
 /// LIFX asks clients to stay under 20 messages a second per bulb.
 pub(crate) const FRAME_INTERVAL: Duration = Duration::from_millis(50);
+/// How long a command takes to show: a datagram, and the LEDs' rise.
+pub(crate) const LATENCY: Duration = Duration::from_millis(40);
 
 /// Build a frame. `target` is the bulb's MAC (all zero with `tagged` for a
 /// broadcast to every bulb).
@@ -80,28 +93,90 @@ pub fn parse_frame(raw: &[u8]) -> Option<(u16, [u8; 6], &[u8])> {
     Some((msg_type, mac, &raw[HEADER_LEN..size]))
 }
 
-/// HSBK and transition for one output.
-pub fn set_color_payload(output: BulbOutput, duration_ms: u32) -> Vec<u8> {
-    let (hue, sat, bri, kelvin) = match output {
+/// Hue, saturation, brightness and kelvin for one output.
+fn hsbk(output: BulbOutput) -> [u16; 4] {
+    match output {
         BulbOutput::Color { rgb, bright } => {
             let (h, s, _) = rgb_to_hsv(rgb);
-            (
+            [
                 (h / 360.0 * 65535.0).round() as u16,
                 (s * 65535.0).round() as u16,
                 bri16(bright),
                 3500,
-            )
+            ]
         }
         BulbOutput::White { kelvin, bright } => {
-            (0, 0, bri16(bright), kelvin.clamp(MIN_KELVIN, MAX_KELVIN))
+            [0, 0, bri16(bright), kelvin.clamp(MIN_KELVIN, MAX_KELVIN)]
         }
-    };
+    }
+}
+
+/// HSBK and transition for one output.
+pub fn set_color_payload(output: BulbOutput, duration_ms: u32) -> Vec<u8> {
     let mut p = vec![0u8]; // reserved
-    for v in [hue, sat, bri, kelvin] {
+    for v in hsbk(output) {
         p.extend_from_slice(&v.to_le_bytes());
     }
     p.extend_from_slice(&duration_ms.to_le_bytes());
     p
+}
+
+/// A strip's zones from `index` on, `colours` of them (at most
+/// [`EXTENDED_ZONES`]), shown at once over `duration_ms`.
+pub fn set_zones_payload(index: u16, colours: &[[u16; 4]], duration_ms: u32) -> Vec<u8> {
+    let count = colours.len().min(EXTENDED_ZONES);
+    let mut p = Vec::with_capacity(8 + 8 * EXTENDED_ZONES);
+    p.extend_from_slice(&duration_ms.to_le_bytes());
+    p.push(1); // apply
+    p.extend_from_slice(&index.to_le_bytes());
+    p.push(count as u8);
+    for i in 0..EXTENDED_ZONES {
+        let c = colours
+            .get(i)
+            .filter(|_| i < count)
+            .copied()
+            .unwrap_or_default();
+        for v in c {
+            p.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    p
+}
+
+/// How many zones a `StateExtendedColorZones` payload says the strip has.
+pub fn zone_count(payload: &[u8]) -> Option<usize> {
+    let n = u16::from_le_bytes([*payload.first()?, *payload.get(1)?]);
+    (n > 0).then_some(usize::from(n))
+}
+
+/// Ask the bulb behind `socket` whether it is a strip, and how many zones
+/// it has: one for any other bulb, or when it does not say in time.
+fn probe_zones(socket: &UdpSocket, target: [u8; 6]) -> usize {
+    let ask = frame(GET_EXTENDED_COLOR_ZONES, target, false, 0, &[]);
+    if socket.send(&ask).is_err() {
+        return 1;
+    }
+    let deadline = Instant::now() + ZONES_TIMEOUT;
+    let mut buf = [0u8; 1024];
+    while let Some(left) = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|d| !d.is_zero())
+    {
+        if socket.set_read_timeout(Some(left)).is_err() {
+            break;
+        }
+        let Ok(n) = socket.recv(&mut buf) else {
+            break;
+        };
+        match parse_frame(&buf[..n]) {
+            Some((STATE_EXTENDED_COLOR_ZONES, mac, payload)) if mac == target => {
+                return zone_count(payload).unwrap_or(1);
+            }
+            Some((STATE_UNHANDLED, mac, _)) if mac == target => return 1,
+            _ => {}
+        }
+    }
+    1
 }
 
 fn bri16(bright: u8) -> u16 {
@@ -144,20 +219,48 @@ pub struct LifxStream {
     target: [u8; 6],
     sequence: u8,
     last: LastSent,
+    /// A strip's own zones (1 for a bulb), and the zone each is played as.
+    strip_zones: usize,
+    zone_of: Vec<usize>,
+    /// What the strip's zones were last sent, and when.
+    last_zones: Option<(Vec<[u16; 4]>, Instant)>,
     pace: Throttle,
     wire: Wire,
 }
 
 impl LifxStream {
     pub fn open(ip: &str, port: u16, target: &str, wire: Wire) -> io::Result<Self> {
+        let socket = udp_to(ip, port)?;
+        let target = target_of(target)?;
+        let strip_zones = probe_zones(&socket, target);
         Ok(LifxStream {
-            socket: udp_to(ip, port)?,
-            target: target_of(target)?,
+            socket,
+            target,
             sequence: 0,
             last: LastSent::default(),
+            strip_zones,
+            zone_of: group_zones(strip_zones),
+            last_zones: None,
             pace: Throttle::new(FRAME_INTERVAL),
             wire,
         })
+    }
+
+    fn send_zones(&mut self, colours: &[[u16; 4]], duration_ms: u32) -> io::Result<()> {
+        for (k, chunk) in colours.chunks(EXTENDED_ZONES).enumerate() {
+            self.sequence = self.sequence.wrapping_add(1);
+            let index = (k * EXTENDED_ZONES) as u16;
+            let msg = frame(
+                SET_EXTENDED_COLOR_ZONES,
+                self.target,
+                false,
+                self.sequence,
+                &set_zones_payload(index, chunk, duration_ms),
+            );
+            self.wire.bytes(&msg);
+            self.socket.send(&msg)?;
+        }
+        Ok(())
     }
 
     fn send(&mut self, output: BulbOutput, duration_ms: u32) -> io::Result<()> {
@@ -179,6 +282,10 @@ impl LightStream for LifxStream {
         self.pace.interval()
     }
 
+    fn latency(&self) -> Duration {
+        LATENCY
+    }
+
     fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());
@@ -186,6 +293,45 @@ impl LightStream for LifxStream {
         let ms = self.pace.glide(effect, duration_ms);
         self.send(output, ms)?;
         self.last.mark(output);
+        self.last_zones = None;
+        Ok(())
+    }
+
+    fn zones(&self) -> usize {
+        self.zone_of.iter().max().map_or(1, |z| z + 1)
+    }
+
+    fn push_zones(
+        &mut self,
+        outputs: &[BulbOutput],
+        effect: Effect,
+        duration_ms: u32,
+    ) -> io::Result<()> {
+        let groups = self.zones();
+        if outputs.len() <= 1 || groups <= 1 {
+            return match outputs.first() {
+                Some(&o) => self.push(o, effect, duration_ms),
+                None => Ok(()),
+            };
+        }
+        let group: Vec<[u16; 4]> = (0..groups)
+            .filter_map(|j| zone_output(outputs, j, groups).map(hsbk))
+            .collect();
+        let colours: Vec<[u16; 4]> = (0..self.strip_zones)
+            .map(|z| group[self.zone_of[z].min(group.len() - 1)])
+            .collect();
+        let fresh = self
+            .last_zones
+            .as_ref()
+            .is_some_and(|(c, at)| *c == colours && at.elapsed() < REFRESH);
+        if fresh || !self.pace.ready() {
+            return Ok(());
+        }
+        let ms = self.pace.glide(effect, duration_ms);
+        self.send_zones(&colours, ms)?;
+        // The next whole-strip frame must go, whatever it shows.
+        self.last = LastSent::default();
+        self.last_zones = Some((colours, Instant::now()));
         Ok(())
     }
 
@@ -240,6 +386,7 @@ pub fn discover(timeout: Duration) -> io::Result<Vec<DiscoveredDevice>> {
                                     target: mac_hex(mac),
                                 },
                                 paired: true,
+                                faster: false,
                             });
                         }
                     }
@@ -271,6 +418,24 @@ fn label(payload: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::color::Rgb;
+
+    #[test]
+    fn strip_zones_go_out_in_one_extended_message() {
+        let red = hsbk(BulbOutput::Color {
+            rgb: Rgb::new(255, 0, 0),
+            bright: 100,
+        });
+        let p = set_zones_payload(82, &[red, [0; 4]], 250);
+        assert_eq!(p.len(), 4 + 1 + 2 + 1 + 8 * EXTENDED_ZONES);
+        assert_eq!(&p[..4], &250u32.to_le_bytes());
+        assert_eq!(p[4], 1, "applied at once");
+        assert_eq!(&p[5..7], &82u16.to_le_bytes());
+        assert_eq!(p[7], 2, "two colours");
+        assert_eq!(&p[12..14], &[0xff, 0xff], "full brightness");
+        assert_eq!(zone_count(&[16, 0, 0, 0, 16]), Some(16));
+        assert_eq!(zone_count(&[0, 0]), None);
+        assert_eq!(zone_count(&[]), None);
+    }
 
     #[test]
     fn get_service_broadcast_matches_the_spec() {

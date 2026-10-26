@@ -26,8 +26,10 @@ use lueur_core::geometry::{LightMapping, map_light};
 use lueur_core::safety::{FlashGuard, SafetySettings};
 use lueur_core::show::{Show, ShowKind, ShowSettings};
 use lueur_core::stage::{Analyzer, Fixture, Levels};
+use lueur_core::sync::{self, Lag};
 use lueur_core::yeelight::Effect;
 use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread::JoinHandle;
@@ -176,8 +178,9 @@ impl Drop for Handle {
 struct ConnectedLight {
     id: String,
     mapping: LightMapping,
-    /// Where it stands and how fast it answers, for the music show.
-    fixture: Fixture,
+    /// Where it stands and how fast it answers, for the shows: one fixture
+    /// for each zone it plays as, left to right.
+    fixtures: Vec<Fixture>,
     /// Its bulb, reconnected in the background whenever it drops.
     link: Relink,
 }
@@ -301,8 +304,9 @@ fn connect(
             Opened::Stream(conn) => Relink::new(conn, open),
             Opened::Busy(link) => {
                 log::info!(light = light.id.as_str(); "a light's bulb is busy, it waits for it");
-                let interval = devices::interval_of(&binding.endpoint(), siblings);
-                Relink::idle(open, interval, link)
+                let endpoint = binding.endpoint();
+                let interval = devices::interval_of(&endpoint, siblings);
+                Relink::idle(open, interval, link).answering(devices::latency_of(&endpoint))
             }
             Opened::Failed(e) => {
                 gate.release();
@@ -311,11 +315,11 @@ fn connect(
                 continue;
             }
         };
-        let fixture = Fixture::place(&config.room.screen, light, link.interval());
+        let fixture = Fixture::place(&config.room.screen, light, link.interval(), link.latency());
         connected.push(ConnectedLight {
             id: light.id.clone(),
             mapping,
-            fixture,
+            fixtures: fixture.zones(link.zones()),
             link: link
                 .gated(gate)
                 .named(light.id.as_str())
@@ -588,23 +592,17 @@ impl Effects {
     }
 }
 
-/// Push one frame to every light, corrected for the walls, each with the
-/// transition `pace` gives it.
-fn push_all(
-    lights: &mut [ConnectedLight],
-    outputs: &[BulbOutput],
-    wall: Rgb,
-    pace: impl Fn(usize) -> (Effect, u32),
-) {
-    for (i, light) in lights.iter_mut().enumerate() {
-        let Some(&output) = outputs.get(i) else {
-            continue;
-        };
-        // A bulb that drops is reconnected in the background, without
-        // holding up the others, and picks up the frame of the moment.
-        let (effect, duration_ms) = pace(i);
-        light.link.push(output.on_wall(wall), effect, duration_ms);
-    }
+/// Which of a frame's outputs are each light's: one for each zone it plays
+/// as, light after light.
+fn spans(lights: &[ConnectedLight]) -> Vec<Range<usize>> {
+    lights
+        .iter()
+        .scan(0, |at, l| {
+            let span = *at..*at + l.fixtures.len();
+            *at = span.end;
+            Some(span)
+        })
+        .collect()
 }
 
 /// On stop, fade the bulbs to a gentle warm glow and leave them on, so the
@@ -620,6 +618,37 @@ fn rest(lights: &mut [ConnectedLight]) {
     });
 }
 
+/// Push one frame, an output for each zone of each light (`spans` says
+/// which are whose), corrected for the walls. `pace` gives the
+/// transition of light `i`'s frame; `hold` says to keep its next command
+/// for something sharp due on it.
+fn push_zoned(
+    lights: &mut [ConnectedLight],
+    outputs: &[BulbOutput],
+    spans: &[Range<usize>],
+    wall: Rgb,
+    pace: impl Fn(usize) -> (Effect, u32),
+    hold: impl Fn(usize) -> bool,
+) {
+    for (i, (light, span)) in lights.iter_mut().zip(spans).enumerate() {
+        let Some(zones) = outputs.get(span.clone()) else {
+            continue;
+        };
+        if hold(i) {
+            continue;
+        }
+        // A bulb that drops is reconnected in the background, without
+        // holding up the others, and picks up the frame of the moment.
+        let zones: Vec<BulbOutput> = zones.iter().map(|o| o.on_wall(wall)).collect();
+        let (effect, duration_ms) = pace(i);
+        light.link.push_zones(&zones, effect, duration_ms);
+    }
+}
+
+/// The soonest a show computes a frame for something due: sooner, and a
+/// wake-up costs more than it gains.
+const SOONEST: Duration = Duration::from_millis(2);
+
 fn run_show(
     kind: ShowKind,
     hearing: Option<Arc<AtomicBool>>,
@@ -627,7 +656,13 @@ fn run_show(
     live: &Mutex<LiveSettings>,
     stop: &AtomicBool,
 ) {
-    let fixtures: Vec<Fixture> = lights.iter().map(|l| l.fixture).collect();
+    let fixtures: Vec<Fixture> = lights
+        .iter()
+        .flat_map(|l| l.fixtures.iter().copied())
+        .collect();
+    let spans = spans(lights);
+    // The gap each light's bulb keeps between two commands.
+    let intervals: Vec<Duration> = lights.iter().map(|l| l.link.interval()).collect();
     let mut show = Show::new(kind, &fixtures);
     let mut guard = FlashGuard::show(fixtures.len());
     let mut ears = match hearing {
@@ -657,7 +692,12 @@ fn run_show(
 
     let mut last = Instant::now();
     while !stop.load(Ordering::SeqCst) {
-        std::thread::sleep(frame.saturating_sub(last.elapsed()));
+        // The next frame comes at its time, or sooner for a beat due before
+        // it: the beat then goes out when it should, not with the frame.
+        let wait = show.next_due().map_or(frame, |due| {
+            frame.min(Duration::from_secs_f32(due).max(SOONEST))
+        });
+        std::thread::sleep(wait.saturating_sub(last.elapsed()));
         // A stall (a sleeping laptop, a busy machine) must not fast-forward
         // the show.
         let dt = last.elapsed().as_secs_f32().min(0.25);
@@ -678,7 +718,8 @@ fn run_show(
                         sample_rate = rate;
                         analyzer = Analyzer::new(rate);
                     }
-                    analyzer.feed(&samples)
+                    analyzer.set_lead(show.lead());
+                    analyzer.feed_after(&samples, dt)
                 }
                 None => Levels::default(),
             },
@@ -687,15 +728,32 @@ fn run_show(
         let mut outputs = show.frame(&settings, dt, levels);
         guard.apply(&mut outputs, dt, safety.flash_guard);
         let sharp = show.sharp();
-        // A hit the guard held back glides in like the rest.
+        // A light is struck when any of its zones is; a hit the guard held
+        // back glides in like the rest.
+        let struck = |i: usize| {
+            spans[i]
+                .clone()
+                .any(|z| sharp.get(z).copied().unwrap_or(false) && !guard.held(z))
+        };
         let pace = |i: usize| {
-            if sharp.get(i).copied().unwrap_or(false) && !guard.held(i) {
+            if struck(i) {
                 (Effect::Sudden, 0)
             } else {
                 glide
             }
         };
-        push_all(lights, &outputs, wall, pace);
+        // A bulb that takes a command only now and then keeps its next one
+        // for a beat due before it could take another.
+        let hold = |i: usize| {
+            let gap = intervals[i].as_secs_f32();
+            gap > 0.0
+                && !struck(i)
+                && spans[i]
+                    .clone()
+                    .filter_map(|z| show.due(z))
+                    .any(|due| due < gap)
+        };
+        push_zoned(lights, &outputs, &spans, wall, pace, hold);
     }
 }
 
@@ -797,9 +855,24 @@ fn run_ambilight(
     let Ok(initial) = live.lock().map(|g| g.clone()) else {
         return;
     };
-    let mut engine = Ambilight::new(lights.len(), initial.engine);
-    let mut guard = FlashGuard::ambilight(lights.len());
-    let mappings: Vec<LightMapping> = lights.iter().map(|l| l.mapping).collect();
+    // A light that colours several parts of itself mirrors the picture
+    // across them, a slice each.
+    let mappings: Vec<LightMapping> = lights
+        .iter()
+        .flat_map(|l| l.mapping.split(l.fixtures.len()))
+        .collect();
+    let spans = spans(lights);
+    let mut engine = Ambilight::new(mappings.len(), initial.engine);
+    let mut guard = FlashGuard::ambilight(mappings.len());
+    // The quick lights wait for the slowest of them, so a cut on screen
+    // reaches the whole room at once.
+    let fixtures: Vec<Fixture> = lights
+        .iter()
+        .flat_map(|l| l.fixtures.iter().copied())
+        .collect();
+    let (_, waits) = sync::timing(&fixtures, 0.0);
+    let mut lag = Lag::default();
+    let mut unsharp = vec![false; mappings.len()];
     let mut last_tick: Option<Instant> = None;
     let mut last_frame: Option<Instant> = None;
 
@@ -842,10 +915,18 @@ fn run_ambilight(
                 let mut tuned = settings.engine;
                 tuned.sample_step = scaled_step(tuned.sample_step, frame.width);
                 engine.set_settings(tuned);
-                let mut outputs = engine.process_outputs(frame, &mappings);
+                let outputs = engine.process_outputs(frame, &mappings);
+                let mut outputs = lag.run(dt, outputs, &mut unsharp, &waits);
                 guard.apply(&mut outputs, dt, settings.safety.flash_guard);
                 let wall = settings.wall;
-                push_all(lights, &outputs, wall, |_| (effect, duration_ms));
+                push_zoned(
+                    lights,
+                    &outputs,
+                    &spans,
+                    wall,
+                    |_| (effect, duration_ms),
+                    |_| false,
+                );
             }
             Err(_) => {
                 // Transient capture hiccup (e.g. a display mode switch). Back off

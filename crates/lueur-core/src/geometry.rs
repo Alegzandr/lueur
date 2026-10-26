@@ -242,6 +242,20 @@ pub struct LightMapping {
 }
 
 impl LightMapping {
+    /// The mapping of each of `n` zones of one light (a strip's segments, a
+    /// layout's panels), left to right: its zone of the picture cut into as
+    /// many slices side by side, so the strip shows the picture across it.
+    pub fn split(&self, n: usize) -> Vec<LightMapping> {
+        let n = n.max(1);
+        let w = self.zone.w / n as f32;
+        (0..n)
+            .map(|i| LightMapping {
+                zone: SampleZone::new(self.zone.x + w * i as f32, self.zone.y, w, self.zone.h),
+                ..*self
+            })
+            .collect()
+    }
+
     /// A mapping that samples `zone` verbatim, with no distance shaping. Used
     /// for manual zone overrides and by tests.
     pub fn direct(zone: SampleZone) -> Self {
@@ -343,6 +357,20 @@ pub fn map_light(screen: &Screen, light: &Light) -> LightMapping {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_strip_s_zones_mirror_slices_side_by_side() {
+        let m = LightMapping::direct(SampleZone::new(0.2, 0.1, 0.6, 0.5));
+        let zones = m.split(3);
+        assert_eq!(zones.len(), 3);
+        for (i, z) in zones.iter().enumerate() {
+            assert!((z.zone.x - (0.2 + 0.2 * i as f32)).abs() < 1e-6);
+            assert!((z.zone.w - 0.2).abs() < 1e-6);
+            assert_eq!((z.zone.y, z.zone.h, z.gain), (0.1, 0.5, m.gain));
+        }
+        assert_eq!(m.split(1), vec![m]);
+        assert_eq!(m.split(0), vec![m]);
+    }
 
     fn light_at(x: f32, y: f32) -> Light {
         Light {

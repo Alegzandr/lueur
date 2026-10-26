@@ -765,6 +765,7 @@ mod tests {
                     snare: (k % 5 == 2).then_some(1.0),
                     hat: (k % 3 == 0).then_some(1.0),
                     tempo: Some(0.5),
+                    ..Levels::default()
                 };
                 stage.frame(s, l, 0.025)
             })

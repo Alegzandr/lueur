@@ -383,7 +383,9 @@
                     class="num"
                   >
                     · {d.ip}</span
-                  >{/if}{#if !d.paired}<span class="warn">, {t("needs_pairing")}</span>{:else if !supportsMusic(d)}<span
+                  >{/if}{#if d.faster}<span class="warn">, {t("pair_faster")}</span>{:else if !d.paired}<span class="warn"
+                    >, {t("needs_pairing")}</span
+                  >{:else if !supportsMusic(d)}<span
                     class="warn">, {t("no_music")}</span
                   >{/if}
               </div>
@@ -395,9 +397,16 @@
             {/if}
             {#if !d.paired}
               {@const waiting = app.pairing?.step === "waiting"}
-              <button class="btn sm" title={t("pair_tip")} data-pair={d.id} onclick={() => pair(d)} disabled={waiting}>
+              <button
+                class="btn sm"
+                class:plain={d.faster}
+                title={t(d.faster ? "pair_faster_tip" : "pair_tip")}
+                data-pair={d.id}
+                onclick={() => pair(d)}
+                disabled={waiting}
+              >
                 {#if waiting && app.pairing?.device.id === d.id}<span class="spinner" aria-hidden="true"></span>{/if}
-                {waiting && app.pairing?.device.id === d.id ? t("pairing") : t("pair")}
+                {waiting && app.pairing?.device.id === d.id ? t("pairing") : t(d.faster ? "pair_again" : "pair")}
               </button>
             {:else if unboundLights.length > 0}
               <select class="assign" aria-label={t("labelled", { name: deviceName(d), what: t("use_for") })} onchange={(e) => onAssign(d, e)}>

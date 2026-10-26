@@ -125,12 +125,18 @@ fn fill(cfg: &mut AppConfig, sealed: Sealed) {
 fn strip(cfg: &AppConfig) -> AppConfig {
     let mut cfg = cfg.clone();
     let p = &mut cfg.pairings;
-    p.hue.iter_mut().for_each(|h| h.username.clear());
+    p.hue.iter_mut().for_each(|h| {
+        h.username.clear();
+        h.clientkey.clear();
+    });
     p.nanoleaf.iter_mut().for_each(|n| n.token.clear());
     p.tuya.iter_mut().for_each(|t| t.key.clear());
     for b in &mut cfg.bindings {
         if let Some(c) = credential_mut(&mut b.kind) {
             c.clear();
+        }
+        if let DeviceKind::Hue { clientkey, .. } = &mut b.kind {
+            clientkey.clear();
         }
     }
     cfg
@@ -325,6 +331,7 @@ mod tests {
                     ip: "192.168.1.2".into(),
                     username: "hue-secret".into(),
                     cert: String::new(),
+                    clientkey: "hue-secret-key".into(),
                 }],
                 nanoleaf: Vec::new(),
                 tuya: vec![TuyaDevice {
@@ -346,6 +353,7 @@ mod tests {
                     username: "hue-secret".into(),
                     light: "3".into(),
                     cert: String::new(),
+                    clientkey: "hue-secret-key".into(),
                 },
             }],
             ..AppConfig::default()

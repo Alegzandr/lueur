@@ -2,22 +2,24 @@
 //!
 //! Pairing: hold the controller's power button 5–7 s until its LEDs flash,
 //! then ask for a token within 30 seconds. The ambilight runs in External
-//! Control mode, a UDP stream that sets every panel each frame; the whole
-//! layout mirrors one colour, since the room plan treats it as one light.
+//! Control mode, a UDP stream that sets every panel each frame. The
+//! ambilight shows one colour on the whole layout, since the room plan
+//! treats it as one light; the music plays it as a few zones, its panels
+//! grouped left to right, so a chase runs across it.
 
-use super::common::{LastSent, Throttle, kelvin_to_rgb, udp_to};
+use super::common::{LastSent, REFRESH, Throttle, kelvin_to_rgb, udp_to};
 use super::http::{self, Response};
 use super::wire::Wire;
 use super::{
     Approach, DeviceKind, DiscoveredDevice, LightStream, NanoleafPairing, REST_BRIGHT, REST_KELVIN,
-    mdns,
+    group_zones, mdns, zone_output,
 };
 use crate::color::{BulbOutput, Rgb};
 use crate::yeelight::Effect;
 use serde_json::{Value, json};
 use std::io;
 use std::net::UdpSocket;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const PORT: u16 = 16021;
 /// What a Nanoleaf controller's device id starts with in Lueur; its own id
@@ -26,6 +28,8 @@ pub const ID_PREFIX: &str = "nanoleaf:";
 const STREAM_PORT: u16 = 60222;
 const TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const FRAME_INTERVAL: Duration = Duration::from_millis(40);
+/// How long a command takes to show: a datagram to the controller, and on to the panels.
+pub(crate) const LATENCY: Duration = Duration::from_millis(40);
 
 fn check(resp: Response) -> io::Result<Response> {
     if resp.ok() {
@@ -140,6 +144,7 @@ pub fn discover(timeout: Duration, known: &[NanoleafPairing]) -> io::Result<Vec<
             support: Vec::new(),
             fw_ver: inst.txt.get("srcvers").cloned(),
             paired: !token.is_empty(),
+            faster: false,
             kind: DeviceKind::Nanoleaf { token },
         });
     }
@@ -170,12 +175,48 @@ pub fn panel_ids(layout: &Value) -> Vec<u16> {
         .unwrap_or_default()
 }
 
+/// Each panel's zone in a `panelLayout/layout` reply, in the order
+/// [`panel_ids`] lists them: the panels grouped left to right into at most
+/// [`super::MAX_ZONES`] zones.
+pub fn panel_zones(layout: &Value) -> Vec<usize> {
+    let xs: Vec<i64> = layout
+        .get("positionData")
+        .and_then(Value::as_array)
+        .map(|panels| {
+            panels
+                .iter()
+                .filter(|p| {
+                    p.get("panelId")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|id| u16::try_from(id).is_ok())
+                })
+                .map(|p| p.get("x").and_then(Value::as_i64).unwrap_or(0))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut order: Vec<usize> = (0..xs.len()).collect();
+    order.sort_by_key(|&i| xs[i]);
+    let groups = group_zones(xs.len());
+    let mut zones = vec![0; xs.len()];
+    for (rank, &i) in order.iter().enumerate() {
+        zones[i] = groups[rank];
+    }
+    zones
+}
+
 /// An External Control v2 frame setting every panel to `rgb`.
 /// `transition` is in tenths of a second.
 pub fn frame(panels: &[u16], rgb: Rgb, transition: u16) -> Vec<u8> {
+    zoned_frame(panels, |_| rgb, transition)
+}
+
+/// An External Control v2 frame setting panel `i` of `panels` to
+/// `colour(i)`.
+pub fn zoned_frame(panels: &[u16], colour: impl Fn(usize) -> Rgb, transition: u16) -> Vec<u8> {
     let mut out = Vec::with_capacity(2 + panels.len() * 8);
     out.extend_from_slice(&(panels.len() as u16).to_be_bytes());
-    for &id in panels {
+    for (i, &id) in panels.iter().enumerate() {
+        let rgb = colour(i);
         out.extend_from_slice(&id.to_be_bytes());
         out.extend_from_slice(&[rgb.r, rgb.g, rgb.b, 0]);
         out.extend_from_slice(&transition.to_be_bytes());
@@ -200,8 +241,13 @@ pub struct NanoleafStream {
     port: u16,
     token: String,
     panels: Vec<u16>,
+    /// Each panel's zone, and how many zones there are.
+    zone_of: Vec<usize>,
+    zones: usize,
     socket: UdpSocket,
     last: LastSent,
+    /// The colours last sent zone by zone, and when.
+    last_zones: Option<(Vec<Rgb>, Instant)>,
     pace: Throttle,
     wire: Wire,
 }
@@ -216,6 +262,8 @@ impl NanoleafStream {
         if panels.is_empty() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "no panels"));
         }
+        let zone_of = panel_zones(&layout);
+        let zones = zone_of.iter().max().map_or(1, |z| z + 1);
         // Full brightness: the stream folds the ambilight's own into RGB.
         put(
             ip,
@@ -236,8 +284,11 @@ impl NanoleafStream {
             port,
             token: token.to_string(),
             panels,
+            zone_of,
+            zones,
             socket: udp_to(ip, STREAM_PORT)?,
             last: LastSent::default(),
+            last_zones: None,
             pace: Throttle::new(FRAME_INTERVAL),
             wire,
         })
@@ -247,6 +298,10 @@ impl NanoleafStream {
 impl LightStream for NanoleafStream {
     fn interval(&self) -> Duration {
         self.pace.interval()
+    }
+
+    fn latency(&self) -> Duration {
+        LATENCY
     }
 
     fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
@@ -262,6 +317,53 @@ impl LightStream for NanoleafStream {
         self.wire.bytes(&frame);
         self.socket.send(&frame)?;
         self.last.mark(output);
+        self.last_zones = None;
+        Ok(())
+    }
+
+    fn zones(&self) -> usize {
+        self.zones
+    }
+
+    fn push_zones(
+        &mut self,
+        outputs: &[BulbOutput],
+        effect: Effect,
+        duration_ms: u32,
+    ) -> io::Result<()> {
+        if outputs.len() <= 1 || self.zones <= 1 {
+            return match outputs.first() {
+                Some(&o) => self.push(o, effect, duration_ms),
+                None => Ok(()),
+            };
+        }
+        let colours: Vec<Rgb> = (0..self.zones)
+            .filter_map(|j| zone_output(outputs, j, self.zones).map(panel_rgb))
+            .collect();
+        let fresh = self
+            .last_zones
+            .as_ref()
+            .is_some_and(|(c, at)| *c == colours && at.elapsed() < REFRESH);
+        if fresh || !self.pace.ready() {
+            return Ok(());
+        }
+        let transition = if effect == Effect::Smooth {
+            duration_ms.div_ceil(100).min(10) as u16
+        } else {
+            0
+        };
+        let zone_of = &self.zone_of;
+        let last = colours.len() - 1;
+        let frame = zoned_frame(
+            &self.panels,
+            |i| colours[zone_of.get(i).copied().unwrap_or(0).min(last)],
+            transition,
+        );
+        self.wire.bytes(&frame);
+        self.socket.send(&frame)?;
+        // The next whole-layout frame must go, whatever it shows.
+        self.last = LastSent::default();
+        self.last_zones = Some((colours, Instant::now()));
         Ok(())
     }
 
@@ -296,6 +398,23 @@ mod tests {
         .unwrap();
         assert_eq!(panel_ids(&v), vec![107, 5432]);
         assert!(panel_ids(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn panels_are_grouped_left_to_right() {
+        let v: Value = serde_json::from_str(
+            r#"{"positionData":[{"panelId":1,"x":300},{"panelId":2,"x":0},{"panelId":3,"x":150}]}"#,
+        )
+        .unwrap();
+        assert_eq!(panel_zones(&v), vec![2, 0, 1]);
+        let panels: Vec<Value> = (0..20)
+            .map(|i| json!({"panelId": i, "x": i * 10}))
+            .collect();
+        let zones = panel_zones(&json!({ "positionData": panels }));
+        assert_eq!(zones.iter().max(), Some(&(super::super::MAX_ZONES - 1)));
+        assert!(zones.windows(2).all(|w| w[0] <= w[1]));
+        let f = zoned_frame(&[7, 8], |i| Rgb::new(i as u8, 0, 0), 0);
+        assert_eq!((f[4], f[12]), (0, 1));
     }
 
     #[test]

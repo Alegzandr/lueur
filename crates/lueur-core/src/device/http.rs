@@ -105,7 +105,41 @@ pub fn request_with(
     let addr = address(ip, port)?;
     check_path(path)?;
     let mut conn = connect(addr, trust, timeout)?;
-    exchange(&mut conn, addr, method, path, body, false).map(|(response, _)| response)
+    exchange(&mut conn, addr, method, path, body, &[], false).map(|(response, _)| response)
+}
+
+/// A request to the holder of the `pin` certificate, with `headers` of our
+/// own: a key a newer API takes there rather than in the path. Over TLS
+/// only, since they carry it.
+#[allow(clippy::too_many_arguments)]
+pub fn request_headed(
+    pin: [u8; 32],
+    method: &str,
+    ip: &str,
+    port: u16,
+    path: &str,
+    body: Option<&str>,
+    headers: &[(&str, &str)],
+    timeout: Duration,
+) -> io::Result<Response> {
+    let addr = address(ip, port)?;
+    check_path(path)?;
+    check_headers(headers)?;
+    let mut conn = connect(addr, Trust::Pinned(pin), timeout)?;
+    exchange(&mut conn, addr, method, path, body, headers, false).map(|(response, _)| response)
+}
+
+/// Header names and values that cannot break out of their line.
+fn check_headers(headers: &[(&str, &str)]) -> io::Result<()> {
+    let clean = |s: &str| !s.is_empty() && !s.bytes().any(|b| b.is_ascii_control());
+    if headers
+        .iter()
+        .all(|(name, value)| clean(name) && clean(value) && !name.contains([':', ' ']))
+    {
+        Ok(())
+    } else {
+        Err(io::Error::new(io::ErrorKind::InvalidInput, "bad header"))
+    }
 }
 
 /// GET `path` from `ip:port` over TLS, whatever certificate the host shows,
@@ -131,7 +165,7 @@ pub fn learn(
         Conn::Clear(_) => None,
     }
     .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no certificate"))?;
-    let (response, _) = exchange(&mut conn, addr, "GET", path, None, false)?;
+    let (response, _) = exchange(&mut conn, addr, "GET", path, None, &[], false)?;
     Ok((response, cert))
 }
 
@@ -182,7 +216,7 @@ impl Client {
         check_path(path)?;
         if let Some(mut stream) = self.stream.take()
             && let Ok((response, reusable)) =
-                exchange(&mut stream, self.addr, method, path, body, true)
+                exchange(&mut stream, self.addr, method, path, body, &[], true)
         {
             if reusable {
                 self.stream = Some(stream);
@@ -195,7 +229,7 @@ impl Client {
             // A pinned client always has its TLS config: never the clear.
             _ => return Err(io::Error::other("TLS client without its configuration")),
         };
-        let (response, reusable) = exchange(&mut stream, self.addr, method, path, body, true)?;
+        let (response, reusable) = exchange(&mut stream, self.addr, method, path, body, &[], true)?;
         if reusable {
             self.stream = Some(stream);
         }
@@ -397,6 +431,7 @@ fn exchange(
     method: &str,
     path: &str,
     body: Option<&str>,
+    headers: &[(&str, &str)],
     keep_alive: bool,
 ) -> io::Result<(Response, bool)> {
     let body = body.unwrap_or("");
@@ -404,6 +439,9 @@ fn exchange(
     let mut req = format!(
         "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: {connection}\r\nAccept: application/json\r\n"
     );
+    for (name, value) in headers {
+        req.push_str(&format!("{name}: {value}\r\n"));
+    }
     if !body.is_empty() || method != "GET" {
         req.push_str("Content-Type: application/json\r\n");
         req.push_str(&format!("Content-Length: {}\r\n", body.len()));
@@ -633,7 +671,7 @@ mod tests {
         let mut stream = Conn::Clear(tcp(addr, Duration::from_millis(100)).unwrap());
         let started = Instant::now();
         // Whatever came by then is all there is: the call never waits longer.
-        let _ = exchange(&mut stream, addr, "GET", "/", None, false);
+        let _ = exchange(&mut stream, addr, "GET", "/", None, &[], false);
         assert!(started.elapsed() < Duration::from_millis(400));
         drop(stream);
         server.join().unwrap();
@@ -722,7 +760,7 @@ oM3et9+kVfRRBKI8zrxw27CgOzbpyFyNmFn9FqJBmzp+MLN5c9QM3HXu
         let (addr, server) = tls_server(OK);
         let pin = fingerprint(test_cert().as_ref());
         let mut conn = connect_tls(addr, Some(pin), Duration::from_secs(2)).unwrap();
-        let (r, _) = exchange(&mut conn, addr, "GET", "/api/secret", None, false).unwrap();
+        let (r, _) = exchange(&mut conn, addr, "GET", "/api/secret", None, &[], false).unwrap();
         assert_eq!(r.body, "{}");
         drop(conn);
         let seen = server.join().unwrap().unwrap();

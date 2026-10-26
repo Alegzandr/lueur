@@ -13,10 +13,12 @@
 //! it was paired at. See [`Approach`] and [`pairing_cert`].
 //!
 //! A bridge accepts about ten light commands a second in total, so the lamps
-//! of one bridge share that budget. That is enough for a calm ambilight; the
-//! Entertainment API (DTLS streaming at 25 Hz) is the way past it.
+//! of one bridge share that budget. That is enough for a calm ambilight. A
+//! bridge paired with its streaming key streams to its lamps instead (see
+//! [`super::entertainment`]), and falls back to this when it cannot.
 
 use super::common::{Driver, LastSent, Mailbox, Throttle};
+use super::entertainment::{self, Access, Seat};
 use super::http::{self, Response, Trust};
 use super::wire::Wire;
 use super::{
@@ -38,6 +40,8 @@ const TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The bridge's whole budget, shared by its lamps.
 pub(crate) const BRIDGE_INTERVAL: Duration = Duration::from_millis(100);
+/// How long a command over REST takes to show: the bridge, then Zigbee.
+pub(crate) const LATENCY: Duration = Duration::from_millis(120);
 
 /// CIE xy of an sRGB colour, through the wide gamut Hue documents for its
 /// colour lamps. The bridge maps it into each lamp's own gamut.
@@ -163,7 +167,7 @@ fn put_state(ip: &str, username: &str, light: &str, cert: &str, body: &Value) ->
 }
 
 /// Path segments come from config; keep them to what the bridge issues.
-fn safe(segment: &str) -> io::Result<&str> {
+pub(crate) fn safe(segment: &str) -> io::Result<&str> {
     if !segment.is_empty()
         && segment
             .bytes()
@@ -252,7 +256,14 @@ pub fn pair(ip: &str, known: &[HueBridge]) -> io::Result<HueBridge> {
         .map(|b| b.cert.as_str());
     let cert = pairing_cert(learn_cert(ip, &id), pinned, model)
         .map_err(|r| io::Error::new(io::ErrorKind::PermissionDenied, r))?;
-    let body = json!({"devicetype": "lueur#desktop"}).to_string();
+    // The streaming key comes with the username or never: only HTTPS
+    // bridges stream, and over TLS it is as safe as the username.
+    let body = if cert.is_empty() {
+        json!({"devicetype": "lueur#desktop"})
+    } else {
+        json!({"devicetype": "lueur#desktop", "generateclientkey": true})
+    }
+    .to_string();
     let v = check(call(ip, &cert, "POST", "/api", Some(&body))?)?;
     if let Some((kind, desc)) = bridge_error(&v) {
         return Err(if kind == 101 {
@@ -264,16 +275,22 @@ pub fn pair(ip: &str, known: &[HueBridge]) -> io::Result<HueBridge> {
             io::Error::other(desc)
         });
     }
-    let username = v
-        .as_array()
-        .and_then(|a| a.iter().find_map(|x| x.pointer("/success/username")))
-        .and_then(Value::as_str)
+    let success = |key: &str| {
+        v.as_array()
+            .and_then(|a| a.iter().find_map(|x| x.pointer(&format!("/success/{key}"))))
+            .and_then(Value::as_str)
+    };
+    let username = success("username")
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no username in reply"))?;
+    let clientkey = success("clientkey")
+        .filter(|k| k.bytes().all(|b| b.is_ascii_hexdigit()))
+        .unwrap_or_default();
     Ok(HueBridge {
         id,
         ip: ip.to_string(),
         username: username.to_string(),
         cert,
+        clientkey: clientkey.to_string(),
     })
 }
 
@@ -378,6 +395,15 @@ fn visit(ip: &str, id: &str, b: &HueBridge, approach: Approach) -> Vec<Discovere
         b.cert.clone()
     };
     match lights(ip, id, &b.username, &cert) {
+        // Paired before Lueur asked for the streaming key: its lamps work,
+        // and the bridge is offered for pairing again, to stream.
+        Ok(mut lamps) if b.clientkey.is_empty() && !cert.is_empty() => {
+            lamps.push(DiscoveredDevice {
+                faster: true,
+                ..bridge(ip, id, cert)
+            });
+            lamps
+        }
         Ok(lamps) => lamps,
         // Another certificate, or none to prove a move: nothing was sent.
         Err(e) if http::is_cert_mismatch(&e) || approach == Approach::Prove => {
@@ -403,8 +429,10 @@ fn bridge(ip: &str, id: &str, cert: String) -> DiscoveredDevice {
             username: String::new(),
             light: String::new(),
             cert,
+            clientkey: String::new(),
         },
         paired: false,
+        faster: false,
     }
 }
 
@@ -454,12 +482,16 @@ pub fn parse_lights(
                     .get("swversion")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+                // The streaming key is the pairing's, filled in with the
+                // username wherever the light is bound.
                 kind: DeviceKind::Hue {
                     username: username.to_string(),
                     light: num.clone(),
                     cert: cert.to_string(),
+                    clientkey: String::new(),
                 },
                 paired: true,
+                faster: false,
             }
         })
         .collect();
@@ -507,29 +539,43 @@ impl Driver for HueDriver {
 }
 
 pub struct HueStream {
+    /// Its place in the bridge's stream, when the bridge streams to it.
+    seat: Option<Seat>,
+    /// The REST API: for every frame when it does not, and to settle it.
     mailbox: Mailbox,
     last: LastSent,
     pace: Throttle,
 }
 
 impl HueStream {
-    /// `siblings` lamps of the same bridge share its command budget.
-    pub fn open(
-        ip: &str,
-        username: &str,
-        light: &str,
-        cert: &str,
-        siblings: usize,
-        wire: Wire,
-    ) -> io::Result<Self> {
-        let (trust, port) = link(cert)?;
+    /// `siblings` lamps of the same bridge share its command budget, unless
+    /// the bridge streams to them (with the `clientkey` it gave at pairing).
+    pub fn open(access: &Access, light: &str, siblings: usize, wire: Wire) -> io::Result<Self> {
+        let (trust, port) = link(&access.cert)?;
         let driver = HueDriver {
-            client: http::Client::with_trust(ip, port, trust, TIMEOUT)?,
-            path: state_path(username, light)?,
+            client: http::Client::with_trust(&access.ip, port, trust, TIMEOUT)?,
+            path: state_path(&access.username, light)?,
             turned_on: false,
-            wire: wire.hiding(username),
+            wire: wire.hiding(&access.username),
         };
+        let seat = if access.can_stream() {
+            match Seat::take(access, light) {
+                Ok(seat) => Some(seat),
+                Err(e) => {
+                    log::debug!(light = light; "not streamed to: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        // Over REST the first command turns the lamp on; a stream may not.
+        if seat.is_some() {
+            let on = json!({"on": true});
+            let _ = put_state(&access.ip, &access.username, light, &access.cert, &on);
+        }
         Ok(HueStream {
+            seat,
             mailbox: Mailbox::spawn("hue", driver)?,
             last: LastSent::default(),
             pace: Throttle::new(BRIDGE_INTERVAL * siblings as u32),
@@ -539,10 +585,29 @@ impl HueStream {
 
 impl LightStream for HueStream {
     fn interval(&self) -> Duration {
-        self.pace.interval()
+        if self.seat.is_some() {
+            entertainment::INTERVAL
+        } else {
+            self.pace.interval()
+        }
+    }
+
+    fn latency(&self) -> Duration {
+        if self.seat.is_some() {
+            entertainment::LATENCY
+        } else {
+            LATENCY
+        }
+    }
+
+    fn zones(&self) -> usize {
+        self.seat.as_ref().map_or(1, Seat::zones)
     }
 
     fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
+        if let Some(seat) = &self.seat {
+            return seat.show(&[output]);
+        }
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());
         }
@@ -552,7 +617,26 @@ impl LightStream for HueStream {
         Ok(())
     }
 
+    fn push_zones(
+        &mut self,
+        outputs: &[BulbOutput],
+        effect: Effect,
+        duration_ms: u32,
+    ) -> io::Result<()> {
+        match &self.seat {
+            Some(seat) => seat.show(outputs),
+            None => match outputs.iter().max_by_key(|o| o.bright()) {
+                Some(&o) => self.push(o, effect, duration_ms),
+                None => Ok(()),
+            },
+        }
+    }
+
     fn rest(&mut self) {
+        // The stream would cover the glow: off it first.
+        if let Some(seat) = self.seat.as_mut() {
+            seat.leave();
+        }
         self.mailbox.rest();
     }
 }
@@ -635,6 +719,7 @@ mod tests {
                 username: "user".into(),
                 light: "3".into(),
                 cert: String::new(),
+                clientkey: String::new(),
             }
         );
     }
@@ -706,7 +791,13 @@ mod tests {
     fn a_pinned_stream_refuses_a_bad_pin_before_any_traffic() {
         // TEST-NET: never routable, and never reached.
         let wire = Wire::new("hue", "hue:b:1");
-        assert!(HueStream::open("192.0.2.1", "user", "1", "nonsense", 1, wire).is_err());
+        let access = Access {
+            ip: "192.0.2.1".into(),
+            username: "user".into(),
+            clientkey: String::new(),
+            cert: "nonsense".into(),
+        };
+        assert!(HueStream::open(&access, "1", 1, wire).is_err());
         assert!(set_power("192.0.2.1", "user", "1", "nonsense", true).is_err());
     }
 }

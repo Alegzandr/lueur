@@ -11,10 +11,14 @@ lueur/
 │   ├─ color.rs           Colour types, linear-space averaging, smoothing
 │   ├─ geometry.rs        Room model + light→screen-zone mapping
 │   ├─ engine.rs          Frame → one colour per light
+│   ├─ stage.rs           The music show: listening, the beat clock, the stage
+│   ├─ sync.rs            Lights of different speeds kept together
 │   ├─ safety.rs          Photosensitivity guard on every mode's output
 │   ├─ yeelight/          LAN protocol, SSDP discovery, music-mode sockets
 │   ├─ device/            Every family behind one stream/power/identify API:
 │   │                     WiZ, LIFX, Govee, Hue, Nanoleaf, Tuya DP encoding;
+│   │                     entertainment.rs streams to a Hue bridge over
+│   │                     dtls.rs, a DTLS 1.2 PSK client on ring;
 │   │                     wire.rs traces what each stream sends,
 │   │                     relink.rs brings dropped bulbs back, lease.rs
 │   │                     shares bulbs with other computers running Lueur
@@ -117,6 +121,27 @@ bans the APIs that would break them, and the app crate denies those lints.
 The QR sign-in uses the partner id Home Assistant ships with Tuya's SDK
 (`CLIENT_ID` in `src-tauri/src/tuya_cloud.rs`). A public release should
 register its own with Tuya.
+
+### Hue streaming
+
+Pairing asks a bridge for its streaming key too (`generateclientkey`), kept
+beside the username and as secret: sealed, blanked for the interface and
+left out of exports. The lamps of a bridge with one take a seat each in a
+single stream per bridge (`device/entertainment.rs`): Lueur's own
+entertainment area, named *Lueur*, set up over the CLIP v2 API with every
+lamp asking, then HueStream frames over DTLS 1.2 PSK (`device/dtls.rs`, on
+`ring`, no new crate). A bridge that will not stream (another app streams,
+a lamp it cannot stream to, a round bridge without HTTPS) leaves its lamps
+on the REST API, and is tried again after half a minute.
+
+The DTLS client is checked against OpenSSL's server by tests that need
+`openssl` on the `PATH`:
+
+```bash
+cargo test -p lueur-core dtls -- --include-ignored
+```
+
+None of this has met a real bridge yet.
 
 ### Hue and Nanoleaf credentials
 

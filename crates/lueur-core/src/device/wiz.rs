@@ -25,6 +25,8 @@ const MAX_KELVIN: u16 = 6500;
 
 /// About what a WiZ bulb follows smoothly; faster just queues up.
 pub(crate) const FRAME_INTERVAL: Duration = Duration::from_millis(40);
+/// How long a command takes to show: a datagram, and the bulb's own short fade.
+pub(crate) const LATENCY: Duration = Duration::from_millis(50);
 
 /// The `setPilot` command for one output.
 pub fn pilot(output: BulbOutput) -> Value {
@@ -78,6 +80,10 @@ impl WizStream {
 impl LightStream for WizStream {
     fn interval(&self) -> Duration {
         self.pace.interval()
+    }
+
+    fn latency(&self) -> Duration {
+        LATENCY
     }
 
     fn push(&mut self, output: BulbOutput, _: Effect, _: u32) -> io::Result<()> {
@@ -156,6 +162,7 @@ pub fn parse_reply(raw: &[u8], from: Ipv4Addr) -> Option<DiscoveredDevice> {
         fw_ver: text("fwVersion"),
         kind: DeviceKind::Wiz,
         paired: true,
+        faster: false,
     })
 }
 

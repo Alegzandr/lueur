@@ -13,3 +13,7 @@ pub use discovery::discover;
 pub use protocol::{
     DEFAULT_CONTROL_PORT, DiscoveredDevice, Effect, MIN_SMOOTH_DURATION_MS, parse_discovery,
 };
+
+/// How long a command on the music channel takes to show: a TCP write on
+/// the LAN, and the LEDs' own rise.
+pub const LATENCY: std::time::Duration = std::time::Duration::from_millis(45);

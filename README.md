@@ -121,7 +121,7 @@ Some bulbs need one thing first:
 | Bulbs | Before searching |
 |---|---|
 | Yeelight, Govee | Turn on **LAN Control** in their phone app. |
-| Philips Hue | Press the button on the bridge when Lueur asks. |
+| Philips Hue | Press the button on the bridge when Lueur asks. A bridge paired with Lueur 0.11 or older is offered to pair again: its lamps then stream, quick enough for the music. |
 | Nanoleaf | Hold the controller's power button for 5 to 7 seconds when Lueur asks. |
 | Smart Life / Tuya | Use **Smart Life** on the Bulbs page ([see below](#smart-life--tuya-bulbs)). |
 
@@ -198,16 +198,22 @@ owner to add you to their home instead.
   what one application plays (Settings, *Sound source*), so a call or a
   notification stays out of the show. On macOS and Linux it listens to the
   microphone, or another input. It hears the kick, the snare and the
-  hi-hats apart, finds the tempo and sends each beat a touch early so it
-  lands with the sound, and plays the same whatever the volume, in Windows
-  or in the player, while a quiet passage still reads as quiet. It plays
-  like a lighting desk: the colours hold through each phrase and change as
-  the next one lands, the room rests in one colour and the beats strike in
-  another, from near dark, each hit fading out just before the next beat.
-  Each light gets a part from where it stands: the quick ones near the
-  screen punch the beat in patterns that travel across the room, from side
-  to side or from the middle out, slow bulbs (Hue) and lamps out in the room
-  wash it in colour, and a light at the ceiling answers the snare. A
+  hi-hats apart, finds the tempo (from the snares and the strums too, in a
+  song without a kick), and sends each beat early by however long each
+  bulb takes to show it, so every light lands with the sound together.
+  With Bluetooth headphones or a TV's speakers, *Sound delay* in Settings
+  holds the lights back as long as the sound takes to reach you. It plays
+  the same whatever the volume, in Windows or in the player, while a quiet
+  passage still reads as quiet. It plays like a lighting desk: the colours
+  hold through each phrase and change as the next one lands, where the
+  song's own phrases start, the room rests in one colour and the beats
+  strike in another, from near dark, each hit fading out just before the
+  next beat. Each light gets a part from where it stands: the quick ones
+  near the screen punch the beat in patterns that travel across the room,
+  from side to side or from the middle out (and along a strip, a gradient
+  lightstrip or a Nanoleaf layout, segment by segment), slow bulbs and
+  lamps out in the room wash it in colour, and a light at the ceiling
+  answers the snare. A
   breakdown rests in one deep colour, a build's chase quickens and climbs
   to white, and the drop lands on every light at once, into new colours.
   White flashes can be turned off, and never come more than three a
@@ -312,7 +318,7 @@ To remove your settings too, delete the `lueur` folder listed under
 
 ## Roadmap
 
-- Hue Entertainment streaming instead of the REST API, and WLED.
+- WLED.
 - Testing WiZ, LIFX, Govee, Hue and Nanoleaf on real hardware.
 - Optional per-light manual zone override.
 - Multi-monitor spanning and per-zone brightness curves.

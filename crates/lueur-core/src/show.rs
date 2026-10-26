@@ -91,6 +91,11 @@ pub struct ShowSettings {
     /// times a second: the show's guard ([`crate::safety::FlashGuard::show`])
     /// holds them to that even with the protection off.
     pub flashes: bool,
+    /// How late the sound reaches the ear after the computer plays it,
+    /// milliseconds, for the music to wait on: Bluetooth headphones take a
+    /// fifth of a second or so, a TV's speakers can too. Below zero the
+    /// lights go earlier still.
+    pub delay_ms: i16,
 }
 
 impl Default for ShowSettings {
@@ -100,13 +105,22 @@ impl Default for ShowSettings {
             bright: 80,
             speed: 50,
             flashes: true,
+            delay_ms: 0,
         }
     }
 }
 
+/// The range of [`ShowSettings::delay_ms`].
+pub const DELAY_MS: std::ops::RangeInclusive<i16> = -150..=500;
+
 impl ShowSettings {
     pub(crate) fn bright(&self) -> f32 {
         f32::from(self.bright.clamp(MIN_BRIGHT, MAX_BRIGHT)) / 100.0
+    }
+
+    /// [`ShowSettings::delay_ms`] in seconds, within [`DELAY_MS`].
+    pub fn delay(&self) -> f32 {
+        f32::from(self.delay_ms.clamp(*DELAY_MS.start(), *DELAY_MS.end())) / 1000.0
     }
 
     /// How many times faster than its natural pace a show plays: a quarter
@@ -649,6 +663,26 @@ impl Show {
         } else {
             &self.smooth
         }
+    }
+
+    /// How early the music's beats should go out (see [`Stage::lead`]).
+    pub fn lead(&self) -> f32 {
+        self.stage.lead()
+    }
+
+    /// Seconds until light `i` is due something sharp (see
+    /// [`Stage::due`]); never, for the shows that only glide.
+    pub fn due(&self, i: usize) -> Option<f32> {
+        (self.kind == ShowKind::Music)
+            .then(|| self.stage.due(i))
+            .flatten()
+    }
+
+    /// Seconds until anything sharp is due on any light.
+    pub fn next_due(&self) -> Option<f32> {
+        (self.kind == ShowKind::Music)
+            .then(|| self.stage.next_due())
+            .flatten()
     }
 }
 

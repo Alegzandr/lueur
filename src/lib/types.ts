@@ -177,6 +177,9 @@ export interface ShowSettings {
   speed: number;
   /** The music may flash white on drops and snares, at most three a second. */
   flashes: boolean;
+  /** How late the sound reaches the ear, ms, for the music to wait on
+   *  (`DELAY_MS` in show.rs: -150..=500). */
+  delay_ms: number;
 }
 
 export interface Rgb {
@@ -262,6 +265,9 @@ export interface DiscoveredDevice {
   kind: DeviceKind;
   /** False for a Hue bridge or Nanoleaf that still needs pairing. */
   paired: boolean;
+  /** A Hue bridge paired before Lueur asked for its streaming key: its
+   *  lamps work, and pairing it again lets them keep up with the music. */
+  faster?: boolean;
 }
 
 /** A Smart Life sign-in waiting for its QR code to be scanned. */
@@ -356,7 +362,7 @@ export function defaultConfig(): AppConfig {
     },
     interface: { appearance: "system", language: "system", room_arranged: false },
     states: {},
-    show: { kind: "music", bright: 80, speed: 50, flashes: true },
+    show: { kind: "music", bright: 80, speed: 50, flashes: true, delay_ms: 0 },
     audio: { kind: "default" },
     natural: [],
     safety: { flash_guard: true },

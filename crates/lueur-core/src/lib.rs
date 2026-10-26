@@ -16,6 +16,7 @@
 //! * [`show`]: light shows without a screen: palette fades, a candle, music.
 //! * [`stage`]: the music show: listening to the track, and playing it on
 //!   the lights like a stage.
+//! * [`sync`]: keeping lights that answer at different speeds together.
 //! * [`safety`]: the photosensitivity protection every mode's output goes
 //!   through: no light flashes more than three times a second.
 //! * [`config`]: persisted settings, read from and written to the data
@@ -34,6 +35,7 @@ pub mod safety;
 pub mod scene;
 pub mod show;
 pub mod stage;
+pub mod sync;
 pub mod yeelight;
 
 pub use color::Rgb;

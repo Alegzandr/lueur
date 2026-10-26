@@ -30,6 +30,9 @@ use tokio::sync::mpsc;
 
 /// What a Tuya bulb follows smoothly (measured: 20 updates a second hold).
 pub const FRAME_INTERVAL: Duration = Duration::from_millis(50);
+/// How long a command takes to show: an encrypted TCP exchange, and a bulb
+/// slower to answer than most.
+pub const LATENCY: Duration = Duration::from_millis(100);
 /// How long a connection attempt with one key and version may take.
 const PROBE_TIMEOUT: Duration = Duration::from_millis(2500);
 /// Versions to try on a bulb whose version is unknown, most common first.
@@ -240,6 +243,10 @@ impl LightStream for TuyaStream {
         self.pace.interval()
     }
 
+    fn latency(&self) -> Duration {
+        LATENCY
+    }
+
     fn push(&mut self, output: BulbOutput, effect: Effect, _: u32) -> io::Result<()> {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());
@@ -430,6 +437,7 @@ pub fn discover(
                         dps: d.dps,
                     },
                     paired: true,
+                    faster: false,
                 })
             })
             .collect()

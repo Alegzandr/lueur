@@ -26,6 +26,8 @@ const MAX_KELVIN: u16 = 9000;
 
 /// Govee's LAN firmware drops commands that arrive much faster than this.
 pub(crate) const FRAME_INTERVAL: Duration = Duration::from_millis(50);
+/// How long a command takes to show: a datagram, and a controller slower to answer than most.
+pub(crate) const LATENCY: Duration = Duration::from_millis(70);
 
 fn cmd(name: &str, data: Value) -> String {
     json!({"msg": {"cmd": name, "data": data}}).to_string()
@@ -86,6 +88,10 @@ impl GoveeStream {
 impl LightStream for GoveeStream {
     fn interval(&self) -> Duration {
         self.pace.interval()
+    }
+
+    fn latency(&self) -> Duration {
+        LATENCY
     }
 
     fn push(&mut self, output: BulbOutput, _: Effect, _: u32) -> io::Result<()> {
@@ -184,6 +190,7 @@ pub fn parse_scan(raw: &[u8]) -> Option<DiscoveredDevice> {
         fw_ver: text("wifiVersionSoft"),
         kind: DeviceKind::Govee,
         paired: true,
+        faster: false,
     })
 }
 

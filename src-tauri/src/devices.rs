@@ -49,6 +49,15 @@ pub fn interval_of(ep: &Endpoint, siblings: usize) -> Duration {
     }
 }
 
+/// How long a command to `ep` takes to show, without opening a stream.
+pub fn latency_of(ep: &Endpoint) -> Duration {
+    if is_tuya(ep) {
+        tuya::LATENCY
+    } else {
+        device::latency_of(&ep.kind)
+    }
+}
+
 pub fn set_power(ep: &Endpoint, on: bool) -> io::Result<()> {
     if is_tuya(ep) {
         tuya::set_power(ep, on)

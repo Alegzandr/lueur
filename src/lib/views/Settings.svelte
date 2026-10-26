@@ -15,6 +15,7 @@
   import Row from "../ui/Row.svelte";
   import Switch from "../ui/Switch.svelte";
   import Segmented from "../ui/Segmented.svelte";
+  import Slider from "../ui/Slider.svelte";
 
   let monitors = $state<MonitorInfo[]>([]);
   let sound = $state<AudioSources | null>(null);
@@ -201,6 +202,19 @@
               </optgroup>
             {/if}
           </select>
+        </Row>
+        <Row label={t("sound_delay")} tip={t("sound_delay_tip")}>
+          <Slider
+            label={t("sound_delay")}
+            value={c.show.delay_ms}
+            min={-150}
+            max={500}
+            step={10}
+            def={0}
+            format={(v) => t("ms", { n: v > 0 ? `+${v}` : String(v) })}
+            ends={[t("sound_delay_early"), t("sound_delay_late")]}
+            onchange={(v) => edit((x) => (x.show.delay_ms = v))}
+          />
         </Row>
       </div>
     </section>
