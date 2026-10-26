@@ -11,7 +11,7 @@ lueur/
 │   ├─ color.rs           Colour types, linear-space averaging, smoothing
 │   ├─ geometry.rs        Room model + light→screen-zone mapping
 │   ├─ engine.rs          Frame → one colour per light
-│   ├─ stage.rs           The music show: listening, the beat clock, the stage
+│   ├─ stage/             The music show: listening, the beat clock, the stage
 │   ├─ sync.rs            Lights of different speeds kept together
 │   ├─ safety.rs          Photosensitivity guard on every mode's output
 │   ├─ yeelight/          LAN protocol, SSDP discovery, music-mode sockets
