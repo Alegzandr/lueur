@@ -1,7 +1,10 @@
-//! Plays a track through the music show and reports where it goes quiet.
+//! Plays a track through the music show and reports where it goes quiet,
+//! how it dressed the track (the tiers of its looks, its mood, half time,
+//! white) and what the analyser heard.
 //!
 //! `ffmpeg -i track.mp3 -ac 1 -ar 48000 -f f32le track.raw`, then
-//! `cargo run --release --example music_bench -- track.raw [lights]`.
+//! `cargo run --release --example music_bench -- track.raw [lights] [-v] [-l]`:
+//! `-v` reports every second, `-l` lists every change of look.
 
 use lueur_core::color::BulbOutput;
 use lueur_core::show::{Show, ShowKind, ShowSettings};
@@ -44,6 +47,18 @@ fn main() {
     let mut sections = String::new();
     let mut dead = 0usize;
     let mut loud = 0usize;
+    // How the show dressed the track: frames per tier, mood and half time,
+    // frames with a light in white, and every change of look.
+    let mut tiers = [0usize; 3];
+    let (mut soft, mut half, mut white, mut frames) = (0usize, 0usize, 0usize, 0usize);
+    let mut looks: Vec<(f32, String)> = Vec::new();
+    // What tells the tracks apart: hits a second by instrument, how sure
+    // and how steady the tempo is, how the bands play against their loud
+    // parts.
+    let (mut n_kick, mut n_snare, mut n_hat, mut n_pulse) = (0usize, 0usize, 0usize, 0usize);
+    let mut n_lock = 0usize;
+    let mut bpms: Vec<f32> = Vec::new();
+    let (mut treble, mut mid, mut bass_sum) = (0.0f32, 0.0f32, 0.0f32);
     for c in samples.chunks(chunk) {
         analyzer.set_lead(show.lead());
         let levels = analyzer.feed_after(c, dt);
@@ -55,6 +70,33 @@ fn main() {
             jump = jump.max(l - *p);
             *p = l;
         }
+        let look = show.debug_look();
+        let tag = look.as_bytes();
+        tiers[match tag[0] {
+            b'g' => 0,
+            b'd' => 1,
+            _ => 2,
+        }] += 1;
+        soft += usize::from(tag[1] == b'S');
+        half += usize::from(tag[2] == b'H');
+        white += usize::from(out.iter().any(|o| matches!(o, BulbOutput::White { .. })));
+        frames += 1;
+        // The look itself, without the numbers behind it.
+        let shown: String = look.split(" kicks").next().unwrap_or("").to_string();
+        if looks.last().is_none_or(|(_, l)| *l != shown) {
+            looks.push((t, shown));
+        }
+        n_kick += usize::from(levels.kick);
+        n_snare += usize::from(levels.snare.is_some());
+        n_hat += usize::from(levels.hat.is_some());
+        n_pulse += usize::from(levels.pulse.is_some());
+        if let Some(p) = levels.tempo {
+            n_lock += 1;
+            bpms.push(60.0 / p);
+        }
+        treble += levels.treble;
+        mid += levels.mid;
+        bass_sum += levels.bass;
         kicks += usize::from(levels.kick);
         beats += usize::from(levels.beat.is_some());
         locked += usize::from(levels.tempo.is_some());
@@ -82,7 +124,8 @@ fn main() {
             hi.fill(0.0);
             if verbose {
                 println!(
-                    "{sec:4}s e{energy:.2} kicks{kicks:2} beats{beats:2} lock{locked:2} jump{jump:.2} swing{swing:.2} bpm{bpm:3.0} {sections}{}",
+                    "{sec:4}s e{energy:.2} kicks{kicks:2} beats{beats:2} lock{locked:2} jump{jump:.2} swing{swing:.2} bpm{bpm:3.0} {sections} | {}{}",
+                    show.debug_look(),
                     if energy > 0.5 && jump < 0.25 {
                         "  <-- DEAD"
                     } else {
@@ -101,4 +144,41 @@ fn main() {
         args[1],
         100.0 * dead as f32 / loud.max(1) as f32
     );
+    let pct = |n: usize| 100.0 * n as f32 / frames.max(1) as f32;
+    println!(
+        "  looks gentle {:.0}% driving {:.0}% peak {:.0}% | soft {:.0}% | half time {:.0}% | white {:.1}% | {} changes of look",
+        pct(tiers[0]),
+        pct(tiers[1]),
+        pct(tiers[2]),
+        pct(soft),
+        pct(half),
+        pct(white),
+        looks.len()
+    );
+    let secs = frames as f32 * dt;
+    let mean = bpms.iter().sum::<f32>() / bpms.len().max(1) as f32;
+    // How often the tempo read jumps by more than 5%, a second.
+    let jumps = bpms
+        .windows(2)
+        .filter(|w| (w[1] / w[0] - 1.0).abs() > 0.05)
+        .count();
+    let f = frames.max(1) as f32;
+    println!(
+        "  /s kick {:.2} snare {:.2} hat {:.2} pulse {:.2} | locked {:.0}% bpm {:.0} jumps/min {:.1} | bass {:.2} mid {:.2} treble {:.2}",
+        n_kick as f32 / secs,
+        n_snare as f32 / secs,
+        n_hat as f32 / secs,
+        n_pulse as f32 / secs,
+        pct(n_lock),
+        mean,
+        60.0 * jumps as f32 / secs,
+        bass_sum / f,
+        mid / f,
+        treble / f,
+    );
+    if args.iter().any(|a| a == "-l") {
+        for (t, look) in &looks {
+            println!("  {:5.1}s {look}", t);
+        }
+    }
 }

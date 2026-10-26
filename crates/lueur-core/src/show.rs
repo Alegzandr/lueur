@@ -702,6 +702,11 @@ impl Show {
         self.stage.debug_section()
     }
 
+    #[doc(hidden)]
+    pub fn debug_look(&self) -> String {
+        self.stage.debug_look()
+    }
+
     /// How early the music's beats should go out (see [`Stage::lead`]).
     pub fn lead(&self) -> f32 {
         self.stage.lead()
