@@ -374,7 +374,9 @@
               onchange={(v) => edit((c) => (c.show.bright = v))}
             />
           </Row>
-          {#if pacedPlaying}
+          <!-- The music keeps the track's own time: beside it, a speed
+               would read as the music's. -->
+          {#if pacedPlaying && !musicPlaying}
             <Row label={t("speed")}>
               <Slider
                 label={t("speed")}
