@@ -665,6 +665,11 @@ impl Show {
         }
     }
 
+    #[doc(hidden)]
+    pub fn debug_section(&self) -> &'static str {
+        self.stage.debug_section()
+    }
+
     /// How early the music's beats should go out (see [`Stage::lead`]).
     pub fn lead(&self) -> f32 {
         self.stage.lead()

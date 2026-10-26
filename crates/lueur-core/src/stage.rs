@@ -570,6 +570,9 @@ pub struct Levels {
     pub snare: Option<f32>,
     /// A hi-hat or a cymbal was struck, this hard.
     pub hat: Option<f32>,
+    /// Something else started at once across the mix (a chord, a stab, a
+    /// strum), this hard.
+    pub pulse: Option<f32>,
     /// Seconds a beat, once the tempo is sure.
     pub tempo: Option<f32>,
     /// How loud the middle (voices, snares, guitars) and the treble play,
@@ -801,6 +804,7 @@ impl Analyzer {
         levels.beat = most(levels.beat, beat);
         levels.snare = most(levels.snare, snare);
         levels.hat = most(levels.hat, hat);
+        levels.pulse = most(levels.pulse, pulse);
     }
 }
 
@@ -1077,6 +1081,10 @@ const QUICKEST_FADE: f32 = 0.08;
 const CALM_DRIFT_SECS: f32 = 30.0;
 /// Seconds for a breakdown's slow swell to roll across the room.
 const CALM_WAVE_SECS: f32 = 6.0;
+/// A calm shorter than this, seconds, was the ear losing the beat for a
+/// moment rather than the track changing: the groove picks up where it
+/// left off, in the same colours.
+const CALM_STUMBLE: f32 = 4.0;
 /// Beats compared on either side of where a phrase may have turned.
 const SIDE: usize = 4;
 /// How far the sound must move between those two sides (mix, bass, middle
@@ -1086,10 +1094,6 @@ const TURN: f32 = 0.2;
 /// Beats a phrase found late must have run before the colours still move
 /// on for it; nearer the last change, only the count is set right.
 const LATE_TURN: u32 = 6;
-/// No kick for this long while the clock stays sure, at the track's usual
-/// level: a band without drums rather than a breakdown, and the show plays
-/// the clock's beats as if they were kicks.
-const KICKLESS_SECS: f32 = 16.0;
 
 /// One light on the stage.
 #[derive(Debug, Clone, Copy)]
@@ -1165,7 +1169,6 @@ pub struct Stage {
     /// The loudness and bass the lights burn with, smoothed.
     swell: f32,
     bass: f32,
-    since_kick: f32,
     /// Seconds since anything played the beat: a kick, or in a track
     /// without one, the clock.
     since_pulse: f32,
@@ -1186,6 +1189,9 @@ pub struct Stage {
     /// How far the sound moved at the last two beats compared, the latest
     /// last.
     turns: [f32; 2],
+    /// How far a breakdown's swell has rolled, in waves: it rolls faster
+    /// the louder the music.
+    wave: f32,
     /// Steps a build's chase has taken, and how far it is to the next.
     roll: usize,
     roll_due: f32,
@@ -1243,7 +1249,6 @@ impl Stage {
             shimmer: 0.0,
             swell: 0.0,
             bass: 0.0,
-            since_kick: 0.0,
             since_pulse: 10.0,
             period: 0.5,
             beat: 0,
@@ -1254,6 +1259,7 @@ impl Stage {
             gather: [0.0; 4],
             gathered: 0,
             turns: [0.0; 2],
+            wave: 0.0,
             roll: 0,
             roll_due: 0.0,
             sharp: vec![false; n],
@@ -1262,6 +1268,19 @@ impl Stage {
             waits: vec![0.0; n],
             lag: Lag::default(),
             due: None,
+        }
+    }
+
+    /// The section the show reads the track to be in, one letter, for
+    /// benches.
+    #[doc(hidden)]
+    pub fn debug_section(&self) -> &'static str {
+        match self.section {
+            Section::Groove => "G",
+            Section::Calm => "c",
+            Section::Build => "B",
+            Section::Hold => "h",
+            Section::Drop => "D",
         }
     }
 
@@ -1428,16 +1447,22 @@ impl Stage {
     /// whether something played the beat: a kick, or the clock in a track
     /// without one.
     fn follow_track(&mut self, settings: &ShowSettings, levels: &Levels, struck: bool) {
-        let gone = self.since_pulse > (2.5 * self.period).max(1.2);
+        // A bar without the beat, not a beat or two the ear missed: going
+        // calm and back at every kick the bass hid looks like a show that
+        // cannot make up its mind.
+        let gone = self.since_pulse > (4.0 * self.period).max(2.0);
         let back = struck;
         match self.section {
             Section::Groove | Section::Drop if gone => self.enter(Section::Calm),
             Section::Calm if back => {
                 // After a long break the kick's return is a drop of its own.
-                // Either way it starts a phrase: the colours move on as it
-                // lands.
+                // After a longer gap than a stumble it starts a phrase: the
+                // colours move on as it lands. A stumble just picks the
+                // groove up where it left it.
                 if self.held > 6.0 && levels.kick {
                     self.drop(settings, levels);
+                } else if self.held < CALM_STUMBLE {
+                    self.enter(Section::Groove);
                 } else {
                     self.enter(Section::Groove);
                     self.turn();
@@ -1498,18 +1523,12 @@ impl Stage {
             lamp.sharp = false;
         }
         self.held += dt;
-        self.since_kick = if levels.kick {
-            0.0
-        } else {
-            self.since_kick + dt
-        };
-        // A track that has gone a long while without a kick, the clock
-        // still sure and the music at its usual level, has none: its clock
-        // plays the beat.
-        let kickless = self.since_kick > KICKLESS_SECS
-            && levels.tempo.is_some()
-            && self.short >= self.long - 0.1;
-        let pulse = levels.kick || (kickless && levels.beat.is_some());
+        // A sure clock in music still at its level plays the beat as if it
+        // were a kick: through the kicks a loud bass hides, and all along a
+        // track that has none (a band without drums). A breakdown drops the
+        // level, or lets the clock go.
+        let carried = levels.tempo.is_some() && self.short >= self.long - 0.1;
+        let pulse = levels.kick || (carried && levels.beat.is_some());
         self.since_pulse = if pulse { 0.0 } else { self.since_pulse + dt };
         if let Some(p) = levels.tempo {
             self.period = p;
@@ -1534,6 +1553,7 @@ impl Stage {
         self.shimmer = self.shimmer * (-dt / 0.3).exp() + 0.5 * hat * (1.0 - self.shimmer);
         let tau = if e > self.swell { 0.04 } else { 0.25 };
         self.swell += (e - self.swell) * follow(dt, tau);
+        self.wave = (self.wave + dt * (1.0 + self.loud()) / CALM_WAVE_SECS) % 1.0;
         let tau = if levels.bass > self.bass { 0.06 } else { 0.4 };
         self.bass += (levels.bass - self.bass) * follow(dt, tau);
 
@@ -1553,11 +1573,7 @@ impl Stage {
         match self.section {
             Section::Groove | Section::Drop => self.groove(settings, &levels),
             Section::Build => self.build(settings, &levels, dt),
-            Section::Calm => {
-                if let Some(s) = levels.snare {
-                    self.accent(0.5 * s, false);
-                }
-            }
+            Section::Calm => self.calm(&levels),
             Section::Hold => {}
         }
         if let Some(h) = levels.hat {
@@ -1652,6 +1668,37 @@ impl Stage {
         }
     }
 
+    /// No beat to play. The snare still answers on the accent, and in loud
+    /// music (a wall of guitars, a pad swelling up before the kick comes
+    /// in) every chord and stab strikes the next light along the room, as
+    /// hard as the music is loud: loud music never leaves the room still.
+    fn calm(&mut self, levels: &Levels) {
+        if let Some(s) = levels.snare {
+            self.accent(0.5 * s, false);
+        }
+        let loud = self.loud();
+        let Some(s) = levels.snare.or(levels.pulse) else {
+            return;
+        };
+        if loud <= 0.0 {
+            return;
+        }
+        let k = self.punches.max(1);
+        let at = self.roll % k;
+        self.roll += 1;
+        for lamp in &mut self.lamps {
+            if lamp.part == Part::Punch && lamp.rank == at {
+                lamp.hit(0.7 * loud * s, false);
+            }
+        }
+    }
+
+    /// How loud the music plays, as far as a breakdown cares: nothing in a
+    /// quiet one, 1 when it plays near the top of its range.
+    fn loud(&self) -> f32 {
+        ((self.swell - 0.4) / 0.4).clamp(0.0, 1.0)
+    }
+
     fn accent(&mut self, amount: f32, white: bool) {
         for lamp in &mut self.lamps {
             if lamp.part == Part::Accent {
@@ -1707,9 +1754,12 @@ impl Stage {
                     // Lights out for the breath before the drop.
                     Section::Hold => 0.0,
                     Section::Calm => {
+                        // The louder the music, the deeper the swell, so a
+                        // loud passage without a beat still moves.
                         let ease = (self.held / 3.0).min(1.0);
-                        let wave = (TAU * (self.held / CALM_WAVE_SECS - 0.5 * lamp.place)).sin();
-                        (0.12 + 0.3 * swell) * (1.0 - 0.25 * ease * (1.0 - wave) / 2.0)
+                        let wave = (TAU * (self.wave - 0.5 * lamp.place)).sin();
+                        let depth = 0.25 + 0.5 * swell;
+                        (0.12 + 0.3 * swell) * (1.0 - depth * ease * (1.0 - wave) / 2.0)
                     }
                     // A build brightens as it climbs.
                     Section::Build => base + (0.5 - base).max(0.0) * climb,
@@ -2693,7 +2743,7 @@ mod tests {
             energy: 0.5,
             ..Levels::default()
         };
-        for _ in 0..80 {
+        for _ in 0..260 {
             stage.frame(&s, calm, 0.025);
         }
         assert_eq!(stage.section, Section::Calm);
@@ -2704,9 +2754,70 @@ mod tests {
     }
 
     #[test]
+    fn a_kick_or_two_missed_is_not_a_breakdown() {
+        // The bass hides a few kicks: the groove carries on through them,
+        // and losing the beat a little longer picks it up in the same
+        // colours.
+        let s = ShowSettings::default();
+        let mut stage = Stage::new(&Fixture::row(3));
+        stage.enter(Section::Groove);
+        settle(&mut stage, 0.8);
+        groove(&mut stage, &s, 5);
+        let between = Levels {
+            energy: 0.8,
+            ..Levels::default()
+        };
+        for _ in 0..60 {
+            stage.frame(&s, between, 0.025);
+        }
+        assert_eq!(stage.section, Section::Groove);
+        for _ in 0..60 {
+            stage.frame(&s, between, 0.025);
+        }
+        assert_eq!(stage.section, Section::Calm);
+        let (phrases, beat_was) = (stage.phrases, stage.beat);
+        stage.frame(&s, beat(1.0), 0.025);
+        assert_eq!(stage.section, Section::Groove);
+        assert_eq!(stage.phrases, phrases);
+        assert_eq!(stage.beat, beat_was + 1);
+    }
+
+    #[test]
+    fn a_sure_clock_carries_the_groove_without_a_kick() {
+        // The clock is sure and the music holds its level: its beats keep
+        // the groove going when the kick cannot be heard.
+        let s = ShowSettings::default();
+        let mut stage = Stage::new(&Fixture::row(3));
+        stage.enter(Section::Groove);
+        settle(&mut stage, 0.8);
+        groove(&mut stage, &s, 5);
+        for k in 0..(10.0 / 0.025) as usize {
+            let l = Levels {
+                energy: 0.8,
+                beat: (k % 20 == 0).then_some(0.8),
+                tempo: Some(0.5),
+                ..Levels::default()
+            };
+            stage.frame(&s, l, 0.025);
+            assert_eq!(stage.section, Section::Groove, "at frame {k}");
+        }
+        // The level falls away: a breakdown, clock or not.
+        for k in 0..(6.0 / 0.025) as usize {
+            let l = Levels {
+                energy: 0.3,
+                beat: (k % 20 == 0).then_some(0.8),
+                tempo: Some(0.5),
+                ..Levels::default()
+            };
+            stage.frame(&s, l, 0.025);
+        }
+        assert_eq!(stage.section, Section::Calm);
+    }
+
+    #[test]
     fn a_track_without_a_kick_grooves_on_the_clock() {
-        // Beats from the clock alone, no kick ever: a breakdown at first,
-        // then, the music carrying on at its level, a groove.
+        // Beats from the clock alone, no kick ever, the music carrying on
+        // at its level: a groove from the first.
         let s = ShowSettings::default();
         let mut stage = Stage::new(&Fixture::row(3));
         settle(&mut stage, 0.7);
@@ -2721,8 +2832,8 @@ mod tests {
             };
             let f = stage.frame(&s, l, 0.025);
             let t = k as f32 * 0.025;
-            if t < 10.0 {
-                assert_eq!(stage.section, Section::Calm, "at {t}");
+            if t > 1.0 {
+                assert_eq!(stage.section, Section::Groove, "at {t}");
             }
             if t > 20.0 {
                 peak = peak.max(f.iter().map(|o| o.bright()).max().unwrap());
