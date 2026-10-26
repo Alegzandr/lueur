@@ -40,6 +40,7 @@ fn main() {
     let mut lo = vec![1.0f32; lights];
     let mut hi = vec![0.0f32; lights];
     let mut flat = 0usize;
+    let mut bpm = 0.0f32;
     let mut sections = String::new();
     let mut dead = 0usize;
     let mut loud = 0usize;
@@ -58,6 +59,9 @@ fn main() {
         beats += usize::from(levels.beat.is_some());
         locked += usize::from(levels.tempo.is_some());
         energy = energy.max(levels.energy);
+        if let Some(p) = levels.tempo {
+            bpm = 60.0 / p;
+        }
         let s = show.debug_section();
         if !sections.ends_with(s) {
             sections.push_str(s);
@@ -78,7 +82,7 @@ fn main() {
             hi.fill(0.0);
             if verbose {
                 println!(
-                    "{sec:4}s e{energy:.2} kicks{kicks:2} beats{beats:2} lock{locked:2} jump{jump:.2} swing{swing:.2} {sections}{}",
+                    "{sec:4}s e{energy:.2} kicks{kicks:2} beats{beats:2} lock{locked:2} jump{jump:.2} swing{swing:.2} bpm{bpm:3.0} {sections}{}",
                     if energy > 0.5 && jump < 0.25 {
                         "  <-- DEAD"
                     } else {
@@ -88,6 +92,7 @@ fn main() {
             }
             sec += 1;
             (kicks, beats, jump, energy, locked) = (0, 0, 0.0, 0.0, 0);
+            bpm = 0.0;
             sections = show.debug_section().to_string();
         }
     }

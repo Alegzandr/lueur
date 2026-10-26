@@ -323,6 +323,12 @@ const MEMORY_HITS: usize = 48;
 /// The least time between two readings of the tempo while the clock is
 /// unsure, seconds.
 const REREAD: f32 = 0.25;
+/// Seconds of silence after which the clock forgets the beat altogether
+/// (counted once the music has faded out, some seven tenths in).
+const QUIET_RESET: f32 = 0.75;
+/// How often a sure clock checks that the hits still fall on its beats,
+/// seconds.
+const RECHECK: f32 = 1.0;
 
 /// What a hit is worth to the clock, by what struck it. The kick sets the
 /// beat; a snare, or a strum or a chord heard in the whole mix, keeps a
@@ -446,6 +452,22 @@ impl Tempo {
 
     /// Read the tempo from the recent hits, and set the clock going on the
     /// beats they fall on, the first one after `t`.
+    fn find(&mut self, t: f32) {
+        self.read_at = t;
+        let Some((p, anchor)) = self.grid() else {
+            return;
+        };
+        self.period = p;
+        // The first beat of that grid after `t`; one just before it is the
+        // beat `t` struck.
+        self.next = anchor + (((t - anchor) / p + ON_BEAT).floor() + 1.0) * p;
+        self.sure = (self.on_grid(anchor, p).0 as i32 - 2).clamp(0, SUREST);
+        self.missed = 0;
+        self.played = false;
+    }
+
+    /// The tempo the recent hits keep, and one of the hits its beats fall
+    /// on; none while too few have been heard.
     ///
     /// Every pair of hits votes for the tempos it is a whole number of beats
     /// of, as much as both are worth; a pair one beat apart counts most, so
@@ -453,10 +475,9 @@ impl Tempo {
     /// lean towards 120 beats a minute settles the rest. Then the beats are
     /// laid where the most is struck on them: on the kicks, in a track that
     /// has them, rather than on the offbeat strums.
-    fn find(&mut self, t: f32) {
-        self.read_at = t;
+    fn grid(&self) -> Option<(f32, f32)> {
         if self.hits.len() < 4 {
-            return;
+            return None;
         }
         let hits: Vec<(f32, f32)> = self.hits.iter().copied().collect();
         let fit = |d: f32, p: f32| {
@@ -485,28 +506,49 @@ impl Tempo {
         }
         let p = best.0;
         if p == 0.0 {
-            return;
+            return None;
         }
-        // The hits a grid of beats through `at` passes by, and what they
-        // are worth.
-        let on_grid = |at: f32| {
-            hits.iter().filter(move |&&(k, _)| {
+        hits.iter()
+            .map(|&(k, _)| (k, self.on_grid(k, p).1))
+            .max_by(|a, b| a.1.total_cmp(&b.1).then(a.0.total_cmp(&b.0)))
+            .map(|(k, _)| (p, k))
+    }
+
+    /// The recent hits a grid of beats `p` apart through `at` passes by:
+    /// how many, and what they are worth.
+    fn on_grid(&self, at: f32, p: f32) -> (usize, f32) {
+        self.hits
+            .iter()
+            .filter(|&&(k, _)| {
                 let x = (at - k) / p;
                 (x - x.round()).abs() * p < 0.03
             })
+            .fold((0, 0.0), |(n, w), &(_, wk)| (n + 1, w + wk))
+    }
+
+    /// While the clock is sure, check now and then, at `t`, that the hits
+    /// still fall on its beats. When the music changes under it (the next
+    /// track, a tempo change, a mix from one into the other) the hits soon
+    /// fall on another grid far better than on its own, and the clock is
+    /// set going on that one instead of playing the old track's beats over
+    /// the new.
+    fn recheck(&mut self, t: f32) {
+        if !self.locked() || t - self.read_at < RECHECK {
+            return;
+        }
+        self.read_at = t;
+        let Some((p, anchor)) = self.grid() else {
+            return;
         };
-        let anchor = hits
-            .iter()
-            .map(|&(k, _)| (k, on_grid(k).map(|&(_, w)| w).sum::<f32>()))
-            .max_by(|a, b| a.1.total_cmp(&b.1).then(a.0.total_cmp(&b.0)))
-            .map_or(t, |(k, _)| k);
-        self.period = p;
-        // The first beat of that grid after `t`; one just before it is the
-        // beat `t` struck.
-        self.next = anchor + (((t - anchor) / p + ON_BEAT).floor() + 1.0) * p;
-        self.sure = (on_grid(anchor).count() as i32 - 2).clamp(0, SUREST);
-        self.missed = 0;
-        self.played = false;
+        // Twice the tempo, or half, is the same music counted another way:
+        // the offbeats always pass by a grid twice as fast.
+        let ratio = p / self.period;
+        let same_music = [0.5, 2.0].iter().any(|r| (ratio / r - 1.0).abs() < 0.06);
+        let theirs = self.on_grid(anchor, p).1;
+        let ours = self.on_grid(self.next, self.period).1;
+        if !same_music && theirs > 1.5 * ours + KICK_WEIGHT {
+            self.find(t);
+        }
     }
 
     /// The clock at `now`. Whether a beat is to be played from it, `lead`
@@ -618,6 +660,8 @@ pub struct Analyzer {
     behind: f32,
     /// Seconds since a kick was last heard.
     since_kick: f32,
+    /// Seconds the music has not been playing.
+    quiet_for: f32,
     tempo: Tempo,
     /// How early the clock's beats go out (see [`Analyzer::set_lead`]).
     lead: f32,
@@ -659,6 +703,7 @@ impl Analyzer {
             wall: 0.0,
             behind: f32::NAN,
             since_kick: 10.0,
+            quiet_for: 0.0,
             tempo: Tempo::default(),
             lead: LEAD,
         }
@@ -794,6 +839,17 @@ impl Analyzer {
         } else if pulse.is_some() {
             self.tempo.hit(self.time, PULSE_WEIGHT);
         }
+        // Silence is the end of a track, or a pause: what came before tells
+        // nothing of the beat to come.
+        self.quiet_for = if self.live() {
+            0.0
+        } else {
+            self.quiet_for + dt
+        };
+        if self.quiet_for > QUIET_RESET && !self.tempo.hits.is_empty() {
+            self.tempo = Tempo::default();
+        }
+        self.tempo.recheck(self.time);
         if self.tempo.tick(self.time, self.live(), self.lead) {
             beat = Some(beat.unwrap_or(0.0).max(self.tempo.strength));
         }
@@ -1400,6 +1456,11 @@ impl Stage {
                 self.enter(Section::Groove);
             }
         }
+        // A phrase found late can set the count back; the drop still gives
+        // way after a phrase's worth of beats.
+        if self.section == Section::Drop && self.since_turn >= PHRASE_BEATS {
+            self.enter(Section::Groove);
+        }
     }
 
     /// Note what the beat that just ended sounded like. If the sound moved
@@ -1896,6 +1957,55 @@ mod tests {
             beats.abs_diff(expected) <= 1,
             "{beats} beats for {expected}"
         );
+    }
+
+    #[test]
+    fn the_next_track_sets_the_clock_again() {
+        // Straight from one track into the next, two thirds as fast: every
+        // other kick of the new one falls on a beat of the old, which keeps
+        // the old clock sure. Its beats must not play on over the new track
+        // for long.
+        let rate = 48_000;
+        let mut a = Analyzer::new(rate);
+        four_on_the_floor(&mut a, rate, 120.0, 1.0, 12.0);
+        let frames = four_on_the_floor(&mut a, rate, 80.0, 1.0, 12.0);
+        let tempo = |l: &Levels| l.tempo.map(|p| 60.0 / p);
+        let settled = frames[(8.0 / 0.025) as usize..]
+            .iter()
+            .all(|l| tempo(l).is_some_and(|bpm| (bpm - 80.0).abs() < 2.0));
+        assert!(settled, "{:?}", frames.last().and_then(tempo));
+    }
+
+    #[test]
+    fn a_pause_between_tracks_forgets_the_beat() {
+        let rate = 48_000;
+        let mut a = Analyzer::new(rate);
+        four_on_the_floor(&mut a, rate, 128.0, 1.0, 12.0);
+        let silence = vec![0.0; (rate as f32 * 0.025) as usize];
+        for _ in 0..(1.6 / 0.025) as usize {
+            a.feed(&silence);
+        }
+        assert!(a.tempo.hits.is_empty());
+        let frames = four_on_the_floor(&mut a, rate, 90.0, 1.0, 8.0);
+        let tempo = frames.last().unwrap().tempo.expect("no tempo found");
+        assert!((tempo - 60.0 / 90.0).abs() < 0.02, "{}", 60.0 / tempo);
+    }
+
+    #[test]
+    fn a_drop_gives_way_after_a_phrase() {
+        let s = ShowSettings::default();
+        let mut stage = Stage::new(&Fixture::row(3));
+        settle(&mut stage, 0.8);
+        stage.drop(&s, &beat(1.0));
+        // A phrase found late keeps setting the count back.
+        for _ in 0..PHRASE_BEATS + 1 {
+            stage.beat = stage.beat.min(4);
+            stage.frame(&s, beat(1.0), 0.025);
+            for _ in 0..19 {
+                stage.frame(&s, between(), 0.025);
+            }
+        }
+        assert_eq!(stage.section, Section::Groove);
     }
 
     #[test]
