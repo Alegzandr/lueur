@@ -11,6 +11,8 @@ lueur/
 │   ├─ color.rs           Colour types, linear-space averaging, smoothing
 │   ├─ geometry.rs        Room model + light→screen-zone mapping
 │   ├─ engine.rs          Frame → one colour per light
+│   ├─ scene.rs           Lights held steady: one light's white or colour, moods
+│   ├─ show/              Shows with no screen: Rainbow, Sunset, Ocean, Candle
 │   ├─ stage/             The music show: listening, the beat clock, the stage
 │   ├─ sync.rs            Lights of different speeds kept together
 │   ├─ safety.rs          Photosensitivity guard on every mode's output
@@ -30,7 +32,14 @@ lueur/
 │   │  ├─ screencast.rs  Wayland: ScreenCast portal + PipeWire stream
 │   │  ├─ scale.rs       CPU shrink of a full-size frame (PipeWire)
 │   │  └─ bench.rs       What examples/capture_bench.rs measures
-│   ├─ runner/            The live capture→compute→push loops
+│   ├─ runner/            The live loops: ambilight.rs, show.rs, connect.rs
+│   ├─ audio.rs           What the computer plays, for the music show
+│   │  └─ apps.rs        Windows: one application's sound
+│   ├─ lights.rs          Everyday control shared by window and tray
+│   ├─ manual.rs          Lights set by hand, through the flash guard
+│   ├─ auto.rs            Windows: Ambilight on while a game or video is fullscreen
+│   ├─ natural.rs         The natural light, following the time of day
+│   ├─ sleep.rs           The sleep timer: fade out, then everything off
 │   ├─ devices.rs         Dispatch between the core families and Tuya
 │   ├─ tuya.rs            Tuya LAN control (rustuya), discovery by key
 │   ├─ tuya_cloud.rs      Smart Life QR sign-in that imports local keys
@@ -40,14 +49,17 @@ lueur/
 │   ├─ peers.rs           Talks with other computers running Lueur (LAN)
 │   ├─ vault.rs           Credentials sealed on disk, the key in the OS keyring
 │   ├─ tray.rs            Tray menu: start/stop, open, quit
+│   ├─ titlebar.rs        Windows: the title bar drawn by the page
 │   ├─ error.rs           Errors sent as codes the UI words in its language
 │   ├─ logging.rs         Logs to stderr and a capped file, set by LUEUR_LOG
 │   ├─ install.rs         Windows: silent per-user install and uninstall
 │   ├─ updater.rs         Startup splash and updates from GitHub releases
+│   ├─ state.rs, paths.rs Shared app state; where the data folder is
 │   └─ lib.rs             Tray, autostart, single-instance, window handling
 └─ src/                   Svelte 5 (runes) + TypeScript frontend
     ├─ lib/state.svelte.ts  App state and every action the UI can take
-    ├─ lib/state/           …split by concern: config, effects, lights, devices
+    ├─ lib/state/           …split by concern: app, config, devices, effect,
+    │                       lights, pairing, toasts, derived
     ├─ lib/i18n.ts          English and French strings
     ├─ lib/views/           Lighting, Room, Bulbs, Settings
     │                       (lighting/ and room/ hold their pieces)

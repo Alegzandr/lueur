@@ -385,8 +385,9 @@ again on a thread of its own, half a second later, then doubling up to every
 
 ## 7. The flash limiter
 
-Every mode's output goes through a `safety::FlashGuard` (in `runner.rs` for
-the ambilight and the shows, in `manual.rs` for lights set by hand) before
+Every mode's output goes through a `safety::FlashGuard` (in
+`runner/ambilight.rs` and `runner/show.rs` for the ambilight and the shows,
+in `manual.rs` for lights set by hand) before
 it reaches `push`, so the photosensitivity protection holds for any family
 without a line of family code. What a family must not do is undo it:
 no effect, blink or animation of the device's own while streaming, no
@@ -436,11 +437,8 @@ endpoint (`Wire::of(ep)`), and hands it every frame it sends:
 `lueur_core::device::wire`, with the family and the device id, and check the
 level before formatting anything, so the frame loop pays one atomic load
 when tracing is off. Do not build a string only for the trace outside an
-`if Wire::enabled()`.
-
-```bash
-LUEUR_LOG=lueur_core::device::wire=trace npm run tauri dev
-```
+`if Wire::enabled()`. How to turn tracing on is under *Logs* in
+DEVELOPMENT.md.
 
 Other messages use the `log` macros with fields:
 `log::debug!(family = "wled", id = ep.id.as_str(), ip = ep.ip.as_str(); "…")`.
@@ -449,9 +447,8 @@ log file holds.
 
 ## Before the pull request
 
-- `cargo fmt --all --check`, `cargo test --workspace`,
-  `cargo clippy --workspace --all-targets -- -D warnings`, `npm run check`
-  and `npm test` pass (the CI runs the same).
+- The checks under *Commands* in [AGENTS.md](../AGENTS.md) pass (the CI
+  runs the same).
 - The family is in the README's *Supported bulbs*, marked untested until
   someone has run it on real hardware, and in `first_text` and `tip_5`.
 - A trace log of a few seconds of ambilight on the real device, attached to
