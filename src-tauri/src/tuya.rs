@@ -28,8 +28,11 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
-/// What a Tuya bulb follows smoothly (measured: 20 updates a second hold).
-pub const FRAME_INTERVAL: Duration = Duration::from_millis(50);
+/// The gap a Tuya bulb needs between two colours, the limit TinyTuya's music
+/// example keeps to ("the bulbs seem to get upset if updates are faster").
+/// Nothing else slows the stream down: rustuya sends a write without waiting
+/// for the bulb's answer, so a faster pace would only pile commands up in it.
+pub const FRAME_INTERVAL: Duration = Duration::from_millis(100);
 /// How long a command takes to show: an encrypted TCP exchange, and a bulb
 /// slower to answer than most.
 pub const LATENCY: Duration = Duration::from_millis(100);
@@ -247,12 +250,13 @@ impl LightStream for TuyaStream {
         LATENCY
     }
 
-    fn push(&mut self, output: BulbOutput, effect: Effect, _: u32) -> io::Result<()> {
+    /// Every frame jumps, whatever the effect asks: see [`dps::frame_dps`].
+    fn push(&mut self, output: BulbOutput, _: Effect, _: u32) -> io::Result<()> {
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());
         }
         let set_mode = self.shown.is_none_or(|s| !dps::same_mode(s, output));
-        let mut value = dps::frame_dps(&self.layout, output, effect, set_mode);
+        let mut value = dps::frame_dps(&self.layout, output, set_mode);
         // The first frame also switches the bulb on.
         if self.shown.is_none()
             && let (Value::Object(frame), Value::Object(on)) =
@@ -448,8 +452,10 @@ pub fn discover(
 mod tests {
     use super::*;
 
-    /// Against a real bulb: finds it, sweeps the hues for three seconds, then
-    /// leaves it on warm white. `LUEUR_TUYA_DEVICES` names a JSON list whose
+    /// Against a real bulb: finds it, turns once round the hue wheel in three
+    /// seconds, a new colour every frame, then leaves it on warm white. The
+    /// bulb should keep up and end on warm white as the test ends, not
+    /// seconds later. `LUEUR_TUYA_DEVICES` names a JSON list whose
     /// first entry has the bulb's `id` and `local_key`, so the key stays in
     /// that file.
     /// `LUEUR_TUYA_DEVICES=devices.json cargo test -p lueur tuya_bulb -- --ignored --nocapture`
@@ -484,20 +490,25 @@ mod tests {
         let mut stream = open_stream(&d.endpoint()).expect("stream");
         let started = std::time::Instant::now();
         while started.elapsed() < Duration::from_secs(3) {
-            let h = (started.elapsed().as_millis() as f32 / 3000.0 * 6.0) as usize % 6;
-            let rgb = [
-                Rgb::new(255, 0, 0),
-                Rgb::new(255, 255, 0),
-                Rgb::new(0, 255, 0),
-                Rgb::new(0, 255, 255),
-                Rgb::new(0, 0, 255),
-                Rgb::new(255, 0, 255),
-            ][h];
+            // Six sectors of the wheel, each a ramp from one primary to the
+            // next.
+            let turn = started.elapsed().as_secs_f32() / 3.0 * 6.0;
+            let (sector, ramp) = (turn as usize % 6, (turn.fract() * 255.0) as u8);
+            let fall = 255 - ramp;
+            let rgb = match sector {
+                0 => Rgb::new(255, ramp, 0),
+                1 => Rgb::new(fall, 255, 0),
+                2 => Rgb::new(0, 255, ramp),
+                3 => Rgb::new(0, fall, 255),
+                4 => Rgb::new(ramp, 0, 255),
+                _ => Rgb::new(255, 0, fall),
+            };
             stream
                 .push(BulbOutput::Color { rgb, bright: 80 }, Effect::Smooth, 50)
                 .expect("push");
             std::thread::sleep(Duration::from_millis(16));
         }
         stream.rest();
+        println!("rested after {:?}", started.elapsed());
     }
 }

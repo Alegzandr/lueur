@@ -175,6 +175,11 @@ app keeps to itself. **Smart Life** on the Bulbs page fetches it once:
 Bulbs someone shared with you one by one aren't visible this way: ask their
 owner to add you to their home instead.
 
+A Tuya bulb takes about ten colours a second, fewer than the other families.
+In the music show and the Ambilight it changes colour as often as it can,
+straight to each new colour rather than fading, so it keeps up with the
+others in coarser steps.
+
 ## Everyday use
 
 - **Tray.** Closing the window keeps Lueur in the tray. Turn off *Keep

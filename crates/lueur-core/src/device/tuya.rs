@@ -12,7 +12,6 @@
 
 use super::common::{rgb_to_hsv, scale_bright};
 use crate::color::BulbOutput;
-use crate::yeelight::Effect;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -148,7 +147,13 @@ pub fn same_mode(a: BulbOutput, b: BulbOutput) -> bool {
 /// With a realtime DP, a frame is that one value and the work mode is only
 /// sent when `set_mode` (the first frame, or a switch between colour and
 /// white). Without one, the mode and saved colour are written each time.
-pub fn frame_dps(dps: &TuyaDps, output: BulbOutput, effect: Effect, set_mode: bool) -> Value {
+///
+/// Realtime frames always jump. The bulb's own fade lasts far longer than the
+/// gap between two frames (seconds, not the tenth of a second asked for) and
+/// starts over with each frame, so a stream of fading frames leaves the bulb
+/// crawling behind every change. The frames themselves already step through
+/// the in-between colours, which is what makes the motion look smooth.
+pub fn frame_dps(dps: &TuyaDps, output: BulbOutput, set_mode: bool) -> Value {
     let mut map = Map::new();
     let mode = match output {
         BulbOutput::Color { .. } => "colour",
@@ -156,7 +161,7 @@ pub fn frame_dps(dps: &TuyaDps, output: BulbOutput, effect: Effect, set_mode: bo
     };
     if let Some(control) = dps.control {
         // m + hhhh ssss vvvv + bbbb kkkk; m is 1 to fade, 0 to jump.
-        let m = u8::from(effect == Effect::Smooth);
+        let m = 0;
         let value = match output {
             BulbOutput::Color { rgb, bright } => {
                 let (h, s, _) = rgb_to_hsv(rgb);
@@ -210,7 +215,7 @@ pub fn steady_dps(dps: &TuyaDps, output: BulbOutput) -> Value {
         control: None,
         ..*dps
     };
-    let mut v = frame_dps(&plain, output, Effect::Smooth, true);
+    let mut v = frame_dps(&plain, output, true);
     if let Value::Object(map) = &mut v {
         put(map, dps.switch, json!(true));
     }
@@ -278,10 +283,10 @@ mod tests {
                 rgb: Rgb::new(255, 0, 0),
                 bright: 100,
             },
-            Effect::Smooth,
             false,
         );
-        assert_eq!(v, json!({"28": "1000003e803e800000000"}));
+        // The leading 0 is a jump: the bulb's own fade would lag the stream.
+        assert_eq!(v, json!({"28": "0000003e803e800000000"}));
     }
 
     #[test]
@@ -292,7 +297,6 @@ mod tests {
                 kelvin: 6500,
                 bright: 1,
             },
-            Effect::Sudden,
             true,
         );
         assert_eq!(v, json!({"21": "white", "28": "0000000000000000a03e8"}));
@@ -306,7 +310,6 @@ mod tests {
                 rgb: Rgb::new(0, 0, 255),
                 bright: 100,
             },
-            Effect::Sudden,
             false,
         );
         assert_eq!(v["28"].as_str().unwrap()[1..5], *"00f0");
@@ -344,7 +347,6 @@ mod tests {
                 rgb: Rgb::new(0, 255, 0),
                 bright: 100,
             },
-            Effect::Smooth,
             false,
         );
         assert_eq!(v["2"], "colour");
