@@ -255,13 +255,14 @@ pub fn run() {
         .expect("error while building Lueur")
         .run(|app, event| {
             // However Lueur quits (the tray, closing the window, Cmd+Q, the
-            // session ending), the bulbs leave music mode on a warm glow
-            // rather than frozen on the last frame. A no-op when the tray's
-            // Quit has done it already.
+            // session ending), the bulbs leave music mode rather than freeze
+            // on the last frame: on a warm glow, or playing the show by
+            // themselves when they can. A no-op when the tray's Quit has
+            // done it already.
             if let tauri::RunEvent::Exit = event
                 && let Some(state) = app.try_state::<AppState>()
             {
-                lights::suspend(&state, false);
+                lights::quit(&state);
                 peers::leave(&state);
             }
         });

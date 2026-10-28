@@ -26,6 +26,7 @@ pub mod wire;
 pub mod wiz;
 
 use crate::color::{BulbOutput, Rgb};
+use crate::show::OwnLoop;
 use crate::yeelight::{self, Effect, MusicConnection, YeelightControl};
 use common::{Driver, Mailbox};
 use serde::{Deserialize, Serialize};
@@ -392,6 +393,14 @@ pub trait LightStream: Send {
     /// Leave the bulb on a gentle warm glow when the effect stops, so the room
     /// stays cosy rather than snapping to black (or to the last dark frame).
     fn rest(&mut self);
+
+    /// Leave the bulb playing `own` by itself, the way its own app would,
+    /// when Lueur quits during a show: the show goes on without Lueur. A
+    /// bulb that cannot settles on the warm glow instead.
+    fn rest_looping(&mut self, own: &OwnLoop) {
+        let _ = own;
+        self.rest();
+    }
 }
 
 /// The most zones a light plays as (see [`LightStream::zones`]): a long
@@ -428,6 +437,10 @@ impl Driver for MusicConnection {
         let _ = self.set_bright(REST_BRIGHT, Effect::Smooth, 400);
         let _ = self.set_ct(REST_KELVIN, Effect::Smooth, 400);
     }
+
+    fn rest_looping(&mut self, own: &OwnLoop) {
+        let _ = self.play_loop(&own.steps);
+    }
 }
 
 /// A Yeelight's music channel, written from its own thread.
@@ -448,6 +461,10 @@ impl LightStream for YeelightStream {
 
     fn rest(&mut self) {
         self.0.rest();
+    }
+
+    fn rest_looping(&mut self, own: &OwnLoop) {
+        self.0.rest_looping(own);
     }
 }
 

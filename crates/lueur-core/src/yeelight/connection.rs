@@ -16,6 +16,7 @@ use super::protocol::{self, Effect};
 use crate::color::{BulbOutput, Rgb};
 use crate::device::common::{bright_needs_update, ipv4, local_ip_toward};
 use crate::device::wire::Wire;
+use crate::show::Step;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -253,6 +254,15 @@ impl MusicConnection {
     /// Set a white colour temperature (Kelvin) on the music channel.
     pub fn set_ct(&mut self, kelvin: u16, effect: Effect, duration_ms: u32) -> io::Result<()> {
         let line = protocol::set_ct_abx(next_id(), kelvin, effect, duration_ms);
+        self.sent = Sent::default();
+        self.write(&line)
+    }
+
+    /// Have the bulb play `steps` round and round by itself, on the music
+    /// channel: it takes the command at once, where the control channel
+    /// would wait for the music mode to end.
+    pub fn play_loop(&mut self, steps: &[Step]) -> io::Result<()> {
+        let line = protocol::start_cf(next_id(), steps);
         self.sent = Sent::default();
         self.write(&line)
     }

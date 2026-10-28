@@ -10,6 +10,7 @@ use super::{
     DeviceKind, DiscoveredDevice, LightStream, REST_BRIGHT, REST_KELVIN, group_zones, zone_output,
 };
 use crate::color::BulbOutput;
+use crate::show::OwnLoop;
 use crate::yeelight::Effect;
 use std::collections::HashMap;
 use std::io;
@@ -23,6 +24,7 @@ const STATE_SERVICE: u16 = 3;
 const GET_LABEL: u16 = 23;
 const STATE_LABEL: u16 = 25;
 const SET_COLOR: u16 = 102;
+const SET_WAVEFORM: u16 = 103;
 const SET_LIGHT_POWER: u16 = 117;
 const SET_EXTENDED_COLOR_ZONES: u16 = 510;
 const GET_EXTENDED_COLOR_ZONES: u16 = 511;
@@ -118,6 +120,21 @@ pub fn set_color_payload(output: BulbOutput, duration_ms: u32) -> Vec<u8> {
         p.extend_from_slice(&v.to_le_bytes());
     }
     p.extend_from_slice(&duration_ms.to_le_bytes());
+    p
+}
+
+/// A waveform that sways from the colour the bulb shows to `output` and
+/// back, a whole sway every `period_ms`, `cycles` times.
+pub fn set_waveform_payload(output: BulbOutput, period_ms: u32, cycles: f32) -> Vec<u8> {
+    // Reserved, then transient: each sway comes back where it started.
+    let mut p = vec![0u8, 1];
+    for v in hsbk(output) {
+        p.extend_from_slice(&v.to_le_bytes());
+    }
+    p.extend_from_slice(&period_ms.to_le_bytes());
+    p.extend_from_slice(&cycles.to_le_bytes());
+    p.extend_from_slice(&0i16.to_le_bytes()); // skew ratio
+    p.push(1); // sine
     p
 }
 
@@ -342,6 +359,27 @@ impl LightStream for LifxStream {
         };
         let _ = self.send(rest, 400);
     }
+
+    /// A LIFX bulb plays no loop of colours, but sways between two: the
+    /// loop's first and the one halfway round, there and back in a lap.
+    fn rest_looping(&mut self, own: &OwnLoop) {
+        let n = own.steps.len();
+        if n < 2 {
+            return self.rest();
+        }
+        // Enough sways to outlast any evening; the bulb takes no "forever".
+        const CYCLES: f32 = 1.0e6;
+        let wave = set_waveform_payload(own.steps[n / 2].output, own.lap_ms(), CYCLES);
+        let sent = self.send(own.steps[0].output, 0).and_then(|()| {
+            self.sequence = self.sequence.wrapping_add(1);
+            let msg = frame(SET_WAVEFORM, self.target, false, self.sequence, &wave);
+            self.wire.bytes(&msg);
+            self.socket.send(&msg).map(|_| ())
+        });
+        if sent.is_err() {
+            self.rest();
+        }
+    }
 }
 
 /// Broadcast `GetService`, then ask each bulb that answers for its label.
@@ -445,6 +483,23 @@ mod tests {
         // protocol 1024 | addressable | tagged = 0x3400
         assert_eq!(&f[2..4], &[0x00, 0x34]);
         assert_eq!(&f[32..34], &[2, 0]);
+    }
+
+    #[test]
+    fn a_waveform_sways_by_sine_and_comes_back() {
+        let p = set_waveform_payload(
+            BulbOutput::White {
+                kelvin: 2700,
+                bright: 100,
+            },
+            60_000,
+            2.0,
+        );
+        assert_eq!(p.len(), 21);
+        assert_eq!(p[1], 1, "transient");
+        assert_eq!(&p[10..14], &60_000u32.to_le_bytes());
+        assert_eq!(&p[14..18], &2.0f32.to_le_bytes());
+        assert_eq!(p[20], 1, "sine");
     }
 
     #[test]

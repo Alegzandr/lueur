@@ -8,6 +8,7 @@ use super::common::{LastSent, Throttle, broadcast_targets, scale_bright, udp_to}
 use super::wire::Wire;
 use super::{DeviceKind, DiscoveredDevice, LightStream, REST_BRIGHT, REST_KELVIN};
 use crate::color::BulbOutput;
+use crate::show::{OwnLoop, ShowKind};
 use crate::yeelight::Effect;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -48,6 +49,30 @@ pub fn pilot(output: BulbOutput) -> Value {
     }
 }
 
+/// The `setPilot` that leaves a bulb playing the scene of its own closest to
+/// `own`'s show, at its pace and brightness. A WiZ bulb takes no loop of
+/// colours, only its scenes: True colours for the rainbow, then Sunset,
+/// Ocean and Candlelight.
+pub fn own_scene(own: &OwnLoop) -> Option<Value> {
+    let scene = match own.kind {
+        ShowKind::Rainbow => 17,
+        ShowKind::Sunset => 3,
+        ShowKind::Ocean => 1,
+        ShowKind::Candle => 29,
+        ShowKind::Music => return None,
+    };
+    // 100 is a scene's own pace; it takes from a tenth to twice that.
+    let speed = (100.0 * own.pace).round().clamp(10.0, 200.0) as u32;
+    Some(json!({
+        "method": "setPilot",
+        "params": {
+            "sceneId": scene,
+            "speed": speed,
+            "dimming": scale_bright(own.bright(), MIN_DIMMING, 100),
+        }
+    }))
+}
+
 /// Turn a WiZ bulb on or off.
 pub fn set_power(ip: &str, on: bool) -> io::Result<()> {
     let socket = udp_to(ip, PORT)?;
@@ -77,6 +102,17 @@ impl WizStream {
     }
 }
 
+impl WizStream {
+    /// Send the last command, twice: UDP is lossy and nothing follows it.
+    fn finish(&mut self, msg: &Value) {
+        let msg = msg.to_string();
+        self.wire.text(&msg);
+        for _ in 0..2 {
+            let _ = self.socket.send(msg.as_bytes());
+        }
+    }
+}
+
 impl LightStream for WizStream {
     fn interval(&self) -> Duration {
         self.pace.interval()
@@ -98,14 +134,16 @@ impl LightStream for WizStream {
     }
 
     fn rest(&mut self) {
-        let msg = pilot(BulbOutput::White {
+        self.finish(&pilot(BulbOutput::White {
             kelvin: REST_KELVIN,
             bright: REST_BRIGHT,
-        })
-        .to_string();
-        self.wire.text(&msg);
-        for _ in 0..2 {
-            let _ = self.socket.send(msg.as_bytes());
+        }));
+    }
+
+    fn rest_looping(&mut self, own: &OwnLoop) {
+        match own_scene(own) {
+            Some(msg) => self.finish(&msg),
+            None => self.rest(),
         }
     }
 }

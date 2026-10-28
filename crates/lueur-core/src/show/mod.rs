@@ -26,7 +26,7 @@ pub(crate) use palettes::{PARTY, SOFT};
 
 use crate::color::{BulbOutput, MAX_BRIGHT, MIN_BRIGHT};
 use crate::stage::{Fixture, Levels, Stage};
-use ambient::{ocean, places, rainbow, sunset};
+use ambient::{candle_loop, ocean, ocean_loop, places, rainbow, rainbow_loop, sunset, sunset_loop};
 use serde::{Deserialize, Serialize};
 
 /// The light shows. Each is a finished recipe: beyond how bright it plays,
@@ -86,6 +86,71 @@ impl ShowKind {
     pub fn has_speed(self) -> bool {
         matches!(self, ShowKind::Rainbow | ShowKind::Sunset | ShowKind::Ocean)
     }
+
+    /// What a bulb can play round and round by itself in place of this
+    /// show, the way its own app would, for a light at `place` (0 at the
+    /// left of the lights playing it, 1 at the right): the show goes on
+    /// once Lueur has quit. None for the music, which needs Lueur to hear.
+    pub fn own_loop(self, settings: &ShowSettings, place: f32) -> Option<OwnLoop> {
+        let (bright, pace) = (settings.bright(), settings.pace());
+        let steps = match self {
+            ShowKind::Music => return None,
+            ShowKind::Rainbow => rainbow_loop(place, bright, pace),
+            ShowKind::Sunset => sunset_loop(place, bright, pace),
+            ShowKind::Ocean => ocean_loop(place, bright, pace),
+            ShowKind::Candle => candle_loop(place, bright),
+        };
+        let pace = if self.has_speed() { pace } else { 1.0 };
+        Some(OwnLoop {
+            kind: self,
+            steps,
+            pace,
+        })
+    }
+}
+
+/// A show as a bulb plays it by itself (see [`ShowKind::own_loop`]). A bulb
+/// that takes a loop of colours plays `steps`; one that only has scenes of
+/// its own picks the one closest to `kind`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OwnLoop {
+    pub kind: ShowKind,
+    pub steps: Vec<Step>,
+    /// How many times faster than the show's natural pace it plays (see
+    /// [`ShowSettings::pace`]), for a scene that takes a speed.
+    pub pace: f32,
+}
+
+impl OwnLoop {
+    /// How long one round takes, in milliseconds.
+    pub fn lap_ms(&self) -> u32 {
+        self.steps.iter().map(|s| s.ms).sum()
+    }
+
+    /// The brightest the loop gets, 1..=100.
+    pub fn bright(&self) -> u8 {
+        self.steps
+            .iter()
+            .map(|s| s.output.bright())
+            .max()
+            .unwrap_or(MAX_BRIGHT)
+    }
+
+    /// The same loop shown on `wall` (see [`BulbOutput::on_wall`]).
+    pub fn on_wall(mut self, wall: crate::color::Rgb) -> Self {
+        for step in &mut self.steps {
+            step.output = step.output.on_wall(wall);
+        }
+        self
+    }
+}
+
+/// One leg of a loop a bulb plays by itself: a glide to `output` over `ms`
+/// milliseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Step {
+    pub output: BulbOutput,
+    pub ms: u32,
 }
 
 /// The show the window and the tray start, how bright it plays, how fast the

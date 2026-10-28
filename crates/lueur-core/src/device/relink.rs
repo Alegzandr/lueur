@@ -17,6 +17,7 @@
 use super::LightStream;
 use super::lease::{self, Gate};
 use crate::color::BulbOutput;
+use crate::show::OwnLoop;
 use crate::yeelight::Effect;
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::io;
@@ -324,10 +325,20 @@ impl Relink {
 
     /// Settle the bulb, if it is there, and give up on bringing it back.
     pub fn rest(&mut self) {
+        self.end(|stream| stream.rest());
+    }
+
+    /// [`Relink::rest`], leaving the bulb playing `own` by itself if it can
+    /// (see [`LightStream::rest_looping`]).
+    pub fn rest_looping(&mut self, own: &OwnLoop) {
+        self.end(|stream| stream.rest_looping(own));
+    }
+
+    fn end(&mut self, settle: impl FnOnce(&mut dyn LightStream)) {
         self.gone.store(true, Ordering::SeqCst);
         self.attempt = None;
         if let Some(stream) = self.stream.as_mut() {
-            stream.rest();
+            settle(stream.as_mut());
         }
         if let Some(gate) = &self.gate {
             gate.release();

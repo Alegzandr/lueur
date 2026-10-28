@@ -47,6 +47,8 @@ export interface TuyaDps {
   colour: number;
   control: number | null;
   legacy: boolean;
+  /** Absent from layouts saved before Lueur played scenes. */
+  scene?: number | null;
 }
 
 /** Which protocol a bulb speaks, plus what it needs to be spoken. */

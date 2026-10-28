@@ -1,9 +1,9 @@
 //! The shows that need no music: the colours, the sunset, the sea and the
 //! candle.
 
-use super::colour::{blend, clean_blend, even, output, palette_at, ramp};
+use super::colour::{blend, clean_blend, even, from_hsv, output, palette_at, ramp};
 use super::palettes::{COMBOS, EMBER, FLAME, OCEAN, SUNSET};
-use super::{CLOCK_WRAP, ShowSettings};
+use super::{CLOCK_WRAP, ShowSettings, Step};
 use crate::color::{BulbOutput, Rgb};
 use crate::stage::Fixture;
 use std::f32::consts::TAU;
@@ -15,6 +15,16 @@ pub(super) const COMBO_SECS: f32 = 25.0;
 const DRIFT_SECS: f32 = 20.0;
 /// How far the drift carries the colours, as a share of the room.
 const DRIFT: f32 = 0.12;
+
+/// Seconds the colour show takes round the whole wheel when a bulb plays it
+/// by itself, at its natural pace.
+const WHEEL_SECS: f32 = 60.0;
+/// The hues it glides through on the way round. A bulb blends two of them
+/// straight across, so they must stay close enough not to wash out.
+const WHEEL_STEPS: usize = 12;
+/// How much of the wheel lies between the leftmost light and the rightmost:
+/// neighbours stay close enough that their light still mixes on the walls.
+const WHEEL_SPREAD: f32 = 1.0 / 3.0;
 
 /// Where light `i` of `n` sits, spreading the room over `width`.
 fn spread(i: usize, n: usize, width: f32) -> f32 {
@@ -66,6 +76,24 @@ fn seed(light: usize, channel: u32) -> u32 {
 pub(super) fn rainbow(t: f32, place: f32, bright: f32) -> BulbOutput {
     let rgb = spectrum(t, place);
     output(rgb, bright * even(rgb))
+}
+
+/// The colour show as a bulb plays it by itself once Lueur has quit: round
+/// the whole wheel at an even level, a light further right starting further
+/// round. The combinations need Lueur to lay them across the room; the
+/// wheel is what a bulb's own app calls a rainbow.
+pub(super) fn rainbow_loop(place: f32, bright: f32, pace: f32) -> Vec<Step> {
+    let ms = (WHEEL_SECS * 1000.0 / pace / WHEEL_STEPS as f32).round() as u32;
+    (0..WHEEL_STEPS)
+        .map(|k| {
+            let turn = WHEEL_SPREAD * place.clamp(0.0, 1.0) + k as f32 / WHEEL_STEPS as f32;
+            let rgb = from_hsv(360.0 * turn, 1.0, 1.0);
+            Step {
+                output: output(rgb, bright * even(rgb)),
+                ms,
+            }
+        })
+        .collect()
 }
 
 /// The colour show's colour at time `t` for a light at `place` (0 at the
@@ -125,6 +153,50 @@ pub(super) fn sunset(t: f32, i: usize, n: usize, bright: f32) -> BulbOutput {
     output(rgb, bright * swell * even(rgb))
 }
 
+/// The sunset as a bulb plays it by itself: through the warm colours, one
+/// every 14 seconds at the natural pace, swelling and settling as it goes.
+/// A light further right starts further along, as in the show.
+pub(super) fn sunset_loop(place: f32, bright: f32, pace: f32) -> Vec<Step> {
+    let n = SUNSET.len();
+    let ms = (14_000.0 / pace).round() as u32;
+    let start = (place.clamp(0.0, 1.0) * 1.6).round() as usize;
+    (0..n)
+        .map(|k| {
+            let rgb = SUNSET[(start + k) % n];
+            let swell = if k % 2 == 0 { 1.0 } else { 0.86 };
+            Step {
+                output: output(rgb, bright * swell * even(rgb)),
+                ms,
+            }
+        })
+        .collect()
+}
+
+/// The sea as a bulb plays it by itself: a swell every 7.5 seconds at the
+/// natural pace, lifting the light to teal and sinking it to a deep blue,
+/// one crest greener than the next. A light further right is a swell
+/// behind, so the waves still roll across the room.
+pub(super) fn ocean_loop(place: f32, bright: f32, pace: f32) -> Vec<Step> {
+    // Trough, crest, trough, crest: what each leg glides to, and how high.
+    let legs = [
+        (OCEAN[0], 0.5),
+        (OCEAN[2], 1.0),
+        (OCEAN[1], 0.5),
+        (OCEAN[3], 1.0),
+    ];
+    let ms = (3_750.0 / pace).round() as u32;
+    let start = 2 * place.clamp(0.0, 1.0).round() as usize;
+    (0..legs.len())
+        .map(|k| {
+            let (rgb, level) = legs[(start + k) % legs.len()];
+            Step {
+                output: output(rgb, bright * level * even(rgb)),
+                ms,
+            }
+        })
+        .collect()
+}
+
 /// The sea: a swell rolls through the room from one light to the next,
 /// never quite regular. Each crest lifts the light and turns it to teal;
 /// each trough sinks it to a deep blue. The tide slowly drifts the whole
@@ -137,6 +209,30 @@ pub(super) fn ocean(t: f32, i: usize, n: usize, bright: f32) -> BulbOutput {
     let rgb = ramp(OCEAN, 0.7 * wave + 0.3 * tide);
     let level = 0.5 + 0.5 * wave;
     output(rgb, bright * level * even(rgb))
+}
+
+/// A candle as a bulb plays it by itself: a flame that wavers, never twice
+/// the same way in a row. Shallower than the show's, which can duck it for
+/// a draught: the bulb plays it with no guard to hold a deep dip back, so
+/// every move stays too small to count as a flash. A light further right
+/// starts further into the loop, so the flames do not move together.
+pub(super) fn candle_loop(place: f32, bright: f32) -> Vec<Step> {
+    const STEPS: usize = 16;
+    let mut rng = XorShift(0x2545_f491);
+    let legs: Vec<(f32, u32)> = (0..STEPS)
+        .map(|_| (0.92 + 0.08 * rng.next(), 250 + (250.0 * rng.next()) as u32))
+        .collect();
+    let start = (place.clamp(0.0, 1.0) * (STEPS / 2) as f32).round() as usize;
+    (0..STEPS)
+        .map(|k| {
+            let (level, ms) = legs[(start + k) % STEPS];
+            let warmth = ((level - 0.45) / 0.55).clamp(0.0, 1.0);
+            Step {
+                output: output(blend(EMBER, FLAME, warmth), level * bright),
+                ms,
+            }
+        })
+        .collect()
 }
 
 /// A small, fast, deterministic random source: enough for a flame.

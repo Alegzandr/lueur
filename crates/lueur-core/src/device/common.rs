@@ -3,6 +3,7 @@
 //! finding our own address on the LAN.
 
 use crate::color::{BulbOutput, MAX_BRIGHT, MIN_BRIGHT, Rgb};
+use crate::show::OwnLoop;
 use crate::yeelight::Effect;
 use std::collections::HashMap;
 use std::io;
@@ -123,10 +124,19 @@ impl Throttle {
 }
 
 /// One frame's worth of work for a [`Mailbox`] worker.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Job {
     Frame(BulbOutput, Effect, u32),
     Rest,
+    /// Leave the bulb playing a loop by itself (see [`Driver::rest_looping`]).
+    Loop(Arc<OwnLoop>),
+}
+
+impl Job {
+    /// Whether it is the last job: the worker ends once it is done.
+    fn last(&self) -> bool {
+        matches!(self, Job::Rest | Job::Loop(_))
+    }
 }
 
 /// Something that can drive a bulb, slowly: an HTTP request or an encrypted
@@ -135,6 +145,11 @@ pub enum Job {
 pub trait Driver: Send + 'static {
     fn send(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()>;
     fn rest(&mut self);
+    /// See [`LightStream::rest_looping`](super::LightStream::rest_looping).
+    fn rest_looping(&mut self, own: &OwnLoop) {
+        let _ = own;
+        self.rest();
+    }
 }
 
 /// Runs a [`Driver`] on its own thread, always on the newest frame.
@@ -182,6 +197,10 @@ impl Mailbox {
                                 driver.rest();
                                 break;
                             }
+                            Some(Job::Loop(own)) => {
+                                driver.rest_looping(&own);
+                                break;
+                            }
                             None => {}
                         }
                     }
@@ -200,9 +219,9 @@ impl Mailbox {
             return Err(e);
         }
         if let Ok(mut g) = self.latest.lock() {
-            // A pending rest is never overwritten by a late frame.
-            if !matches!(*g, Some(Job::Rest)) {
-                *g = Some(job);
+            // A pending rest or loop is never overwritten by a late frame.
+            if !g.as_ref().is_some_and(Job::last) {
+                *g = Some(job.clone());
             }
         }
         match self.slot.try_send(job) {
@@ -220,7 +239,17 @@ impl Mailbox {
 
     /// Ask the worker to settle the bulb, and wait (bounded) for it to do so.
     pub fn rest(&mut self) {
-        let _ = self.post(Job::Rest);
+        self.finish(Job::Rest);
+    }
+
+    /// [`Mailbox::rest`], leaving the bulb playing `own` by itself.
+    pub fn rest_looping(&mut self, own: &OwnLoop) {
+        self.finish(Job::Loop(Arc::new(own.clone())));
+    }
+
+    /// Hand the worker its last job, and wait (bounded) for it to be done.
+    fn finish(&mut self, job: Job) {
+        let _ = self.post(job);
         if let Some(w) = self.worker.take() {
             let deadline = Instant::now() + Duration::from_secs(3);
             while !w.is_finished() && Instant::now() < deadline {

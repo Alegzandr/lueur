@@ -25,6 +25,7 @@ use super::{
     Approach, DeviceKind, DiscoveredDevice, HueBridge, LightStream, REST_BRIGHT, REST_KELVIN, mdns,
 };
 use crate::color::{BulbOutput, Rgb};
+use crate::show::{OwnLoop, ShowKind};
 use crate::yeelight::Effect;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -86,8 +87,10 @@ pub fn state_body(output: BulbOutput, duration_ms: u32, with_on: bool) -> Value 
     // Transition time is in tenths of a second.
     body["transitiontime"] = json!(duration_ms.div_ceil(100).min(10));
     if with_on {
-        // Only on the first frame: the bridge handles `on` slowly.
+        // Only on the first frame: the bridge handles `on` slowly. A colour
+        // loop left playing when Lueur quit would cover every frame.
         body["on"] = json!(true);
+        body["effect"] = json!("none");
     }
     body
 }
@@ -510,10 +513,11 @@ struct HueDriver {
 }
 
 impl HueDriver {
-    fn put(&mut self, body: &Value) -> io::Result<()> {
+    /// The bridge's reply, which lists what it refused.
+    fn put(&mut self, body: &Value) -> io::Result<Value> {
         let body = body.to_string();
         self.wire.request("PUT", &self.path, Some(&body));
-        check(self.client.request("PUT", &self.path, Some(&body))?).map(|_| ())
+        check(self.client.request("PUT", &self.path, Some(&body))?)
     }
 }
 
@@ -535,6 +539,19 @@ impl Driver for HueDriver {
             bright: REST_BRIGHT,
         };
         let _ = self.put(&state_body(rest, 400, true));
+    }
+
+    /// A Hue lamp's own loop goes round the colour wheel and nothing else:
+    /// it plays the rainbow, and the other shows settle. So does a lamp
+    /// without colours, which refuses the loop.
+    fn rest_looping(&mut self, own: &OwnLoop) {
+        if own.kind == ShowKind::Rainbow {
+            let body = json!({"on": true, "effect": "colorloop", "bri": bri(own.bright())});
+            if self.put(&body).is_ok_and(|v| bridge_error(&v).is_none()) {
+                return;
+            }
+        }
+        self.rest();
     }
 }
 
@@ -571,7 +588,7 @@ impl HueStream {
         };
         // Over REST the first command turns the lamp on; a stream may not.
         if seat.is_some() {
-            let on = json!({"on": true});
+            let on = json!({"on": true, "effect": "none"});
             let _ = put_state(&access.ip, &access.username, light, &access.cert, &on);
         }
         Ok(HueStream {
@@ -638,6 +655,13 @@ impl LightStream for HueStream {
             seat.leave();
         }
         self.mailbox.rest();
+    }
+
+    fn rest_looping(&mut self, own: &OwnLoop) {
+        if let Some(seat) = self.seat.as_mut() {
+            seat.leave();
+        }
+        self.mailbox.rest_looping(own);
     }
 }
 

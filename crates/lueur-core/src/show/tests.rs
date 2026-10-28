@@ -303,3 +303,103 @@ fn a_candle_dims_redder() {
     let high = blend(EMBER, FLAME, 1.0);
     assert!(low.g < high.g);
 }
+
+/// The loop as the bulb plays it, frame by frame: each leg a straight glide
+/// from the colour before, round and round for `secs`.
+fn played_by_the_bulb(steps: &[Step], secs: f32) -> Vec<BulbOutput> {
+    let dt = 0.04;
+    let lap: f32 = steps.iter().map(|s| s.ms as f32 / 1000.0).sum();
+    (0..(secs / dt) as usize)
+        .map(|f| {
+            let mut t = (f as f32 * dt) % lap;
+            let mut i = 0;
+            while t >= steps[i].ms as f32 / 1000.0 {
+                t -= steps[i].ms as f32 / 1000.0;
+                i += 1;
+            }
+            let from = steps[(i + steps.len() - 1) % steps.len()].output;
+            let to = steps[i].output;
+            let u = t * 1000.0 / steps[i].ms as f32;
+            let lerp =
+                |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * u).round() as u8;
+            let (a, b) = (rgb(from), rgb(to));
+            BulbOutput::Color {
+                rgb: Rgb::new(lerp(a.r, b.r), lerp(a.g, b.g), lerp(a.b, b.b)),
+                bright: lerp(from.bright(), to.bright()),
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn every_show_but_the_music_has_a_loop_of_its_own() {
+    for kind in SHOWS {
+        let own = kind.own_loop(&settings(kind), 0.5);
+        assert_eq!(own.is_some(), kind != ShowKind::Music, "{kind:?}");
+        if let Some(own) = own {
+            assert_eq!(own.kind, kind);
+            assert!(own.steps.len() >= 4, "{kind:?}");
+            assert!(own.bright() <= settings(kind).bright, "{kind:?}");
+        }
+    }
+}
+
+#[test]
+fn a_light_further_right_starts_its_loop_elsewhere() {
+    for kind in [
+        ShowKind::Rainbow,
+        ShowKind::Sunset,
+        ShowKind::Ocean,
+        ShowKind::Candle,
+    ] {
+        let s = settings(kind);
+        let left = kind.own_loop(&s, 0.0).unwrap().steps;
+        let right = kind.own_loop(&s, 1.0).unwrap().steps;
+        assert_ne!(left[0], right[0], "{kind:?}");
+    }
+}
+
+#[test]
+fn the_rainbow_a_bulb_plays_by_itself_goes_round_the_wheel() {
+    let s = settings(ShowKind::Rainbow);
+    let left = ShowKind::Rainbow.own_loop(&s, 0.0).unwrap().steps;
+    let right = ShowKind::Rainbow.own_loop(&s, 1.0).unwrap().steps;
+    // A minute round the wheel at the natural pace.
+    let lap: u32 = left.iter().map(|s| s.ms).sum();
+    assert!((59_000..=61_000).contains(&lap), "{lap}");
+    let hue = |s: &Step| hsv(rgb(s.output)).0;
+    assert!(hue(&left[0]) < 1.0);
+    // The light at the right starts a third of the way round.
+    assert!((hue(&right[0]) - 120.0).abs() < 2.0, "{}", hue(&right[0]));
+    // Never brighter than asked.
+    assert!(left.iter().all(|step| step.output.bright() <= s.bright));
+}
+
+#[test]
+fn a_loop_a_bulb_plays_by_itself_never_flashes() {
+    // The bulb plays it without Lueur, so the guard cannot hold it back:
+    // even at the fastest pace and full brightness, wherever the light
+    // stands, it must have nothing to hold back.
+    for kind in SHOWS {
+        for place in [0.0, 0.5, 1.0] {
+            let s = ShowSettings {
+                speed: 100,
+                bright: 100,
+                ..settings(kind)
+            };
+            let Some(own) = kind.own_loop(&s, place) else {
+                continue;
+            };
+            let frames = played_by_the_bulb(&own.steps, 60.0);
+            let mut guard = crate::safety::FlashGuard::show(1);
+            for (k, frame) in frames.iter().enumerate() {
+                let mut out = [*frame];
+                guard.apply(&mut out, 0.04, true);
+                assert_eq!(
+                    out[0], *frame,
+                    "{kind:?} at {place}: held back at frame {k}"
+                );
+            }
+        }
+    }
+}

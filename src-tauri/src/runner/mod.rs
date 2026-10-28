@@ -118,6 +118,9 @@ pub struct Handle {
     stop: Arc<AtomicBool>,
     /// Whether the bulbs settle on a warm glow when the loop ends.
     settle: Arc<AtomicBool>,
+    /// Whether, when a show ends, the bulbs that can play it by themselves
+    /// do so rather than settle.
+    keep: Arc<AtomicBool>,
     /// Set by the thread once it has wholly finished, settling included.
     done: Arc<AtomicBool>,
     live: Arc<Mutex<LiveSettings>>,
@@ -147,6 +150,14 @@ impl Handle {
     /// them over at once, and a warm flash in between would only distract.
     pub fn hand_over(&mut self) {
         self.settle.store(false, Ordering::SeqCst);
+        self.stop();
+    }
+
+    /// Stop, leaving the bulbs that can playing the show by themselves (see
+    /// [`ShowKind::own_loop`]): Lueur quits, and the show goes on without
+    /// it until Lueur plays it again. The others settle as ever.
+    pub fn leave_playing(&mut self) {
+        self.keep.store(true, Ordering::SeqCst);
         self.stop();
     }
 
@@ -264,6 +275,7 @@ fn spawn(
     let live = Arc::new(Mutex::new(LiveSettings::of(config)));
     let stop = Arc::new(AtomicBool::new(false));
     let settle = Arc::new(AtomicBool::new(true));
+    let keep = Arc::new(AtomicBool::new(false));
     let done = Arc::new(AtomicBool::new(false));
     let connected_lights = lights.len();
     let links = lights
@@ -274,6 +286,7 @@ fn spawn(
         let live = Arc::clone(&live);
         let stop = Arc::clone(&stop);
         let settle = Arc::clone(&settle);
+        let keep = Arc::clone(&keep);
         let done = Arc::clone(&done);
         std::thread::Builder::new()
             .name(format!("lueur-{}", mode.id()))
@@ -283,7 +296,13 @@ fn spawn(
                 let ids: Vec<String> = lights.iter().map(|l| l.id.clone()).collect();
                 forget_glows(&ids);
                 if settle.load(Ordering::SeqCst) {
-                    rest(&mut lights);
+                    let own = match mode {
+                        Mode::Show(kind) if keep.load(Ordering::SeqCst) => {
+                            live.lock().ok().map(|l| Own(kind, l.show, l.wall))
+                        }
+                        _ => None,
+                    };
+                    rest(&mut lights, own);
                 }
                 done.store(true, Ordering::SeqCst);
                 // Nobody asked it to stop: the capture or the sound could
@@ -299,6 +318,7 @@ fn spawn(
     Ok(Handle {
         stop,
         settle,
+        keep,
         done,
         live,
         thread: Some(thread),
@@ -410,13 +430,32 @@ fn spans(lights: &[ConnectedLight]) -> Vec<Range<usize>> {
 /// explicitly: the effect may have ended on a dark frame, and the bulb would
 /// otherwise hold that 1-2% brightness and look off. Every bulb at once, so
 /// they settle together.
-fn rest(lights: &mut [ConnectedLight]) {
+///
+/// With `own`, each bulb that can plays the show by itself instead (see
+/// [`ShowKind::own_loop`]), placed across the room as the show placed it.
+fn rest(lights: &mut [ConnectedLight], own: Option<Own>) {
+    let n = lights.len();
     std::thread::scope(|scope| {
-        for light in lights.iter_mut() {
-            scope.spawn(move || light.link.rest());
+        for (i, light) in lights.iter_mut().enumerate() {
+            let place = if n > 1 {
+                i as f32 / (n - 1) as f32
+            } else {
+                0.0
+            };
+            let own = own
+                .and_then(|Own(kind, show, wall)| Some(kind.own_loop(&show, place)?.on_wall(wall)));
+            scope.spawn(move || match own {
+                Some(own) => light.link.rest_looping(&own),
+                None => light.link.rest(),
+            });
         }
     });
 }
+
+/// The show a loop played, how, and the walls it played on: what its bulbs
+/// need to play it by themselves.
+#[derive(Clone, Copy)]
+struct Own(ShowKind, ShowSettings, Rgb);
 
 /// Push one frame, an output for each zone of each light (`spans` says
 /// which are whose), corrected for the walls. `pace` gives the

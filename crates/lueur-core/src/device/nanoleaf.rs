@@ -7,7 +7,7 @@
 //! treats it as one light; the music plays it as a few zones, its panels
 //! grouped left to right, so a chase runs across it.
 
-use super::common::{LastSent, REFRESH, Throttle, kelvin_to_rgb, udp_to};
+use super::common::{LastSent, REFRESH, Throttle, kelvin_to_rgb, rgb_to_hsv, udp_to};
 use super::http::{self, Response};
 use super::wire::Wire;
 use super::{
@@ -15,6 +15,7 @@ use super::{
     group_zones, mdns, zone_output,
 };
 use crate::color::{BulbOutput, Rgb};
+use crate::show::OwnLoop;
 use crate::yeelight::Effect;
 use serde_json::{Value, json};
 use std::io;
@@ -236,6 +237,40 @@ pub fn panel_rgb(output: BulbOutput) -> Rgb {
     Rgb::new(s(rgb.r), s(rgb.g), s(rgb.b))
 }
 
+/// The effect that leaves the panels fading through `own`'s colours by
+/// themselves, every panel together, each glide as long as the loop's.
+pub fn own_effect(own: &OwnLoop) -> Value {
+    let palette: Vec<Value> = own
+        .steps
+        .iter()
+        .map(|s| {
+            let (rgb, bright) = match s.output {
+                BulbOutput::Color { rgb, bright } => (rgb, bright),
+                BulbOutput::White { kelvin, bright } => (kelvin_to_rgb(kelvin), bright),
+            };
+            let (h, sat, _) = rgb_to_hsv(rgb);
+            json!({
+                "hue": (h.round() as u32) % 360,
+                "saturation": (sat * 100.0).round() as u32,
+                "brightness": bright.min(100),
+            })
+        })
+        .collect();
+    // Tenths of a second, the same for every glide.
+    let glide = (own.lap_ms() / own.steps.len().max(1) as u32)
+        .div_ceil(100)
+        .max(1);
+    json!({"write": {
+        "command": "display",
+        "animType": "fade",
+        "colorType": "HSB",
+        "palette": palette,
+        "transTime": {"minValue": glide, "maxValue": glide},
+        "delayTime": {"minValue": 0, "maxValue": 0},
+        "loop": true,
+    }})
+}
+
 pub struct NanoleafStream {
     ip: String,
     port: u16,
@@ -374,6 +409,16 @@ impl LightStream for NanoleafStream {
             self.wire.request("PUT", "state", Some(&body.to_string()));
         }
         let _ = put(&self.ip, self.port, &self.token, "state", &body);
+    }
+
+    fn rest_looping(&mut self, own: &OwnLoop) {
+        let body = own_effect(own);
+        if Wire::enabled() {
+            self.wire.request("PUT", "effects", Some(&body.to_string()));
+        }
+        if put(&self.ip, self.port, &self.token, "effects", &body).is_err() {
+            self.rest();
+        }
     }
 }
 

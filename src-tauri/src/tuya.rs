@@ -17,6 +17,7 @@ use lueur_core::device::wire::Wire;
 use lueur_core::device::{
     DeviceKind, DiscoveredDevice, Endpoint, LightStream, REST_BRIGHT, REST_KELVIN, TuyaDevice,
 };
+use lueur_core::show::OwnLoop;
 use lueur_core::yeelight::Effect;
 use rustuya::tokio::{Device, Discovery, Event, Version};
 use serde_json::Value;
@@ -281,8 +282,22 @@ impl LightStream for TuyaStream {
                 bright: REST_BRIGHT,
             },
         );
+        self.finish(rest);
+    }
+
+    fn rest_looping(&mut self, own: &OwnLoop) {
+        match dps::scene_dps(&self.layout, own) {
+            Some(scene) => self.finish(scene),
+            None => self.rest(),
+        }
+    }
+}
+
+impl TuyaStream {
+    /// Send the last DPs, then close once they are written.
+    fn finish(&mut self, last: Value) {
         if let Some(tx) = self.tx.take() {
-            let _ = tx.send(rest);
+            let _ = tx.send(last);
         }
         let task = self.task.take();
         let dev = self.dev.clone();

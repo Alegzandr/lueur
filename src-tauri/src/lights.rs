@@ -145,6 +145,21 @@ pub fn suspend(state: &AppState, restore: bool) {
     stop_taken(state, state.effects.take(|_| true), restore);
 }
 
+/// Stop every effect because Lueur quits, leaving the modes the user chose
+/// recorded: they play again at the next launch. Meanwhile a show goes on
+/// on the bulbs that can play it by themselves; the others settle on a warm
+/// glow, as with [`suspend`].
+pub fn quit(state: &AppState) {
+    let _change = state.effects.change();
+    let mut handles = state.effects.take(|_| true);
+    // Every loop at once, as in `stop_taken`.
+    std::thread::scope(|scope| {
+        for h in &mut handles {
+            scope.spawn(move || h.leave_playing());
+        }
+    });
+}
+
 /// Stop the effect playing `mode`, leaving the others to play on.
 pub fn stop_mode(state: &AppState, mode: Mode, restore: bool) {
     {

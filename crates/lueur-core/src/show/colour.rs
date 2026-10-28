@@ -48,7 +48,7 @@ pub(super) fn hsv(c: Rgb) -> (f32, f32, f32) {
     (h, s, max)
 }
 
-fn from_hsv(h: f32, s: f32, v: f32) -> Rgb {
+pub(super) fn from_hsv(h: f32, s: f32, v: f32) -> Rgb {
     let c = v * s;
     let x = c * (1.0 - ((h / 60.0).rem_euclid(2.0) - 1.0).abs());
     let m = v - c;

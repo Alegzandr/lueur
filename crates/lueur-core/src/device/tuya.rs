@@ -12,6 +12,7 @@
 
 use super::common::{rgb_to_hsv, scale_bright};
 use crate::color::BulbOutput;
+use crate::show::OwnLoop;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -41,6 +42,9 @@ pub struct TuyaDps {
     /// DPs 1–5 with 0–255 ranges and the older colour string.
     #[serde(default)]
     pub legacy: bool,
+    /// The scene DP, which plays a loop of colours by itself.
+    #[serde(default)]
+    pub scene: Option<u16>,
 }
 
 impl Default for TuyaDps {
@@ -53,6 +57,7 @@ impl Default for TuyaDps {
             colour: 24,
             control: Some(28),
             legacy: false,
+            scene: Some(25),
         }
     }
 }
@@ -83,7 +88,20 @@ impl TuyaDps {
                 find(&["control_data"])
             },
             legacy,
+            scene: if legacy {
+                None
+            } else {
+                find(&["scene_data_v2"])
+            },
         })
+    }
+
+    /// Where the bulb takes a scene. A layout saved before Lueur knew of
+    /// scenes says nothing, but every current bulb with its colour at 24
+    /// follows Tuya's standard layout, which keeps the scene at 25.
+    fn scene_dp(&self) -> Option<u16> {
+        self.scene
+            .or((!self.legacy && self.colour == 24).then_some(25))
     }
 
     fn bright_range(&self) -> (u32, u32) {
@@ -222,6 +240,58 @@ pub fn steady_dps(dps: &TuyaDps, output: BulbOutput) -> Value {
     v
 }
 
+/// The most colours a scene holds.
+const SCENE_UNITS: usize = 8;
+/// The number the scene goes by; the app lists its colourful scenes here.
+const SCENE_NUMBER: u8 = 5;
+
+/// The DPs that leave the bulb playing `own` by itself as one of its own
+/// scenes, every colour gliding into the next. None for a bulb that takes
+/// no scene.
+///
+/// A scene's pace is not a duration but a speed, 1 to 100: the app offers
+/// 40 to 100. A loop's long glides play at 40, its slowest; the quick
+/// ones of a flame at 100.
+pub fn scene_dps(dps: &TuyaDps, own: &OwnLoop) -> Option<Value> {
+    let dp = dps.scene_dp()?;
+    let every = own.steps.len().div_ceil(SCENE_UNITS).max(1);
+    let units: Vec<_> = own.steps.iter().step_by(every).collect();
+    let glide = own.lap_ms() / units.len().max(1) as u32;
+    let speed = (40_000 / glide.max(1)).clamp(40, 100);
+    let mut value = format!("{SCENE_NUMBER:02x}");
+    for step in units {
+        // Switch and glide speed, then 02 to glide rather than jump.
+        value.push_str(&format!("{speed:02x}{speed:02x}02"));
+        let (h, s, v, b, t) = match step.output {
+            BulbOutput::Color { rgb, bright } => {
+                let (h, s, _) = rgb_to_hsv(rgb);
+                (
+                    (h.round() as u32) % 360,
+                    (s * 1000.0).round() as u32,
+                    scale_bright(bright, 10, 1000),
+                    0,
+                    0,
+                )
+            }
+            BulbOutput::White { kelvin, bright } => (
+                0,
+                0,
+                0,
+                scale_bright(bright, 10, 1000),
+                temp_value(kelvin, 1000),
+            ),
+        };
+        for x in [h, s, v, b, t] {
+            value.push_str(&hex4(x));
+        }
+    }
+    let mut map = Map::new();
+    put(&mut map, dps.switch, json!(true));
+    put(&mut map, dps.mode, json!("scene"));
+    put(&mut map, dp, json!(value));
+    Some(Value::Object(map))
+}
+
 /// The DP that switches the bulb on or off.
 pub fn power_dps(dps: &TuyaDps, on: bool) -> Value {
     let mut map = Map::new();
@@ -340,6 +410,7 @@ mod tests {
             colour: 5,
             control: None,
             legacy: true,
+            scene: None,
         };
         let v = frame_dps(
             &dps,
@@ -351,6 +422,42 @@ mod tests {
         );
         assert_eq!(v["2"], "colour");
         assert_eq!(v["5"], "00ff000078ffff");
+    }
+
+    #[test]
+    fn a_scene_glides_through_at_most_eight_colours() {
+        use crate::show::{ShowKind, ShowSettings};
+        let s = ShowSettings {
+            kind: ShowKind::Rainbow,
+            ..ShowSettings::default()
+        };
+        let own = ShowKind::Rainbow.own_loop(&s, 0.0).unwrap();
+        let v = scene_dps(&current(), &own).unwrap();
+        assert_eq!(v["20"], true);
+        assert_eq!(v["21"], "scene");
+        let scene = v["25"].as_str().unwrap();
+        // The number, then 26 hex digits a colour; the first one red.
+        assert_eq!(scene.len() % 26, 2);
+        assert!((scene.len() - 2) / 26 <= SCENE_UNITS);
+        assert_eq!(&scene[..2], "05");
+        assert_eq!(&scene[2..8], "282802");
+        assert_eq!(&scene[8..16], "000003e8");
+    }
+
+    #[test]
+    fn a_layout_saved_without_its_scene_still_has_one() {
+        let saved = TuyaDps {
+            scene: None,
+            ..TuyaDps::default()
+        };
+        assert_eq!(saved.scene_dp(), Some(25));
+        let legacy = TuyaDps {
+            legacy: true,
+            colour: 5,
+            scene: None,
+            ..TuyaDps::default()
+        };
+        assert_eq!(legacy.scene_dp(), None);
     }
 
     #[test]

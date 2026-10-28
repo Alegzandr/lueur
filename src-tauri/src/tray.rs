@@ -380,7 +380,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             "update" => crate::updater::restart_app(app.clone()),
             "quit" => {
                 if let Some(state) = app.try_state::<AppState>() {
-                    lights::suspend(&state, false);
+                    lights::quit(&state);
                 }
                 app.exit(0);
             }

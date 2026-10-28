@@ -191,6 +191,14 @@ others in coarser steps.
 - **Sleep timer.** While it runs, Lueur stays open even when closing the
   window would quit it, and keeps the computer from going to sleep by itself
   (on Windows and macOS). Shut the computer down and the lights stay on.
+- **Quitting.** A light playing Rainbow, Sunset, Ocean or Candle goes on
+  playing it by itself until Lueur is back, the way its own app would: a
+  Yeelight, a Tuya bulb or Nanoleaf panels play the show's colours in a
+  loop, a WiZ bulb its matching scene (True colours, Sunset, Ocean,
+  Candlelight), a LIFX bulb sways between two of the colours, and a Hue lamp
+  plays its colour loop for Rainbow. The rest settle on a warm white: the
+  Ambilight and the music need Lueur to see and hear, and a Govee light
+  takes no loop over the network.
 - **At login.** *Open at login* and *Start hidden in the tray* in Settings;
   each light picks up the effect it was left playing.
 - **Keyboard.** <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>1</kbd>–<kbd>4</kbd>

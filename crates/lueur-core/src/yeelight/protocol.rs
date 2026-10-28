@@ -7,7 +7,8 @@
 //! Commands are newline-terminated JSON objects: `{"id":N,"method":M,"params":P}`
 //! followed by `\r\n`.
 
-use crate::color::Rgb;
+use crate::color::{BulbOutput, MAX_KELVIN, MIN_KELVIN, Rgb};
+use crate::show::Step;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 
@@ -105,6 +106,30 @@ pub fn set_music(id: u32, enable: bool, host: &str, port: u16) -> String {
     } else {
         encode(id, "set_music", serde_json::json!([0]))
     }
+}
+
+/// The shortest leg a colour flow takes, in milliseconds.
+pub const MIN_FLOW_MS: u32 = 50;
+
+/// `start_cf`: have the bulb play `steps` round and round by itself, each a
+/// glide to its colour or white over its duration, until another command
+/// stops it. Stopped, it stays where it was.
+pub fn start_cf(id: u32, steps: &[Step]) -> String {
+    let flow: Vec<String> = steps
+        .iter()
+        .map(|s| {
+            let ms = s.ms.max(MIN_FLOW_MS);
+            let bright = s.output.bright().clamp(1, 100);
+            match s.output {
+                BulbOutput::Color { rgb, .. } => format!("{ms},1,{},{bright}", rgb.to_u32()),
+                BulbOutput::White { kelvin, .. } => {
+                    format!("{ms},2,{},{bright}", kelvin.clamp(MIN_KELVIN, MAX_KELVIN))
+                }
+            }
+        })
+        .collect();
+    // Count 0 plays forever; action 1 stays on the last colour once stopped.
+    encode(id, "start_cf", serde_json::json!([0, 1, flow.join(",")]))
 }
 
 /// `get_prop`: ask for the values of `props`, answered in the same order.
@@ -273,6 +298,30 @@ mod tests {
         assert_eq!(
             set_music(2, false, "x", 0),
             "{\"id\":2,\"method\":\"set_music\",\"params\":[0]}\r\n"
+        );
+    }
+
+    #[test]
+    fn start_cf_plays_forever() {
+        let steps = [
+            Step {
+                output: BulbOutput::Color {
+                    rgb: Rgb::new(255, 0, 0),
+                    bright: 80,
+                },
+                ms: 5000,
+            },
+            Step {
+                output: BulbOutput::White {
+                    kelvin: 9000,
+                    bright: 0,
+                },
+                ms: 10,
+            },
+        ];
+        assert_eq!(
+            start_cf(4, &steps),
+            "{\"id\":4,\"method\":\"start_cf\",\"params\":[0,1,\"5000,1,16711680,80,50,2,6500,1\"]}\r\n"
         );
     }
 
