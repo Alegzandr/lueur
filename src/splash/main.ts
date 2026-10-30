@@ -7,6 +7,7 @@
 // Outside Tauri (`npm run dev`, then /splash.html) it loops through the stages.
 
 import { invoke } from "@tauri-apps/api/core";
+import "@fontsource-variable/inter/opsz.css";
 import "../styles/app.css";
 import "./splash.css";
 

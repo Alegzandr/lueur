@@ -9,6 +9,7 @@
   import TitleBar from "./lib/ui/TitleBar.svelte";
   import Toasts from "./lib/ui/Toasts.svelte";
   import Backdrop from "./lib/ui/Backdrop.svelte";
+  import RoomBackdrop from "./lib/views/RoomBackdrop.svelte";
   import UpdateButton from "./lib/ui/UpdateButton.svelte";
   import Lighting from "./lib/views/Lighting.svelte";
   import Room from "./lib/views/Room.svelte";
@@ -122,7 +123,7 @@
           title="{n.label()} ({MOD_KEY}{n.key})"
           onclick={() => (app.view = n.id)}
         >
-          <Icon name={n.icon} size={16} />
+          <Icon name={n.icon} size={17} filled={app.view === n.id} />
           <span class="nav-label">{n.label()}</span>
           {#if n.id === "bulbs" && unbound > 0}
             <span class="badge" title={t("unbound_badge")}>{unbound}</span>
@@ -133,8 +134,9 @@
   </aside>
 
   <main class="content">
-    <!-- Behind the lighting, what the bulbs do: outside the scroll, so it stays put. -->
-    {#if app.view === "lighting"}<Backdrop />{/if}
+    <!-- Behind the lighting, what the bulbs do; behind the other pages, the
+         room as they make it. Outside the scroll, so they stay put. -->
+    {#if app.view === "lighting"}<Backdrop />{:else}<RoomBackdrop />{/if}
     {#if OWN_TITLEBAR}
       <TitleBar />
     {:else if app.updateReady}
@@ -259,7 +261,8 @@
     display: flex;
     flex-direction: column;
   }
-  .content > :global(.backdrop) {
+  .content > :global(.backdrop),
+  .content > :global(.room-backdrop) {
     z-index: -1;
   }
   .topbar {

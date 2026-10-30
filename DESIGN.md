@@ -35,33 +35,33 @@ colors:
   night-filament-amber: "oklch(0.8 0.14 72)"
 typography:
   title:
-    fontFamily: "system-ui, -apple-system, Segoe UI Variable Text, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, sans-serif"
-    fontSize: "1.375rem"
-    fontWeight: 650
-    lineHeight: 1.15
-    letterSpacing: "-0.018em"
+    fontFamily: "Inter Variable, system-ui, -apple-system, Segoe UI Variable Text, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, sans-serif"
+    fontSize: "1.75rem"
+    fontWeight: 700
+    lineHeight: 1.1
+    letterSpacing: "-0.024em"
   heading:
-    fontFamily: "system-ui, -apple-system, Segoe UI Variable Text, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, sans-serif"
+    fontFamily: "Inter Variable, system-ui, -apple-system, Segoe UI Variable Text, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, sans-serif"
     fontSize: "0.9375rem"
     fontWeight: 600
   body:
-    fontFamily: "system-ui, -apple-system, Segoe UI Variable Text, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, sans-serif"
+    fontFamily: "Inter Variable, system-ui, -apple-system, Segoe UI Variable Text, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, sans-serif"
     fontSize: "0.8125rem"
     fontWeight: 400
     lineHeight: 1.45
     fontFeature: "\"cv11\", \"ss01\""
   label:
-    fontFamily: "system-ui, -apple-system, Segoe UI Variable Text, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, sans-serif"
+    fontFamily: "Inter Variable, system-ui, -apple-system, Segoe UI Variable Text, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, sans-serif"
     fontSize: "0.75rem"
     fontWeight: 600
   caption:
-    fontFamily: "system-ui, -apple-system, Segoe UI Variable Text, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, sans-serif"
+    fontFamily: "Inter Variable, system-ui, -apple-system, Segoe UI Variable Text, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica Neue, sans-serif"
     fontSize: "0.6875rem"
     fontWeight: 600
 rounded:
   sm: "5px"
-  md: "7px"
-  lg: "10px"
+  md: "8px"
+  lg: "14px"
   full: "999px"
 spacing:
   s-1: "4px"
@@ -160,8 +160,9 @@ The interface keeps quiet because what matters happens on the walls around
 the screen, and it is often opened at night, between two games, in that same
 dim room.
 
-The system is plain and native in spirit: the platform's own typeface, small
-type at a desktop density, hairline edges. Polish comes from the details rather
+The system is quiet and smooth, in the manner of Apple's own apps: one even
+typeface (Inter) at a desktop density, frosted cards that take on the
+room's light, large titles, rounded corners. Polish comes from the details rather
 than decoration: controls with a faint lit top edge and a real pressed state,
 motion that is short and physical, numbers that line up. Light and dark are
 equal citizens; dark is not a filter on light but its own tuned set of values
@@ -174,7 +175,10 @@ doctrine this file expands on.
 - Neutral chrome (zero chroma greys) in both themes; amber is the one colour.
 - Amber always means light. Neutral ink means "picked". Red means error or
   destruction. Nothing is ever told by colour alone.
-- System font, 13px body, desktop density (28px controls, 44px rows).
+- Inter, 13px body, desktop density (28px controls, 44px rows), a 28px
+  large title per page.
+- Frosted cards over the room's light: its glow on Lighting, its photograph
+  elsewhere.
 - Depth from hairlines and soft contact shadows, never from heavy drop shadows.
 - Short, eased motion (140 ms) and reduced motion honoured everywhere.
 - The bulbs' real colours appear as content (backdrop, glows, effect previews),
@@ -233,20 +237,31 @@ dark theme and give it away.
 
 ## Typography
 
-**Body Font:** the platform's own UI face (`system-ui`, Segoe UI Variable on
-Windows, SF on macOS, Cantarell/Ubuntu on Linux), with `cv11` and `ss01`
-features on.
+**Body Font:** Inter, as a variable font with an optical size axis
+(`@fontsource-variable/inter`), shipped with the app since the CSP allows
+no remote fonts. `cv11` (single-storey a) and `ss01` (open digits) are on,
+antialiased, optical sizing automatic.
 
-**Character:** no brand face. Lueur should feel like it belongs to the OS it
-runs on; hierarchy comes from size and weight steps, not a second family.
+**Character:** smooth and even, close to the faces of Apple's own apps, and
+the same on Windows, macOS and Linux rather than each platform's face. The
+optical size axis draws the large titles tighter, as a display cut would.
+The platform's face stands in until Inter has loaded. Hierarchy comes from
+size and weight steps, never a second family.
+
+**Icons:** Phosphor (`phosphor-svelte`), rounded and even like the face,
+always through `src/lib/ui/Icon.svelte`, which names each glyph by its role
+in the interface. Regular weight, bold at 12px and below so thin strokes
+keep their weight, filled for the current page in the sidebar.
 
 ### Hierarchy
-- **Title** (650, 22px, line-height 1.15, -0.018em): the one page title per
-  view ("Lighting", "Room").
+- **Title** (700, 28px, line-height 1.1, -0.024em): the one large page
+  title per view ("Lighting", "Room"), as on the platforms' own apps.
+- **Section heading** (700, 15px, `text`): the shelves of a page ("Scenes",
+  "Lights", "Screen"), bold so the cards under them can stay quiet. Sub-
+  headings under a heading ("Still", "Animated") step down to 13px `text-2`.
 - **Heading** (600, 15px): the app name in the sidebar, dialog titles.
 - **Body** (400, 13px, 1.45): rows, buttons (500), fields, nav.
-- **Label** (600, 12px, `text-3`): group titles above cards ("Effects",
-  "Moods"), small buttons, tooltips at 400.
+- **Label** (600, 12px): small buttons, tooltips at 400.
 - **Caption** (600, 11px): count badges and the tiniest metadata.
 
 ### Named Rules
@@ -275,6 +290,15 @@ Spacing comes from an 8-step scale (4, 8, 12, 16, 20, 28, 40, 56). The window
 is never narrower than 960 × 640, so there are no mobile breakpoints.
 
 ## Elevation & Depth
+
+**The Material Rule.** Cards are a frosted material, not an opaque grey:
+`--material` (white at 70 % on paper, near-black at 62 % at night) blurred
+and saturated (`--material-filter`) over what lies behind. On Lighting
+that is the lights' glow, elsewhere the room's photograph, so every card
+takes on the room's light, softened, while its text keeps its contrast.
+Rows inside a card part with a `--separator` hairline. Controls, fields
+and popovers stay opaque: the material is for what holds them.
+
 
 A hybrid of tonal layering and hairline-plus-contact shadows. Surfaces are
 nearly flat; what lifts them is a 1px ring (0.5px in dark) and a short, soft
@@ -363,6 +387,13 @@ they keep their own colours in both themes. Generated once, locally, they
 ship as 960px WebP files (about 130 KB in all) in `src/lib/assets/modes/`
 and are looked up in `src/lib/views/lighting/pictures.ts`.
 
+**The Picture Earns Its Place Rule.** A photograph is shown only where it
+tells something: what a choice will do to the room (the mode tiles, the
+scenes) or where the user stands (the getting-started card, whose room is
+dark until there are bulbs, lit softly once they are in, then following
+the screen), and behind the other pages, the room as its lights make it
+now. Never as decoration over a section of settings or an empty list.
+
 **The Framed Picture Rule.** A photograph always sits inside a card like
 every other on the page: 5px of card around it, 6px corners, a hairline
 edge, and its name on the card beneath it. Nothing is written over a
@@ -388,7 +419,9 @@ bright, and a quiet power button (the disc already says whether it is on).
 Picked, the card takes a neutral ink edge and
 a tick on the disc, never amber. A click anywhere on the card picks it. Over
 the settings beside them, the lights picked are named once, with their discs;
-the sections under that heading carry no title of their own.
+the sections under that heading carry no title of their own. The Bulbs page
+shows the room's lights as the same cards, one per row, with the bulb each
+one has and its name to change in place.
 
 ### Lamp dot (signature)
 A 7px Filament Amber dot with a glow of its own size: something giving
@@ -399,6 +432,18 @@ Behind the Lighting view, one soft pool of colour per light, placed where the
 light stands relative to the screen and tinted with the frames its bulb is
 receiving. Stronger and purer on paper (opacity 0.6, saturation 1.5), softer
 at night (0.7, 1.15). Still under reduced motion.
+
+### Room backdrop (signature)
+Behind every page but Lighting (which has its glow pools), the photograph
+of the room as its lights make it now: the look most of them share, the
+dark room when they are off, a light set by hand tinting the neutral one.
+It sits at the top of the page, out of focus (6px blur), and dissolves
+into the ground by 62 % of the window's height, so cards stand on plain
+ground. `room-photo-opacity` and `room-photo-filter` set it per theme:
+lighter and brighter on paper (0.38), fuller at night (0.62). When the
+lights change it dissolves into the new room over 700 ms, at once under
+reduced motion. Page and section titles carry a halo of the page's ground
+so they read over it.
 
 ### Room plan (signature)
 A dotted-grid well with a white floor and dark walls; draggable corners, a
@@ -423,8 +468,8 @@ they follow.
 ### Don't:
 - **Don't** use amber for a selection, a target or a primary button: amber
   means light.
-- **Don't** introduce a second accent colour, a brand typeface or an icon
-  font.
+- **Don't** introduce a second accent colour, a second typeface, another
+  icon family or an icon font.
 - **Don't** use red for anything but errors and destructive actions,
   including on the plan.
 - **Don't** draw heavy or pure-black shadows on paper.

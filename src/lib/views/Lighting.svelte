@@ -11,6 +11,7 @@
   import SleepButton from "./lighting/SleepButton.svelte";
   import Tune from "./lighting/Tune.svelte";
   import { summaryOf } from "./lighting/modes";
+  import { pictureOf } from "./lighting/pictures";
 
   const lights = $derived(app.config.room.lights);
   const bound = $derived(app.config.bindings.length);
@@ -25,6 +26,9 @@
     { done: live, title: t("step3_title"), btn: t("start_ambilight"), go: () => chooseMode("ambilight") },
   ]);
   const next = $derived(steps.findIndex((s) => !s.done));
+  /** The room as it will be once the next step is done: dark until there
+   *  are bulbs, lit softly once they are in, then following the screen. */
+  const setupPicture = $derived(pictureOf(next <= 0 ? "off" : next === 1 ? "relax" : "ambilight"));
 
   /** One switch for the whole room: on while any light gives light. */
   const anyOn = $derived(app.config.bindings.some((b) => isOn(b.light_id)));
@@ -76,7 +80,9 @@
   {#if app.ready && !setupDone}
     <section class="group">
       <div class="group-head"><h2 class="group-title">{t("setup_title")}</h2></div>
-      <ol class="card rows steps">
+      <div class="card setup">
+        <span class="setup-pic"><img src={setupPicture} alt="" draggable="false" /></span>
+        <ol class="rows steps">
         {#each steps as s, i}
           <li class="step" class:done={s.done} class:next={i === next}>
             <span class="mark" aria-hidden="true">
@@ -90,7 +96,8 @@
             {/if}
           </li>
         {/each}
-      </ol>
+        </ol>
+      </div>
     </section>
   {/if}
 
@@ -131,7 +138,42 @@
     margin-bottom: var(--s-5);
   }
 
+  /* The getting-started card: the room on the left, lighting up as the
+     steps are done, and the steps beside it. */
+  .setup {
+    display: flex;
+    align-items: stretch;
+    gap: var(--s-2);
+    padding: 5px;
+  }
+  .setup-pic {
+    position: relative;
+    flex: none;
+    width: min(300px, 40%);
+    min-height: 150px;
+    overflow: hidden;
+    border-radius: calc(var(--r-lg) - 5px);
+    background: var(--sunken);
+  }
+  .setup-pic::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.14);
+  }
+  .setup-pic img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: 50% 42%;
+  }
   .steps {
+    flex: 1;
+    min-width: 0;
+    align-self: center;
     list-style: none;
     margin: 0;
     padding: 0;
@@ -176,17 +218,6 @@
     text-decoration-color: var(--line-strong);
   }
 
-  /* The section titles sit on the lights' glow, not on a card: a step darker
-     than elsewhere, and a halo of the page's own ground under the letters,
-     so they keep 4.5:1 however bright the room is. Every section of the
-     page has them, its own pieces' included. */
-  .page :global(.group-title) {
-    color: var(--text-2);
-    text-shadow:
-      0 0 2px var(--bg),
-      0 0 6px var(--bg),
-      0 0 14px var(--bg);
-  }
   /* Who it goes to, in the neutral ink of a selection. */
   .page :global(.for) {
     color: var(--text);

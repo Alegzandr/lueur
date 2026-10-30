@@ -29,6 +29,7 @@
   import { FAMILY, bulbLabel as describeBulb } from "../brands";
   import Icon from "../ui/Icon.svelte";
   import DeviceCheck from "../ui/DeviceCheck.svelte";
+  import LightDot from "./lighting/LightDot.svelte";
 
   // First visit: look straight away rather than greeting with an empty list.
   onMount(() => {
@@ -176,7 +177,7 @@
   }
 </script>
 
-<div class="page">
+<div class="page bulbs" class:wide={lights.length > 0}>
   <header class="page-head">
     <h1 class="page-title" tabindex="-1" bind:this={pageHead}>{t("nav_bulbs")}</h1>
     <div class="actions">
@@ -349,151 +350,253 @@
     </section>
   {/if}
 
-  {#if unbound.length > 0 || lights.length === 0}
-  <section class="group">
-    <div class="group-head">
-      <h2 class="group-title" tabindex="-1" bind:this={networkHead}>{t("on_network")}</h2>
-      {#if app.hasScanned && !app.scanning}
-        <span class="note">{tn("n_found", unbound.length)}</span>
-      {/if}
-    </div>
-
-    <div class="card rows">
-      {#if unbound.length === 0}
-        <div class="empty">
-          {#if app.scanning}
-            <p>{t("listening")}</p>
-          {:else if app.hasScanned}
-            <p class="empty-title">{t("none_title")}</p>
-          {:else}
-            <p class="empty-title">{t("first_title")}</p>
-            <p>{t("first_text")}</p>
-          {/if}
-          {#if tuyaHint}
-            <p class="empty-hint">{t("tuya_hint")}</p>
-            <button class="btn sm" onclick={openTuya}>{t("tuya_title")}</button>
+  <!-- What the network offers on one side, the room's lights on the other,
+       side by side when the window is wide enough. -->
+  <div class="layout">
+    <div class="col">
+      {#if unbound.length > 0 || lights.length === 0}
+      <section class="group">
+        <div class="group-head">
+          <h2 class="group-title" tabindex="-1" bind:this={networkHead}>{t("on_network")}</h2>
+          {#if app.hasScanned && !app.scanning}
+            <span class="note">{tn("n_found", unbound.length)}</span>
           {/if}
         </div>
-      {:else}
-        {#each unbound as d (d.id)}
-          <div class="device">
-            <div class="device-text">
-              <div class="device-name">{deviceName(d)}</div>
-              <div class="device-meta">
-                {FAMILY[d.kind.family]}{#if d.model}&nbsp;{d.model}{/if}{#if sharedNames.has(deviceName(d))}<span
-                    class="num"
-                  >
-                    · {d.ip}</span
-                  >{/if}{#if d.faster}<span class="warn">, {t("pair_faster")}</span>{:else if !d.paired}<span class="warn"
-                    >, {t("needs_pairing")}</span
-                  >{:else if !supportsMusic(d)}<span
-                    class="warn">, {t("no_music")}</span
-                  >{/if}
-              </div>
+
+        <div class="card rows">
+          {#if unbound.length === 0}
+            <div class="empty">
+              {#if app.scanning}
+                <p>{t("listening")}</p>
+              {:else if app.hasScanned}
+                <p class="empty-title">{t("none_title")}</p>
+              {:else}
+                <p class="empty-title">{t("first_title")}</p>
+                <p>{t("first_text")}</p>
+              {/if}
+              {#if tuyaHint}
+                <p class="empty-hint">{t("tuya_hint")}</p>
+                <button class="btn sm" onclick={openTuya}>{t("tuya_title")}</button>
+              {/if}
             </div>
-            {#if d.paired}
-              <button class="btn plain sm" title={t("identify_tip")} onclick={() => identify(endpointOfDevice(d))}>
-                {t("identify")}
-              </button>
+          {:else}
+            {#each unbound as d (d.id)}
+              <div class="device">
+                <span class="found" aria-hidden="true"><Icon name="bulb" size={14} /></span>
+                <div class="device-text">
+                  <div class="device-name">{deviceName(d)}</div>
+                  <div class="device-meta">
+                    {FAMILY[d.kind.family]}{#if d.model}&nbsp;{d.model}{/if}{#if sharedNames.has(deviceName(d))}<span
+                        class="num"
+                      >
+                        · {d.ip}</span
+                      >{/if}{#if d.faster}<span class="warn">, {t("pair_faster")}</span>{:else if !d.paired}<span class="warn"
+                        >, {t("needs_pairing")}</span
+                      >{:else if !supportsMusic(d)}<span
+                        class="warn">, {t("no_music")}</span
+                      >{/if}
+                  </div>
+                </div>
+                {#if d.paired}
+                  <button class="btn plain sm" title={t("identify_tip")} onclick={() => identify(endpointOfDevice(d))}>
+                    {t("identify")}
+                  </button>
+                {/if}
+                {#if !d.paired}
+                  {@const waiting = app.pairing?.step === "waiting"}
+                  <button
+                    class="btn sm"
+                    class:plain={d.faster}
+                    title={t(d.faster ? "pair_faster_tip" : "pair_tip")}
+                    data-pair={d.id}
+                    onclick={() => pair(d)}
+                    disabled={waiting}
+                  >
+                    {#if waiting && app.pairing?.device.id === d.id}<span class="spinner" aria-hidden="true"></span>{/if}
+                    {waiting && app.pairing?.device.id === d.id ? t("pairing") : t(d.faster ? "pair_again" : "pair")}
+                  </button>
+                {:else if unboundLights.length > 0}
+                  <select class="assign" aria-label={t("labelled", { name: deviceName(d), what: t("use_for") })} onchange={(e) => onAssign(d, e)}>
+                    <option value="" selected disabled>{t("use_for")}</option>
+                    {#each unboundLights as l (l.id)}
+                      <option value={l.id}>{l.name}</option>
+                    {/each}
+                    <option value="__new">{t("new_light")}</option>
+                  </select>
+                {:else}
+                  <button class="btn sm" onclick={() => addDevices([d])}>{t("add")}</button>
+                {/if}
+              </div>
+            {/each}
+            {#if tuyaHint}
+              <div class="device hint">
+                <p class="note grow">{t("tuya_hint")}</p>
+                <button class="btn plain sm" onclick={openTuya}>{t("tuya_title")}</button>
+              </div>
             {/if}
-            {#if !d.paired}
-              {@const waiting = app.pairing?.step === "waiting"}
-              <button
-                class="btn sm"
-                class:plain={d.faster}
-                title={t(d.faster ? "pair_faster_tip" : "pair_tip")}
-                data-pair={d.id}
-                onclick={() => pair(d)}
-                disabled={waiting}
-              >
-                {#if waiting && app.pairing?.device.id === d.id}<span class="spinner" aria-hidden="true"></span>{/if}
-                {waiting && app.pairing?.device.id === d.id ? t("pairing") : t(d.faster ? "pair_again" : "pair")}
-              </button>
-            {:else if unboundLights.length > 0}
-              <select class="assign" aria-label={t("labelled", { name: deviceName(d), what: t("use_for") })} onchange={(e) => onAssign(d, e)}>
-                <option value="" selected disabled>{t("use_for")}</option>
-                {#each unboundLights as l (l.id)}
-                  <option value={l.id}>{l.name}</option>
-                {/each}
-                <option value="__new">{t("new_light")}</option>
-              </select>
-            {:else}
-              <button class="btn sm" onclick={() => addDevices([d])}>{t("add")}</button>
-            {/if}
-          </div>
-        {/each}
-        {#if tuyaHint}
-          <div class="device hint">
-            <p class="note grow">{t("tuya_hint")}</p>
-            <button class="btn plain sm" onclick={openTuya}>{t("tuya_title")}</button>
-          </div>
-        {/if}
+          {/if}
+        </div>
+      </section>
       {/if}
+
+      <section class="group">
+        <details class="card tips" open={app.hasScanned && app.discovered.length === 0}>
+          <summary>
+            <Icon name="chevron" size={14} />
+            <span>{t("tips_title")}</span>
+          </summary>
+          <ol>
+            <li>{t("tip_1")}</li>
+            <li>{t("tip_2")}</li>
+            <li>{t("tip_3")}</li>
+            <li>{t("tip_4")}</li>
+            <li>{t("tip_5")}</li>
+          </ol>
+        </details>
+      </section>
     </div>
-  </section>
-  {/if}
 
   {#if lights.length > 0}
-    <section class="group">
-      <div class="group-head">
-        <h2 class="group-title">{t("in_room")}</h2>
-        <button class="btn plain sm" onclick={() => (app.view = "room")}>{t("step2_btn")}</button>
-      </div>
-      <div class="card rows">
-        {#each lights as l (l.id)}
-          {@const b = bindingFor(l.id)}
-          <div class="device">
-            <input
-              class="rename"
-              type="text"
-              value={l.name}
-              spellcheck="false"
-              aria-label={t("light_name")}
-              oninput={(e) => renameLight(l.id, e.currentTarget.value)}
-            />
-            <div class="device-meta grow">
-              {#if b}{bulbLabel(b)}{#if sharedBulbNames.has(bulbLabel(b))}<span class="num"> · {b.ip}</span>{/if}{:else}<span
-                  class="warn">{t("pick_above")}</span
-                >{/if}
+    <div class="col">
+      <section class="group">
+        <div class="group-head">
+          <h2 class="group-title">{t("in_room")}</h2>
+          <button class="btn plain sm" onclick={() => (app.view = "room")}>{t("step2_btn")}</button>
+        </div>
+        <!-- Each light as on the Lighting page: the light it gives, its
+             name, which can be changed in place, and its bulb. -->
+        <div class="cards">
+          {#each lights as l (l.id)}
+            {@const b = bindingFor(l.id)}
+            <div class="light" class:unbound={!b}>
+              <LightDot id={l.id} size={28} />
+              <div class="light-text">
+                <input
+                  class="rename"
+                  type="text"
+                  value={l.name}
+                  spellcheck="false"
+                  aria-label={t("light_name")}
+                  oninput={(e) => renameLight(l.id, e.currentTarget.value)}
+                />
+                <span class="device-meta">
+                  {#if b}{bulbLabel(b)}{#if sharedBulbNames.has(bulbLabel(b))}<span class="num"> · {b.ip}</span>{/if}{:else}<span
+                      class="warn">{t("pick_above")}</span
+                    >{/if}
+                </span>
+              </div>
+              {#if b}
+                <button
+                  class="btn plain icon sm"
+                  title={t("identify_tip")}
+                  aria-label={t("labelled", { name: l.name, what: t("identify") })}
+                  onclick={() => identify(endpointOf(b))}
+                >
+                  <Icon name="flash" size={14} />
+                </button>
+                <button
+                  class="btn plain icon sm"
+                  title={t("unassign_tip")}
+                  aria-label={t("labelled", { name: l.name, what: t("unassign") })}
+                  onclick={() => unassign(l.id)}
+                >
+                  <Icon name="unlink" size={14} />
+                </button>
+              {:else}
+                <!-- A light left without its bulb, say one paired again from
+                     another account and added anew, can go from here too. -->
+                <button
+                  class="btn plain icon sm danger"
+                  title={t("remove_light")}
+                  aria-label={t("labelled", { name: l.name, what: t("remove_light") })}
+                  onclick={() => removeLight(l.id)}
+                >
+                  <Icon name="trash" size={14} />
+                </button>
+              {/if}
             </div>
-            {#if b}
-              <button class="btn plain sm" title={t("identify_tip")} onclick={() => identify(endpointOf(b))}>
-                {t("identify")}
-              </button>
-              <button class="btn plain sm" title={t("unassign_tip")} onclick={() => unassign(l.id)}>
-                {t("unassign")}
-              </button>
-            {:else}
-              <!-- A light left without its bulb, say one paired again from
-                   another account and added anew, can go from here too. -->
-              <button class="btn plain sm danger" onclick={() => removeLight(l.id)}>
-                {t("remove_light")}
-              </button>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    </section>
+          {/each}
+        </div>
+      </section>
+    </div>
   {/if}
-
-  <section class="group">
-    <details class="card tips" open={app.hasScanned && app.discovered.length === 0}>
-      <summary>
-        <Icon name="chevron" size={14} />
-        <span>{t("tips_title")}</span>
-      </summary>
-      <ol>
-        <li>{t("tip_1")}</li>
-        <li>{t("tip_2")}</li>
-        <li>{t("tip_3")}</li>
-        <li>{t("tip_4")}</li>
-        <li>{t("tip_5")}</li>
-      </ol>
-    </details>
-  </section>
+  </div>
 </div>
 
 <style>
+  /* Wider than a single column once the room has lights: two, when the
+     window has the room for them. Before that, the network alone. */
+  .page.bulbs.wide {
+    max-width: 1240px;
+  }
+  .col {
+    min-width: 0;
+  }
+  .layout > .col + .col,
+  .col > :global(.group + .group) {
+    margin-top: var(--s-6);
+  }
+  @media (min-width: 1200px) {
+    .wide .layout {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: start;
+      gap: var(--s-7);
+    }
+    .layout > .col + .col {
+      margin-top: 0;
+    }
+  }
+
+  /* --- The room's lights --- */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: var(--s-2);
+  }
+  .light {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-width: 0;
+    min-height: 60px;
+    padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
+    border-radius: var(--r-lg);
+    background: var(--material);
+    -webkit-backdrop-filter: var(--material-filter);
+    backdrop-filter: var(--material-filter);
+    box-shadow: var(--card-edge);
+  }
+  /* No bulb yet: an outline waiting for one, not a card. */
+  .light.unbound {
+    background: none;
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+  }
+  .light-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .light-text .device-meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* --- What the network offers --- */
+  /* A bulb found but not in the room yet: a dashed place, like a light
+     with no bulb, holding the bulb mark. */
+  .found {
+    width: 28px;
+    height: 28px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    border: 1.5px dashed var(--line-strong);
+    color: var(--text-2);
+  }
   .actions {
     display: flex;
     gap: var(--s-2);
@@ -564,7 +667,8 @@
     max-width: 180px;
   }
   .rename {
-    width: 200px;
+    width: 100%;
+    height: 24px;
     margin-left: -9px;
     font-weight: 500;
     background: transparent;

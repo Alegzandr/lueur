@@ -146,18 +146,20 @@
     min-height: 60px;
     padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
     border-radius: var(--r-lg);
-    background: var(--surface);
+    background: var(--material);
+    -webkit-backdrop-filter: var(--material-filter);
+    backdrop-filter: var(--material-filter);
     box-shadow: var(--card-edge);
     transition:
       box-shadow 200ms var(--ease),
       background var(--dur) var(--ease);
   }
   .light:has(.pick:hover) {
-    background: var(--surface-hover);
+    background: var(--material-hover);
   }
   /* The tint of a selection over the card, never the room's glow through it. */
   .light.picked {
-    background: linear-gradient(var(--select-soft), var(--select-soft)), var(--surface);
+    background: linear-gradient(var(--select-soft), var(--select-soft)), var(--material-hover);
     box-shadow: inset 0 0 0 1.5px var(--select);
   }
   /* No bulb yet: an outline waiting for one, not a card. */
@@ -269,17 +271,19 @@
     height: 24px;
     padding: 0 var(--s-3) 0 var(--s-2);
     border-radius: 999px;
-    background: var(--surface);
+    background: var(--material);
+    -webkit-backdrop-filter: var(--material-filter);
+    backdrop-filter: var(--material-filter);
     box-shadow: var(--card-edge);
     font-size: var(--t-sm);
     font-weight: 500;
     white-space: nowrap;
   }
   .chip:hover {
-    background: var(--surface-hover);
+    background: var(--material-hover);
   }
   .chip.picked {
-    background: linear-gradient(var(--select-soft), var(--select-soft)), var(--surface);
+    background: linear-gradient(var(--select-soft), var(--select-soft)), var(--material-hover);
     box-shadow: inset 0 0 0 1.5px var(--select);
   }
   .ring {

@@ -1,4 +1,6 @@
 import { mount } from "svelte";
+// The interface face ships with the app (no remote fonts, see the CSP).
+import "@fontsource-variable/inter/opsz.css";
 import "./styles/app.css";
 import App from "./App.svelte";
 

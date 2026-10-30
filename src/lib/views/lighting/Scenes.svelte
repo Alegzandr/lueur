@@ -200,7 +200,7 @@
     transition: background var(--dur) var(--ease);
   }
   .empty:hover {
-    background: var(--surface-hover);
+    background: var(--material-hover);
   }
   .empty-mark {
     width: 28px;
@@ -244,14 +244,16 @@
   .scene {
     position: relative;
     border-radius: var(--r-lg);
-    background: var(--surface);
+    background: var(--material);
+    -webkit-backdrop-filter: var(--material-filter);
+    backdrop-filter: var(--material-filter);
     box-shadow: var(--card-edge);
     transition:
       box-shadow 200ms var(--ease),
       background var(--dur) var(--ease);
   }
   .scene:has(.recall:hover:not(:disabled)) {
-    background: var(--surface-hover);
+    background: var(--material-hover);
   }
   .scene.active {
     box-shadow: inset 0 0 0 2px var(--active);
@@ -274,7 +276,7 @@
     gap: 2px;
     height: 48px;
     overflow: hidden;
-    border-radius: 6px;
+    border-radius: calc(var(--r-lg) - 5px);
     background: var(--sunken);
   }
   .slices::after {

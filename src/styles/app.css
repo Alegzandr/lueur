@@ -1,7 +1,7 @@
 /* Lueur design system.
 
-   Plain and native in spirit: neutral greys, the platform's own typeface,
-   hairline borders. Polish comes from the details rather than decoration:
+   Quiet and smooth: neutral greys, one even typeface (Inter), frosted
+   cards over the room's light, hairline edges. Polish comes from the details rather than decoration:
    controls with a faint top light and a real pressed state, motion that is
    short and physical, numbers that line up. The only colour in the chrome
    is amber, and it always means light: the effect running, a bulb on, the
@@ -42,6 +42,10 @@
   --active-soft: oklch(0.76 0.15 70 / 0.16);
   --select: oklch(0.34 0 0);
   --select-soft: oklch(0 0 0 / 0.045);
+  /* The room's photograph behind the pages: lighter on paper, where a night
+     picture would muddy the ground, fuller at night. */
+  --room-photo-opacity: 0.38;
+  --room-photo-filter: brightness(1.2) saturate(1.1);
 
   --ok: oklch(0.58 0.14 150);
   --danger: oklch(0.55 0.19 27);
@@ -67,7 +71,14 @@
      are a whole pixel, fainter, with a shadow that lifts a card off the page. */
   --control-edge: 0 0 0 1px oklch(0 0 0 / 0.1), 0 1px 2px oklch(0 0 0 / 0.07);
   --control-hi: inset 0 1px 0 oklch(1 0 0 / 0.9);
-  --card-edge: 0 0 0 1px oklch(0 0 0 / 0.065), 0 1px 2px oklch(0 0 0 / 0.04), 0 4px 12px -6px oklch(0 0 0 / 0.08);
+  --card-edge: 0 0 0 1px oklch(0 0 0 / 0.06), 0 1px 1px oklch(0 0 0 / 0.03), 0 10px 28px -14px oklch(0 0 0 / 0.16);
+  /* Cards are a frosted material over the page, so the room's light (its
+     glow on Lighting, its photograph elsewhere) reaches them, softened.
+     Opaque enough that text keeps its contrast over the brightest of it. */
+  --material: oklch(1 0 0 / 0.7);
+  --material-hover: oklch(1 0 0 / 0.86);
+  --material-filter: blur(28px) saturate(1.6);
+  --separator: oklch(0 0 0 / 0.075);
   --float: 0 0 0 1px oklch(0 0 0 / 0.06), 0 2px 6px -2px oklch(0 0 0 / 0.06), 0 12px 32px -10px oklch(0 0 0 / 0.16);
   /* Shadows on paper stay faint and nothing is drawn in pure black: deep
      shadows and near-black parts are the dark theme's, and give it away. */
@@ -83,14 +94,17 @@
   /* The edge of a switch or track that must show against the surface. */
   --control-line: oklch(0.62 0 0);
 
-  --font: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, Ubuntu,
-    Cantarell, "Helvetica Neue", sans-serif;
+  /* Inter, shipped with the app: the same smooth, even face on every
+     platform, with an optical size axis that draws large titles tighter, as
+     a display cut would. The platform's own face stands in until it loads. */
+  --font: "Inter Variable", system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto,
+    Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
 
   --t-xs: 0.6875rem;
   --t-sm: 0.75rem;
   --t-md: 0.8125rem;
   --t-lg: 0.9375rem;
-  --t-xl: 1.375rem;
+  --t-xl: 1.75rem;
 
   --s-1: 4px;
   --s-2: 8px;
@@ -102,8 +116,8 @@
   --s-8: 56px;
 
   --r-sm: 5px;
-  --r-md: 7px;
-  --r-lg: 10px;
+  --r-md: 8px;
+  --r-lg: 14px;
   --r-full: 999px;
 
   --dur: 140ms;
@@ -144,6 +158,8 @@
     --active-soft: oklch(0.8 0.14 72 / 0.14);
     --select: oklch(0.9 0 0);
     --select-soft: oklch(1 0 0 / 0.06);
+    --room-photo-opacity: 0.62;
+    --room-photo-filter: none;
     --ok: oklch(0.76 0.13 150);
     --danger: oklch(0.72 0.16 27);
     --danger-soft: oklch(0.72 0.16 27 / 0.15);
@@ -158,7 +174,11 @@
     --control-bg: linear-gradient(oklch(0.315 0 0), oklch(0.29 0 0));
     --control-edge: 0 0 0 0.5px oklch(0 0 0 / 0.6), 0 1px 1.5px oklch(0 0 0 / 0.3);
     --control-hi: inset 0 1px 0 oklch(1 0 0 / 0.08);
-    --card-edge: 0 0 0 0.5px oklch(1 0 0 / 0.09), 0 1px 2px oklch(0 0 0 / 0.25);
+    --card-edge: 0 0 0 0.5px oklch(1 0 0 / 0.1), inset 0 0.5px 0 oklch(1 0 0 / 0.08), 0 12px 32px -14px oklch(0 0 0 / 0.6);
+    --material: oklch(0.24 0 0 / 0.62);
+    --material-hover: oklch(0.29 0 0 / 0.7);
+    --material-filter: blur(28px) saturate(1.5);
+    --separator: oklch(1 0 0 / 0.07);
     --float: 0 0 0 0.5px oklch(1 0 0 / 0.1), 0 14px 36px -8px oklch(0 0 0 / 0.65);
     --focus: oklch(0.8 0.14 72);
     --control-line: oklch(0.54 0 0);
@@ -196,6 +216,8 @@
   --active-soft: oklch(0.8 0.14 72 / 0.14);
   --select: oklch(0.9 0 0);
   --select-soft: oklch(1 0 0 / 0.06);
+  --room-photo-opacity: 0.62;
+  --room-photo-filter: none;
   --ok: oklch(0.76 0.13 150);
   --danger: oklch(0.72 0.16 27);
   --danger-soft: oklch(0.72 0.16 27 / 0.15);
@@ -210,7 +232,11 @@
   --control-bg: linear-gradient(oklch(0.315 0 0), oklch(0.29 0 0));
   --control-edge: 0 0 0 0.5px oklch(0 0 0 / 0.6), 0 1px 1.5px oklch(0 0 0 / 0.3);
   --control-hi: inset 0 1px 0 oklch(1 0 0 / 0.08);
-  --card-edge: 0 0 0 0.5px oklch(1 0 0 / 0.09), 0 1px 2px oklch(0 0 0 / 0.25);
+  --card-edge: 0 0 0 0.5px oklch(1 0 0 / 0.1), inset 0 0.5px 0 oklch(1 0 0 / 0.08), 0 12px 32px -14px oklch(0 0 0 / 0.6);
+  --material: oklch(0.24 0 0 / 0.62);
+  --material-hover: oklch(0.29 0 0 / 0.7);
+  --material-filter: blur(28px) saturate(1.5);
+  --separator: oklch(1 0 0 / 0.07);
   --float: 0 0 0 0.5px oklch(1 0 0 / 0.1), 0 14px 36px -8px oklch(0 0 0 / 0.65);
   --focus: oklch(0.8 0.14 72);
   --control-line: oklch(0.54 0 0);
@@ -243,7 +269,10 @@ body {
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  font-optical-sizing: auto;
+  /* Inter's single-storey a and open digits, closer to the system faces. */
   font-feature-settings: "cv11", "ss01";
   user-select: none;
   overflow: hidden;
@@ -330,11 +359,13 @@ button {
   margin-bottom: var(--s-5);
 }
 
+/* A large title, as on the platforms' own settings: the page says where you
+   are once, plainly, and the sections under it stay quiet. */
 .page-title {
   font-size: var(--t-xl);
-  font-weight: 650;
-  letter-spacing: -0.018em;
-  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: -0.024em;
+  line-height: 1.1;
 }
 
 .group + .group {
@@ -350,20 +381,36 @@ button {
   padding: 0 var(--s-1) var(--s-2);
 }
 
+/* Section headings read as headings, bold in the text's own ink, as in a
+   music library's shelves: the cards under them stay quiet. */
 .group-title {
-  font-size: var(--t-sm);
-  font-weight: 600;
-  color: var(--text-3);
+  font-size: var(--t-lg);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+/* Titles sit on the page's ground, which may hold the room's glow or its
+   photograph: a halo of that ground under the letters keeps them readable. */
+.page-title,
+.group-title {
+  text-shadow:
+    0 0 2px var(--bg),
+    0 0 6px var(--bg),
+    0 0 14px var(--bg);
 }
 
 .card {
-  background: var(--surface);
+  background: var(--material);
+  -webkit-backdrop-filter: var(--material-filter);
+  backdrop-filter: var(--material-filter);
   border-radius: var(--r-lg);
   box-shadow: var(--card-edge);
 }
 
+/* Rows part with a hairline that starts at their text, not the card's edge. */
 .rows > * + * {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--separator);
 }
 
 .num {

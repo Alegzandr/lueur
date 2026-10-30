@@ -226,6 +226,8 @@
   }
   .kind {
     padding: 0 var(--s-1) var(--s-2);
+    font-size: var(--t-md);
+    color: var(--text-2);
   }
   .grid + .kind {
     margin-top: var(--s-4);
@@ -264,7 +266,9 @@
     min-width: 0;
     padding: 5px 5px 9px;
     border-radius: var(--r-lg);
-    background: var(--surface);
+    background: var(--material);
+    -webkit-backdrop-filter: var(--material-filter);
+    backdrop-filter: var(--material-filter);
     box-shadow: var(--card-edge);
     text-align: left;
     transition:
@@ -272,7 +276,7 @@
       background var(--dur) var(--ease);
   }
   .tile:hover:not(:disabled) {
-    background: var(--surface-hover);
+    background: var(--material-hover);
   }
   .tile:disabled:not(.pending) {
     opacity: 0.55;
@@ -283,7 +287,7 @@
     height: var(--pic-h);
     min-height: 54px;
     overflow: hidden;
-    border-radius: 6px;
+    border-radius: calc(var(--r-lg) - 5px);
     background: var(--sunken);
   }
   /* A hairline keeps a bright picture's edge on a white card. */
