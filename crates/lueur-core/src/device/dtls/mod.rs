@@ -263,6 +263,37 @@ impl DtlsClient {
         }
     }
 
+    /// Whether the session still stands, from what came in since the last
+    /// look, without waiting: a close_notify or a fatal alert from the peer
+    /// ends it, and so does the "port unreachable" the OS reports once the
+    /// peer stopped listening. Only authenticated alerts count, so a forged
+    /// datagram cannot end the session.
+    pub fn check(&mut self) -> io::Result<()> {
+        self.socket.set_nonblocking(true)?;
+        let result = self.drain();
+        self.socket.set_nonblocking(false)?;
+        result
+    }
+
+    fn drain(&mut self) -> io::Result<()> {
+        let mut datagram = vec![0u8; DATAGRAM];
+        loop {
+            let n = match self.socket.recv(&mut datagram) {
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            };
+            for rec in records(&datagram[..n]) {
+                if (rec.epoch, rec.ctype) == (1, ALERT)
+                    && let Some(plain) = self.read.open(&rec)
+                {
+                    check_alert(&plain)?;
+                }
+            }
+        }
+    }
+
     /// Send close_notify; also done on Drop (best effort, ignore errors).
     pub fn close(&mut self) {
         if !self.closed {

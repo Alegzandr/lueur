@@ -170,9 +170,26 @@ left out of exports. The lamps of a bridge with one take a seat each in a
 single stream per bridge (`device/entertainment.rs`): Lueur's own
 entertainment area, named *Lueur*, set up over the CLIP v2 API with every
 lamp asking, then HueStream frames over DTLS 1.2 PSK (`device/dtls/`, on
-`ring`, no new crate). A bridge that will not stream (another app streams,
-a lamp it cannot stream to, a round bridge without HTTPS) leaves its lamps
-on the REST API, and is tried again after half a minute.
+`ring`, no new crate). The PSK identity is the `hue-application-id` the
+bridge gives in a header of `GET /auth/v1`, which is what an area set up
+over CLIP v2 streams as; the username, the older API's identity, is tried
+next. A bridge that will not stream (another app streams, a lamp it cannot
+stream to, a round bridge without HTTPS) leaves its lamps on the REST API,
+and is tried again after half a minute.
+
+UDP never says when the far end stopped listening, so a running stream is
+watched two ways: the sender looks each second for a close_notify or the
+OS's "port unreachable" (`DtlsClient::check`), and a watcher thread asks
+the bridge every five seconds whether the area is still active and ours
+(another app took it, the bridge restarted). Either way the stream is
+marked broken, its lamps' streams fail, and `Relink` reopens them on the
+REST API. Lamps identified or set by hand always use the REST API
+(`device::unstreamed`): a still colour is no reason to stream, and when a
+stream stops the bridge puts its lamps back as they were before it.
+
+Over REST, a lamp that refuses `xy` (error 6: a White Ambiance lamp) is
+sent the white nearest to each colour from then on, and one that also
+refuses `ct` (a lamp that only dims) its brightness alone.
 
 The DTLS client is checked against OpenSSL's server by tests that need
 `openssl` on the `PATH`:
@@ -181,7 +198,42 @@ The DTLS client is checked against OpenSSL's server by tests that need
 cargo test -p lueur-core dtls -- --include-ignored
 ```
 
-None of this has met a real bridge yet.
+The whole path, from mDNS to pairing, the REST API, the stream and the
+bridge ending it, runs against [diyHue](https://github.com/diyhue/diyHue),
+an emulated bridge, in `crates/lueur-core/tests/hue_emulator.rs`. Lueur
+talks to no address of its own computer, so the emulator and the test each
+run in a container on one Docker network (the file says how). diyHue
+serves the stream with `openssl s_server`, so it accepts any PSK identity:
+which one a real bridge wants is settled by what Hyperion and LedFx do, not
+by this test. None of it has met a real bridge yet.
+
+### Finding bridges and controllers
+
+Hue bridges and Nanoleaf controllers are found over mDNS (`device/mdns.rs`):
+a PTR query from an ephemeral port, which responders answer by unicast
+("legacy unicast"), sent on every LAN interface in turn, since a multicast
+leaves from one interface only and the default one is often a VPN's or a
+virtual machine's. A paired bridge is also asked at its last address, in
+case mDNS is filtered. To see what answers on a network:
+
+```bash
+cargo test -p lueur-core browses_the_real_network -- --ignored --nocapture
+LUEUR_MDNS_SERVICES=_hue._tcp.local cargo test -p lueur-core browses_the_real_network -- --ignored --nocapture
+```
+
+### Nanoleaf streaming
+
+A layout plays in External Control v2: one `effects` write, then UDP
+frames to port 60222 (Light Panels take v2 too on a recent firmware). The
+pieces without LEDs (the Rhythm module, controllers, connectors, caps) are
+left out of the frame and the zones, by `shapeType`. A controller leaves
+External Control by itself when its app picks an effect, when the panels
+are touched, or after a power cut, and frames sent then are lost; so a
+keeper thread asks every five seconds what it plays (`effects/select`) and
+writes External Control again when it is something else. When the keeper
+gets no answer three times running, the stream fails and `Relink` takes
+over. **Identify** sets the colour over REST, which answers, rather than
+sending one datagram that could arrive before the controller listens.
 
 ### Hue and Nanoleaf credentials
 

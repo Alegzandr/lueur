@@ -585,17 +585,28 @@ pub fn identify(ep: &Endpoint, color: Rgb) -> io::Result<()> {
             ctrl.set_power(true)?;
             ctrl.set_rgb(color)
         }
-        // Everyone else: power on, then one frame on a fresh stream. A Hue
-        // lamp's over REST: one frame is no reason to set a stream up.
+        DeviceKind::Nanoleaf { token } => {
+            nanoleaf::identify(&ep.ip, ep.port, token, crate::color::full_chroma(color))
+        }
+        // Everyone else: power on, then one frame on a fresh stream.
         _ => {
             set_power(ep, true)?;
-            let mut ep = ep.clone();
-            if let DeviceKind::Hue { clientkey, .. } = &mut ep.kind {
-                clientkey.clear();
-            }
-            open_stream(&ep, 1, false)?.push(output, Effect::Smooth, 300)
+            open_stream(&unstreamed(ep), 1, false)?.push(output, Effect::Smooth, 300)
         }
     }
+}
+
+/// `ep` driven one command at a time: a Hue lamp over REST rather than in
+/// its bridge's stream. For a flash to identify it or a colour set by hand,
+/// which are no reason to set a stream up, and which a stream shared by the
+/// bridge's lamps would set up anew, interrupting the others, each time
+/// another lamp joined.
+pub fn unstreamed(ep: &Endpoint) -> Endpoint {
+    let mut ep = ep.clone();
+    if let DeviceKind::Hue { clientkey, .. } = &mut ep.kind {
+        clientkey.clear();
+    }
+    ep
 }
 
 /// Tuya's transport lives in the shell, which handles these kinds itself.

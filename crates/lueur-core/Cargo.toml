@@ -17,6 +17,9 @@ if-addrs = "0.15.0"
 # already builds, so no new crate.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 ring = "0.17"
+# The interface an mDNS query leaves from (device/mdns.rs), which the
+# standard library cannot choose. Already in the tree through Tauri.
+socket2 = "0.6"
 # The logging facade (device/wire.rs traces frames). Already in the tree
 # through rustls and Tauri; `kv` adds structured fields and no crate.
 log = { version = "0.4.29", features = ["kv"] }

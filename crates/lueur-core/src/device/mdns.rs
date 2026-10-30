@@ -4,6 +4,12 @@
 //! by unicast straight back to it (RFC 6762 §6.7, "legacy unicast"). That
 //! keeps the search to a single socket with no fixed port to bind, the same
 //! shape as the Yeelight SSDP search.
+//!
+//! A multicast leaves from one interface only, the default route's unless
+//! told otherwise, and on a computer with a VPN or a virtual machine's
+//! adapter that is often not the one the bulbs are on. So the query goes
+//! out on every LAN interface in turn; the answers, unicast, all come back
+//! to the one socket.
 
 use std::collections::HashMap;
 use std::io;
@@ -35,15 +41,21 @@ pub fn browse(service: &str, timeout: Duration) -> io::Result<Vec<Instance>> {
     let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))?;
     socket.set_read_timeout(Some(Duration::from_millis(200)))?;
     let query = build_query(service);
-    let target = SocketAddrV4::new(MDNS_ADDR, MDNS_PORT);
-    for _ in 0..2 {
-        socket.send_to(&query, target)?;
-    }
+    let interfaces = super::common::lan_interfaces();
+    ask(&socket, &query, &interfaces)?;
 
     let mut found: HashMap<String, Instance> = HashMap::new();
     let deadline = Instant::now() + timeout;
+    // Asked again every so often while there is time to hear back: the
+    // first datagrams of a search are the likeliest to be lost (the
+    // responder's ARP for us, a Wi-Fi radio waking up).
+    let mut ask_again = Instant::now() + ASK_AGAIN;
     let mut buf = [0u8; 9000];
     while Instant::now() < deadline {
+        if Instant::now() >= ask_again && deadline - Instant::now() > HEAR_BACK {
+            ask_again += ASK_AGAIN;
+            let _ = ask(&socket, &query, &interfaces);
+        }
         match socket.recv_from(&mut buf) {
             Ok((n, from)) => {
                 let IpAddr::V4(src) = from.ip() else { continue };
@@ -58,6 +70,37 @@ pub fn browse(service: &str, timeout: Duration) -> io::Result<Vec<Instance>> {
         }
     }
     Ok(found.into_values().collect())
+}
+
+/// How long a search waits before asking again.
+const ASK_AGAIN: Duration = Duration::from_secs(1);
+/// The least time left for an answer to be worth asking again.
+const HEAR_BACK: Duration = Duration::from_millis(300);
+
+/// Send `query` twice on every interface in `interfaces`, or on the default
+/// route's when none would take it.
+fn ask(socket: &UdpSocket, query: &[u8], interfaces: &[Ipv4Addr]) -> io::Result<()> {
+    let target = SocketAddrV4::new(MDNS_ADDR, MDNS_PORT);
+    let mut sent = false;
+    for iface in interfaces {
+        // An interface that will not take it (down, or gone since it was
+        // listed) is skipped; the others still search.
+        if socket2::SockRef::from(socket)
+            .set_multicast_if_v4(iface)
+            .is_ok()
+        {
+            for _ in 0..2 {
+                sent |= socket.send_to(query, target).is_ok();
+            }
+        }
+    }
+    if !sent {
+        socket2::SockRef::from(socket).set_multicast_if_v4(&Ipv4Addr::UNSPECIFIED)?;
+        for _ in 0..2 {
+            socket.send_to(query, target)?;
+        }
+    }
+    Ok(())
 }
 
 /// A PTR question for `service`, with the unicast-response bit set.
@@ -277,6 +320,35 @@ mod tests {
         let mut msg = vec![0u8; 12];
         msg.extend([0xC0, 12]);
         assert!(read_name(&msg, 12).is_none());
+    }
+
+    /// Against the real network: what answers to the services in
+    /// `LUEUR_MDNS_SERVICES` (comma-separated), or to a few common ones.
+    #[test]
+    #[ignore = "searches the real network"]
+    fn browses_the_real_network() {
+        let services = std::env::var("LUEUR_MDNS_SERVICES").unwrap_or_else(|_| {
+            "_hue._tcp.local,_nanoleafapi._tcp.local,_googlecast._tcp.local,\
+             _airplay._tcp.local,_spotify-connect._tcp.local,_ipp._tcp.local,\
+             _printer._tcp.local,_hap._tcp.local,_sonos._tcp.local"
+                .into()
+        });
+        println!("interfaces: {:?}", super::super::common::lan_interfaces());
+        let mut any = false;
+        for service in services.split(',') {
+            let found = browse(service, Duration::from_millis(1500)).unwrap();
+            for inst in &found {
+                println!(
+                    "{service}: {} at {}:{} {:?}",
+                    inst.name,
+                    inst.ip,
+                    inst.port,
+                    inst.txt.keys()
+                );
+            }
+            any |= !found.is_empty();
+        }
+        assert!(any, "nothing answered");
     }
 
     #[test]

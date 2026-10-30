@@ -54,6 +54,13 @@ const MAX_CHANNELS: usize = 20;
 /// The most segments of a gradient lamp streamed apart.
 const MAX_SEGMENTS: usize = 7;
 const TIMEOUT: Duration = Duration::from_secs(3);
+/// How often the sender looks for the bridge ending the session.
+const CHECK_EVERY: Duration = Duration::from_secs(1);
+/// How often the bridge is asked whether the stream is still ours.
+const WATCH_EVERY: Duration = Duration::from_secs(5);
+/// How many of those questions in a row may go unanswered before the
+/// stream is taken for gone.
+const WATCH_MISSES: u32 = 3;
 
 /// How to reach a bridge's streaming: where, as whom, with which key.
 #[derive(Clone)]
@@ -72,12 +79,12 @@ impl Access {
         !self.clientkey.is_empty() && parse_pin(&self.cert).is_some()
     }
 
-    fn api(&self, method: &str, path: &str, body: Option<&Value>) -> io::Result<Value> {
+    fn call(&self, method: &str, path: &str, body: Option<&Value>) -> io::Result<http::Response> {
         let pin = parse_pin(&self.cert).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "bad Hue certificate pin")
         })?;
         let body = body.map(Value::to_string);
-        let resp = http::request_headed(
+        http::request_headed(
             pin,
             method,
             &self.ip,
@@ -86,7 +93,21 @@ impl Access {
             body.as_deref(),
             &[("hue-application-key", hue::safe(&self.username)?)],
             TIMEOUT,
-        )?;
+        )
+    }
+
+    /// The id the bridge knows this pairing by in its newer API, which is
+    /// the identity a stream set up through that API handshakes with.
+    fn application_id(&self) -> io::Result<String> {
+        let resp = self.call("GET", "/auth/v1", None)?;
+        resp.header("hue-application-id")
+            .filter(|id| resp.ok() && hue::safe(id).is_ok())
+            .map(str::to_string)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no application id"))
+    }
+
+    fn api(&self, method: &str, path: &str, body: Option<&Value>) -> io::Result<Value> {
+        let resp = self.call(method, path, body)?;
         let v: Value = serde_json::from_str(&resp.body)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         if !resp.ok() {
@@ -387,19 +408,32 @@ impl Bridge {
                 (!found.is_empty()).then(|| (l.clone(), found))
             })
             .collect();
+        // Asked before streaming starts: it is the identity to handshake with.
+        let app_id = a
+            .application_id()
+            .inspect_err(|e| log::debug!("no Hue application id: {e}"))
+            .ok();
         a.api("PUT", &path, Some(&json!({"action": "start"})))?;
         let addr = (a.ip.as_str(), STREAM_PORT)
             .to_socket_addrs()?
             .find(SocketAddr::is_ipv4)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no address"))?;
-        let client =
-            match DtlsClient::connect(addr, a.username.as_bytes(), &psk(&a.clientkey)?, TIMEOUT) {
-                Ok(client) => client,
-                Err(e) => {
-                    let _ = a.api("PUT", &path, Some(&json!({"action": "stop"})));
-                    return Err(e);
-                }
-            };
+        let key = psk(&a.clientkey)?;
+        let mut tried = Err(io::Error::other("no identity to stream with"));
+        for identity in identities(app_id.as_deref(), &a.username) {
+            tried = DtlsClient::connect(addr, identity.as_bytes(), &key, TIMEOUT);
+            match &tried {
+                Ok(_) => break,
+                Err(e) => log::debug!("the Hue bridge refused a stream identity: {e}"),
+            }
+        }
+        let client = match tried {
+            Ok(client) => client,
+            Err(e) => {
+                let _ = a.api("PUT", &path, Some(&json!({"action": "stop"})));
+                return Err(e);
+            }
+        };
         let stop = Arc::new(AtomicBool::new(false));
         let sender = {
             let bridge = Arc::downgrade(self);
@@ -409,6 +443,15 @@ impl Bridge {
                 .name("lueur-hue-stream".into())
                 .spawn(move || send(bridge, client, &area_id, &stop))?
         };
+        {
+            // Not joined when the stream stops: it may be inside a request,
+            // and only ever reports to a stream that is still running.
+            let bridge = Arc::downgrade(self);
+            let stop = Arc::clone(&stop);
+            std::thread::Builder::new()
+                .name("lueur-hue-watch".into())
+                .spawn(move || watch(bridge, &path, app_id.as_deref(), &stop))?;
+        }
         log::info!(ip = a.ip.as_str(), lamps = channels.len(); "streaming to a Hue bridge");
         Ok(Running {
             area: area_id,
@@ -491,10 +534,45 @@ fn id_of(area: &Value) -> io::Result<String> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad area id"))
 }
 
+/// The identities a stream handshakes with, in order: the application id
+/// the newer API streams as, then the username the older one used, which
+/// some bridges may still take.
+fn identities<'a>(app_id: Option<&'a str>, username: &'a str) -> Vec<&'a str> {
+    let mut out: Vec<&str> = app_id.into_iter().filter(|id| !id.is_empty()).collect();
+    if !out.contains(&username) {
+        out.push(username);
+    }
+    out
+}
+
+/// Whether an area, as `/entertainment_configuration/<id>` describes it,
+/// is still streamed by us: the bridge ends a stream on its own (another
+/// app took it, the bridge restarted), and says so only there.
+pub fn still_streaming(area: &Value, app_id: Option<&str>) -> bool {
+    let active = area.get("status").and_then(Value::as_str) == Some("active");
+    let streamer = area.pointer("/active_streamer/rid").and_then(Value::as_str);
+    active && !matches!((app_id, streamer), (Some(ours), Some(theirs)) if ours != theirs)
+}
+
+/// Mark the stream as broken, unless it was stopped on purpose meanwhile,
+/// and stop its sender and watcher.
+fn report(bridge: &Bridge, stop: &AtomicBool, why: String) {
+    let mut state = bridge.lock();
+    // `take_down` sets `stop` under this lock, before the bridge is told:
+    // a stream we ended ourselves is never reported.
+    if stop.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    log::warn!("the Hue stream broke: {why}");
+    state.failed = Some((Instant::now(), why));
+    bridge.changed.notify_all();
+}
+
 /// The sender: the latest colour of every channel, [`SEND_EVERY`], until
-/// told to stop or the bridge is gone.
+/// told to stop, the stream broke or the bridge is gone.
 fn send(bridge: Weak<Bridge>, mut client: DtlsClient, area: &str, stop: &AtomicBool) {
     let mut sequence = 0u8;
+    let mut checked = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         let Some(b) = bridge.upgrade() else {
             break;
@@ -508,10 +586,16 @@ fn send(bridge: Weak<Bridge>, mut client: DtlsClient, area: &str, stop: &AtomicB
         if !channels.is_empty() {
             sequence = sequence.wrapping_add(1);
             if let Err(e) = client.send(&frame(area, sequence, &channels)) {
-                log::warn!("the Hue stream broke: {e}");
-                let mut state = b.lock();
-                state.failed = Some((Instant::now(), e.to_string()));
-                b.changed.notify_all();
+                report(&b, stop, e.to_string());
+                break;
+            }
+        }
+        // Over UDP a bridge that stopped listening is only heard of in
+        // what comes back: a close_notify, or the OS's "unreachable".
+        if checked.elapsed() >= CHECK_EVERY {
+            checked = Instant::now();
+            if let Err(e) = client.check() {
+                report(&b, stop, e.to_string());
                 break;
             }
         }
@@ -519,6 +603,45 @@ fn send(bridge: Weak<Bridge>, mut client: DtlsClient, area: &str, stop: &AtomicB
         std::thread::sleep(SEND_EVERY);
     }
     client.close();
+}
+
+/// The watcher: every [`WATCH_EVERY`], ask the bridge whether the area at
+/// `path` is still ours, until told to stop or the bridge is gone. Lamps a
+/// stream no longer reaches would otherwise freeze on their last colour.
+fn watch(bridge: Weak<Bridge>, path: &str, app_id: Option<&str>, stop: &AtomicBool) {
+    let mut misses = 0;
+    loop {
+        let wake = Instant::now() + WATCH_EVERY;
+        while Instant::now() < wake {
+            if stop.load(Ordering::SeqCst) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        let Some(b) = bridge.upgrade() else {
+            return;
+        };
+        let reply = b.access.api("GET", path, None);
+        let area = reply
+            .as_ref()
+            .ok()
+            .and_then(|v| v.pointer("/data/0"))
+            .cloned();
+        match area {
+            Some(area) if still_streaming(&area, app_id) => misses = 0,
+            Some(_) => return report(&b, stop, "the bridge ended the stream".into()),
+            // A request lost now and then is no reason to give up.
+            None => {
+                misses += 1;
+                if misses >= WATCH_MISSES {
+                    let why = reply
+                        .err()
+                        .map_or_else(|| "no such area".into(), |e| e.to_string());
+                    return report(&b, stop, why);
+                }
+            }
+        }
+    }
 }
 
 /// One lamp's place in its bridge's stream.
@@ -788,6 +911,28 @@ mod tests {
         );
         let area = json!({"locations": body["locations"]});
         assert_eq!(area_services(&area), vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn the_application_id_is_tried_before_the_username() {
+        assert_eq!(identities(Some("app-1"), "user"), vec!["app-1", "user"]);
+        assert_eq!(identities(None, "user"), vec!["user"]);
+        assert_eq!(identities(Some(""), "user"), vec!["user"]);
+        assert_eq!(identities(Some("user"), "user"), vec!["user"]);
+    }
+
+    #[test]
+    fn a_stream_the_bridge_ended_is_noticed() {
+        let ours: Value = serde_json::from_str(
+            r#"{"id":"x","status":"active","active_streamer":{"rid":"app-1","rtype":"auth_v1"}}"#,
+        )
+        .unwrap();
+        assert!(still_streaming(&ours, Some("app-1")));
+        assert!(still_streaming(&ours, None), "nothing to compare with");
+        assert!(!still_streaming(&ours, Some("app-2")), "another app's");
+        let ended = json!({"id": "x", "status": "inactive"});
+        assert!(!still_streaming(&ended, Some("app-1")));
+        assert!(!still_streaming(&json!({}), None));
     }
 
     #[test]

@@ -20,6 +20,8 @@ use crate::yeelight::Effect;
 use serde_json::{Value, json};
 use std::io;
 use std::net::UdpSocket;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub const PORT: u16 = 16021;
@@ -68,8 +70,41 @@ fn put(ip: &str, port: u16, token: &str, path: &str, body: &Value) -> io::Result
     .map(|_| ())
 }
 
+fn get(ip: &str, port: u16, token: &str, path: &str) -> io::Result<Response> {
+    let path = format!("/api/v1/{}/{path}", safe(token)?);
+    check(http::request("GET", ip, port, &path, None, TIMEOUT)?)
+}
+
+/// The effect that turns on External Control v2, which the stream sends to.
+fn ext_control() -> Value {
+    json!({"write": {"command": "display", "animType": "extControl", "extControlVersion": "v2"}})
+}
+
+/// Whether an `effects/select` reply names External Control.
+pub fn in_ext_control(select: &str) -> bool {
+    select.contains("*ExtControl*")
+}
+
 pub fn set_power(ip: &str, port: u16, token: &str, on: bool) -> io::Result<()> {
     put(ip, port, token, "state", &json!({"on": {"value": on}}))
+}
+
+/// The state body that shows `rgb` on the whole layout at full brightness.
+pub fn identify_body(rgb: Rgb) -> Value {
+    let (h, sat, _) = rgb_to_hsv(rgb);
+    json!({
+        "on": {"value": true},
+        "hue": {"value": (h.round() as u32) % 360},
+        "sat": {"value": (sat * 100.0).round() as u32},
+        "brightness": {"value": 100},
+    })
+}
+
+/// Show `rgb` on the whole layout, so the user can tell which one it is.
+/// Over the REST API, which answers, rather than one stream datagram that
+/// may come before the controller listens and be lost.
+pub fn identify(ip: &str, port: u16, token: &str, rgb: Rgb) -> io::Result<()> {
+    put(ip, port, token, "state", &identify_body(rgb))
 }
 
 /// Ask for a token. Fails with [`io::ErrorKind::WouldBlock`] until the
@@ -160,41 +195,52 @@ fn answers(ip: &str) -> bool {
     })
 }
 
-/// Panel ids from a `panelLayout/layout` reply. Controllers and connectors
-/// carry no LEDs, but listing them is harmless: the controller ignores them.
-pub fn panel_ids(layout: &Value) -> Vec<u16> {
-    layout
+/// Layout pieces that carry no LEDs, by `shapeType`: the Rhythm module, the
+/// Shapes controller, the Lines connector, the controller cap and the power
+/// connector. They are left out of the zones, which would otherwise have
+/// parts that never light.
+const UNLIT_SHAPES: [u64; 5] = [1, 12, 16, 19, 20];
+
+/// The lit panels of a `panelLayout/layout` reply, as (id, x). Every piece
+/// if none says it is lit, so a layout of shapes unknown here still plays.
+fn lit_panels(layout: &Value) -> Vec<(u16, i64)> {
+    let pieces: Vec<(u16, i64, bool)> = layout
         .get("positionData")
         .and_then(Value::as_array)
         .map(|panels| {
             panels
                 .iter()
-                .filter_map(|p| p.get("panelId")?.as_u64())
-                .filter_map(|id| u16::try_from(id).ok())
+                .filter_map(|p| {
+                    let id = u16::try_from(p.get("panelId")?.as_u64()?).ok()?;
+                    let x = p.get("x").and_then(Value::as_i64).unwrap_or(0);
+                    let unlit = p
+                        .get("shapeType")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|s| UNLIT_SHAPES.contains(&s));
+                    Some((id, x, unlit))
+                })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let all_unlit = pieces.iter().all(|&(_, _, unlit)| unlit);
+    pieces
+        .into_iter()
+        .filter(|&(_, _, unlit)| all_unlit || !unlit)
+        .map(|(id, x, _)| (id, x))
+        .collect()
+}
+
+/// Panel ids from a `panelLayout/layout` reply, without the pieces that
+/// carry no LEDs.
+pub fn panel_ids(layout: &Value) -> Vec<u16> {
+    lit_panels(layout).into_iter().map(|(id, _)| id).collect()
 }
 
 /// Each panel's zone in a `panelLayout/layout` reply, in the order
 /// [`panel_ids`] lists them: the panels grouped left to right into at most
 /// [`super::MAX_ZONES`] zones.
 pub fn panel_zones(layout: &Value) -> Vec<usize> {
-    let xs: Vec<i64> = layout
-        .get("positionData")
-        .and_then(Value::as_array)
-        .map(|panels| {
-            panels
-                .iter()
-                .filter(|p| {
-                    p.get("panelId")
-                        .and_then(Value::as_u64)
-                        .is_some_and(|id| u16::try_from(id).is_ok())
-                })
-                .map(|p| p.get("x").and_then(Value::as_i64).unwrap_or(0))
-                .collect()
-        })
-        .unwrap_or_default();
+    let xs: Vec<i64> = lit_panels(layout).into_iter().map(|(_, x)| x).collect();
     let mut order: Vec<usize> = (0..xs.len()).collect();
     order.sort_by_key(|&i| xs[i]);
     let groups = group_zones(xs.len());
@@ -271,6 +317,61 @@ pub fn own_effect(own: &OwnLoop) -> Value {
     }})
 }
 
+/// How often the keeper looks at what the controller plays.
+const KEEP_EVERY: Duration = Duration::from_secs(5);
+/// How many of its looks in a row may go unanswered before the controller
+/// is taken for gone.
+const KEEP_MISSES: u32 = 3;
+
+/// What the stream and its keeper share.
+#[derive(Default)]
+struct Keeping {
+    /// Set when the stream ends: the keeper then leaves the controller be.
+    stop: AtomicBool,
+    /// Set when the controller stopped answering the keeper.
+    gone: AtomicBool,
+    /// Held while the keeper speaks to the controller, so a rest never
+    /// crosses a late return to External Control.
+    speaking: Mutex<()>,
+}
+
+/// The keeper: puts the controller back in External Control when it left
+/// it (its own app chose an effect, a touch on the panels, a restart after
+/// a power cut), since the stream's datagrams are lost on it until then.
+fn keep(ip: &str, port: u16, token: &str, keeping: &Keeping) {
+    let mut misses = 0;
+    loop {
+        let wake = Instant::now() + KEEP_EVERY;
+        while Instant::now() < wake {
+            if keeping.stop.load(Ordering::SeqCst) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        let _speaking = keeping.speaking.lock().unwrap_or_else(|p| p.into_inner());
+        if keeping.stop.load(Ordering::SeqCst) {
+            return;
+        }
+        match get(ip, port, token, "effects/select") {
+            Ok(select) => {
+                misses = 0;
+                if !in_ext_control(&select.body) {
+                    log::debug!(family = "nanoleaf"; "back to External Control");
+                    let _ = put(ip, port, token, "effects", &ext_control());
+                }
+            }
+            Err(e) => {
+                misses += 1;
+                if misses >= KEEP_MISSES {
+                    log::debug!(family = "nanoleaf"; "the controller stopped answering: {e}");
+                    keeping.gone.store(true, Ordering::SeqCst);
+                    return;
+                }
+            }
+        }
+    }
+}
+
 pub struct NanoleafStream {
     ip: String,
     port: u16,
@@ -284,6 +385,7 @@ pub struct NanoleafStream {
     /// The colours last sent zone by zone, and when.
     last_zones: Option<(Vec<Rgb>, Instant)>,
     pace: Throttle,
+    keeping: Arc<Keeping>,
     wire: Wire,
 }
 
@@ -307,13 +409,14 @@ impl NanoleafStream {
             "state",
             &json!({"on": {"value": true}, "brightness": {"value": 100}}),
         )?;
-        put(
-            ip,
-            port,
-            token,
-            "effects",
-            &json!({"write": {"command": "display", "animType": "extControl", "extControlVersion": "v2"}}),
-        )?;
+        put(ip, port, token, "effects", &ext_control())?;
+        let keeping = Arc::new(Keeping::default());
+        {
+            let (ip, token, keeping) = (ip.to_string(), token.to_string(), Arc::clone(&keeping));
+            std::thread::Builder::new()
+                .name("lueur-nanoleaf-keep".into())
+                .spawn(move || keep(&ip, port, &token, &keeping))?;
+        }
         Ok(NanoleafStream {
             ip: ip.to_string(),
             port,
@@ -325,8 +428,34 @@ impl NanoleafStream {
             last: LastSent::default(),
             last_zones: None,
             pace: Throttle::new(FRAME_INTERVAL),
+            keeping,
             wire,
         })
+    }
+
+    /// Over UDP a controller that went away is only heard of by its keeper.
+    fn still_there(&self) -> io::Result<()> {
+        if self.keeping.gone.load(Ordering::SeqCst) {
+            Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "the controller stopped answering",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Stop the keeper, waiting for it to finish what it was saying.
+    fn quiet_keeper(&self) {
+        self.keeping.stop.store(true, Ordering::SeqCst);
+        drop(self.keeping.speaking.lock());
+    }
+}
+
+impl Drop for NanoleafStream {
+    fn drop(&mut self) {
+        // Not waited for: a stale stream must drop at once.
+        self.keeping.stop.store(true, Ordering::SeqCst);
     }
 }
 
@@ -340,6 +469,7 @@ impl LightStream for NanoleafStream {
     }
 
     fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
+        self.still_there()?;
         if !self.last.needs(output) || !self.pace.ready() {
             return Ok(());
         }
@@ -366,6 +496,7 @@ impl LightStream for NanoleafStream {
         effect: Effect,
         duration_ms: u32,
     ) -> io::Result<()> {
+        self.still_there()?;
         if outputs.len() <= 1 || self.zones <= 1 {
             return match outputs.first() {
                 Some(&o) => self.push(o, effect, duration_ms),
@@ -403,6 +534,7 @@ impl LightStream for NanoleafStream {
     }
 
     fn rest(&mut self) {
+        self.quiet_keeper();
         // Setting a temperature leaves External Control on its own.
         let body = json!({"ct": {"value": REST_KELVIN}, "brightness": {"value": REST_BRIGHT, "duration": 1}});
         if Wire::enabled() {
@@ -412,6 +544,7 @@ impl LightStream for NanoleafStream {
     }
 
     fn rest_looping(&mut self, own: &OwnLoop) {
+        self.quiet_keeper();
         let body = own_effect(own);
         if Wire::enabled() {
             self.wire.request("PUT", "effects", Some(&body.to_string()));
@@ -443,6 +576,38 @@ mod tests {
         .unwrap();
         assert_eq!(panel_ids(&v), vec![107, 5432]);
         assert!(panel_ids(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn pieces_without_leds_are_left_out() {
+        // A Shapes layout: two hexagons, the controller and a cap.
+        let v = json!({"positionData": [
+            {"panelId": 10, "x": 0, "shapeType": 7},
+            {"panelId": 0, "x": 50, "shapeType": 12},
+            {"panelId": 11, "x": 100, "shapeType": 7},
+            {"panelId": 12, "x": 150, "shapeType": 19},
+        ]});
+        assert_eq!(panel_ids(&v), vec![10, 11]);
+        assert_eq!(panel_zones(&v), vec![0, 1]);
+        // Nothing said to be lit: everything is kept rather than nothing.
+        let odd = json!({"positionData": [{"panelId": 3, "x": 0, "shapeType": 12}]});
+        assert_eq!(panel_ids(&odd), vec![3]);
+    }
+
+    #[test]
+    fn identifying_sets_the_colour_over_rest() {
+        let b = identify_body(Rgb::new(0, 0, 255));
+        assert_eq!(b["on"]["value"], true);
+        assert_eq!(b["hue"]["value"], 240);
+        assert_eq!(b["sat"]["value"], 100);
+        assert_eq!(b["brightness"]["value"], 100);
+    }
+
+    #[test]
+    fn external_control_is_recognised() {
+        assert!(in_ext_control("\"*ExtControl*\""));
+        assert!(!in_ext_control("\"Northern Lights\""));
+        assert!(!in_ext_control("\"*Solid*\""));
     }
 
     #[test]

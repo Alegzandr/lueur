@@ -306,6 +306,24 @@ pub fn main_lan() -> Option<(Ipv4Addr, u8)> {
     Some((local, prefix))
 }
 
+/// This computer's own LAN addresses, one per interface, the main LAN's
+/// first: where a search should be heard on a computer with several
+/// networks (a VPN, a virtual machine's adapter, Ethernet and Wi-Fi).
+pub fn lan_interfaces() -> Vec<Ipv4Addr> {
+    let main = main_lan().map(|(ip, _)| ip);
+    let mut out: Vec<Ipv4Addr> = main.into_iter().collect();
+    for i in if_addrs::get_if_addrs().unwrap_or_default() {
+        if let if_addrs::IfAddr::V4(v4) = i.addr
+            && !v4.ip.is_loopback()
+            && is_lan(v4.ip)
+            && !out.contains(&v4.ip)
+        {
+            out.push(v4.ip);
+        }
+    }
+    out
+}
+
 /// The netmask of a `prefix`-bit subnet, as an integer.
 fn netmask(prefix: u8) -> u32 {
     u32::MAX

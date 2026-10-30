@@ -154,11 +154,11 @@ nothing to set: an *HDR* tag beside the Ambilight's name shows when it is so.
 |---|---|
 | Yeelight Color | ✅ tested |
 | Smart Life / Tuya colour bulbs | ✅ tested (v3.3) |
-| Philips Hue (through the bridge) | supported, not yet tested on hardware |
+| Philips Hue (through the bridge) | supported, not yet tested on hardware. White Ambiance lamps show the white nearest to each colour |
 | WiZ | supported, not yet tested on hardware |
 | LIFX | supported, not yet tested on hardware |
 | Govee (LAN Control on) | supported, not yet tested on hardware |
-| Nanoleaf | supported, not yet tested on hardware |
+| Nanoleaf Shapes, Canvas, Elements, Lines, Light Panels (up-to-date firmware) | supported, not yet tested on hardware. Not the Essentials bulbs and strips, which have no local API |
 
 Everything is driven over your local network; no cloud is involved once a
 bulb is set up. Tried one of the untested families? An

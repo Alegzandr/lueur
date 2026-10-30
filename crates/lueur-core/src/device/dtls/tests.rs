@@ -247,7 +247,28 @@ mod openssl {
             "got {:?}",
             String::from_utf8_lossy(&buf[..n])
         );
+        assert!(client.check().is_ok(), "the session still stands");
         client.close();
+    }
+
+    #[test]
+    #[ignore = "needs openssl on the PATH"]
+    fn openssl_ending_the_session_is_noticed() {
+        let mut server = Server::start(&[]);
+        let mut client = DtlsClient::connect(server.addr, b"lueur", &psk(), TIMEOUT).unwrap();
+        client.send(b"hello\n").unwrap();
+        assert!(server.printed(b"hello"));
+        drop(server);
+        // The server's close_notify, or the port it no longer listens on.
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let _ = client.send(b"still there?\n");
+            if client.check().is_err() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the end went unnoticed");
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
     #[test]

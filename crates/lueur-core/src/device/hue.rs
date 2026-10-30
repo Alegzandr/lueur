@@ -68,6 +68,59 @@ pub fn rgb_to_xy(c: Rgb) -> [f64; 2] {
     [round(x / sum), round(y / sum)]
 }
 
+/// The x chromaticity of the white of each temperature, warm to cool,
+/// along the Planckian locus.
+const LOCUS_X: [(f64, f64); 7] = [
+    (2000.0, 0.5267),
+    (2500.0, 0.4770),
+    (3000.0, 0.4369),
+    (3500.0, 0.4053),
+    (4000.0, 0.3805),
+    (5000.0, 0.3451),
+    (6500.0, 0.3135),
+];
+
+/// The colour temperature a lamp that only has whites shows for `c`, within
+/// what Hue white lamps span: the white whose x chromaticity is nearest, so
+/// reds and oranges go warm and blues cool. (McCamy's formula, the usual
+/// one, holds near whites only and turns saturated colours around.)
+pub fn kelvin_of(c: Rgb) -> u16 {
+    let [x, _] = rgb_to_xy(c);
+    let (warmest, coolest) = (LOCUS_X[0], LOCUS_X[LOCUS_X.len() - 1]);
+    if x >= warmest.1 {
+        return warmest.0 as u16;
+    }
+    if x <= coolest.1 {
+        return coolest.0 as u16;
+    }
+    LOCUS_X
+        .windows(2)
+        .find(|w| x <= w[0].1 && x >= w[1].1)
+        .map_or(coolest.0 as u16, |w| {
+            // Interpolated in mireds, the scale lamps step evenly in.
+            let (k0, x0) = w[0];
+            let (k1, x1) = w[1];
+            let t = (x0 - x) / (x0 - x1);
+            let mired = 1e6 / k0 + t * (1e6 / k1 - 1e6 / k0);
+            (1e6 / mired).round() as u16
+        })
+}
+
+/// Whether a bridge's reply refused state parameter `param` as one the
+/// lamp does not have (error 6): `xy` on a white lamp, `ct` on a lamp
+/// that only dims.
+fn refused(reply: &Value, param: &str) -> bool {
+    let suffix = format!("/state/{param}");
+    reply.as_array().is_some_and(|items| {
+        items.iter().filter_map(|x| x.get("error")).any(|e| {
+            e.get("type").and_then(Value::as_i64) == Some(6)
+                && e.get("address")
+                    .and_then(Value::as_str)
+                    .is_some_and(|a| a.ends_with(&suffix))
+        })
+    })
+}
+
 /// Hue brightness (1..=254) for a 1..=100 percentage.
 fn bri(bright: u8) -> u32 {
     super::common::scale_bright(bright, 1, 254)
@@ -304,16 +357,23 @@ fn config_id(v: &Value) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-/// The bridge's public config, over HTTP (no username needed).
+/// The bridge's public config (no username needed). Over HTTPS first,
+/// whatever certificate answers, since Signify means to close the API in
+/// the clear; then over HTTP, for the round bridge, which has no HTTPS.
+/// Nothing secret goes either way.
 fn public_config(ip: &str) -> io::Result<Value> {
-    check(http::request(
-        "GET",
-        ip,
-        PORT,
-        "/api/config",
-        None,
-        TIMEOUT,
-    )?)
+    http::learn(ip, TLS_PORT, "/api/config", TIMEOUT)
+        .and_then(|(resp, _)| check(resp))
+        .or_else(|_| {
+            check(http::request(
+                "GET",
+                ip,
+                PORT,
+                "/api/config",
+                None,
+                TIMEOUT,
+            )?)
+        })
 }
 
 /// The bridge's id from its public config.
@@ -508,6 +568,10 @@ struct HueDriver {
     client: http::Client,
     path: String,
     turned_on: bool,
+    /// What the lamp turned out not to have, from the bridge's refusals:
+    /// colours (a white lamp), then whites (a lamp that only dims).
+    no_xy: bool,
+    no_ct: bool,
     /// Masks the username the path carries.
     wire: Wire,
 }
@@ -519,6 +583,41 @@ impl HueDriver {
         self.wire.request("PUT", &self.path, Some(&body));
         check(self.client.request("PUT", &self.path, Some(&body))?)
     }
+
+    /// The state body for `output`, in what this lamp can show: a colour
+    /// as its nearest white on a white lamp, brightness alone on one that
+    /// only dims.
+    fn body(&self, output: BulbOutput, duration_ms: u32, with_on: bool) -> Value {
+        let output = match output {
+            BulbOutput::Color { rgb, bright } if self.no_xy => BulbOutput::White {
+                kelvin: kelvin_of(rgb),
+                bright,
+            },
+            o => o,
+        };
+        let mut body = state_body(output, duration_ms, with_on);
+        if let Some(fields) = body.as_object_mut() {
+            if self.no_ct {
+                fields.remove("ct");
+            }
+            if self.no_xy {
+                // Refused by a lamp without colours, like the colours.
+                fields.remove("effect");
+            }
+        }
+        body
+    }
+
+    /// Put `body`, and learn from what the bridge refused.
+    fn put_learning(&mut self, body: &Value) -> io::Result<()> {
+        let reply = self.put(body)?;
+        if !self.no_xy && refused(&reply, "xy") {
+            log::debug!(family = "hue"; "a lamp without colours: it plays their whites");
+            self.no_xy = true;
+        }
+        self.no_ct |= refused(&reply, "ct");
+        Ok(())
+    }
 }
 
 impl Driver for HueDriver {
@@ -528,7 +627,7 @@ impl Driver for HueDriver {
         } else {
             0
         };
-        self.put(&state_body(output, ms, !self.turned_on))?;
+        self.put_learning(&self.body(output, ms, !self.turned_on))?;
         self.turned_on = true;
         Ok(())
     }
@@ -538,7 +637,7 @@ impl Driver for HueDriver {
             kelvin: REST_KELVIN,
             bright: REST_BRIGHT,
         };
-        let _ = self.put(&state_body(rest, 400, true));
+        let _ = self.put(&self.body(rest, 400, true));
     }
 
     /// A Hue lamp's own loop goes round the colour wheel and nothing else:
@@ -573,6 +672,8 @@ impl HueStream {
             client: http::Client::with_trust(&access.ip, port, trust, TIMEOUT)?,
             path: state_path(&access.username, light)?,
             turned_on: false,
+            no_xy: false,
+            no_ct: false,
             wire: wire.hiding(&access.username),
         };
         let seat = if access.can_stream() {
@@ -710,6 +811,56 @@ mod tests {
         assert_eq!(b["bri"], 1);
         assert_eq!(b["transitiontime"], 0);
         assert_eq!(b["on"], true);
+    }
+
+    #[test]
+    fn colours_have_a_nearest_white() {
+        assert!(kelvin_of(Rgb::new(255, 140, 40)) < 3000, "orange is warm");
+        assert!(
+            kelvin_of(Rgb::new(150, 180, 255)) > 6000,
+            "sky blue is cool"
+        );
+        let w = kelvin_of(Rgb::new(255, 255, 255));
+        assert!((6000..=6500).contains(&w), "sRGB white is D65: {w}");
+        assert_eq!(kelvin_of(Rgb::new(255, 0, 0)), 2000, "kept within reach");
+        assert_eq!(kelvin_of(Rgb::new(0, 0, 255)), 6500);
+        let warm = kelvin_of(Rgb::new(255, 200, 150));
+        assert!((2500..4500).contains(&warm), "a warm white: {warm}");
+    }
+
+    #[test]
+    fn a_white_lamp_plays_colours_as_whites() {
+        let reply: Value = serde_json::from_str(
+            r#"[{"success":{"/lights/2/state/bri":254}},
+                {"error":{"type":6,"address":"/lights/2/state/xy","description":"parameter, xy, not available"}}]"#,
+        )
+        .unwrap();
+        assert!(refused(&reply, "xy"));
+        assert!(!refused(&reply, "ct"));
+        assert!(!refused(&reply, "bri"));
+
+        let mut d = HueDriver {
+            client: http::Client::new("192.168.1.30", PORT, TIMEOUT).unwrap(),
+            path: String::new(),
+            turned_on: false,
+            no_xy: false,
+            no_ct: false,
+            wire: Wire::new("hue", "hue:b:2"),
+        };
+        let orange = BulbOutput::Color {
+            rgb: Rgb::new(255, 140, 40),
+            bright: 60,
+        };
+        assert!(d.body(orange, 0, false)["xy"].is_array());
+        d.no_xy = true;
+        let b = d.body(orange, 0, true);
+        assert!(b.get("xy").is_none() && b.get("effect").is_none());
+        assert!(b["ct"].as_u64().unwrap() > 333, "a warm white");
+        assert_eq!(b["bri"], bri(60));
+        d.no_ct = true;
+        let b = d.body(orange, 0, false);
+        assert!(b.get("ct").is_none() && b.get("xy").is_none());
+        assert_eq!(b["bri"], bri(60), "a lamp that only dims still dims");
     }
 
     #[test]

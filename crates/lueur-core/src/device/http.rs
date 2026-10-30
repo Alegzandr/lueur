@@ -30,16 +30,27 @@ const MAX_RESPONSE: usize = 1 << 20;
 /// that trickles a byte at a time cannot hold a call open.
 const RESPONSE_TIMEOUTS: u32 = 2;
 
-/// A response: status code and body text.
+/// A response: status code, headers and body text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     pub status: u16,
+    /// Names lower-cased, in the order they came.
+    pub headers: Vec<(String, String)>,
     pub body: String,
 }
 
 impl Response {
     pub fn ok(&self) -> bool {
         (200..300).contains(&self.status)
+    }
+
+    /// The value of header `name` (any case), if it was sent.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        let name = name.to_ascii_lowercase();
+        self.headers
+            .iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -572,8 +583,17 @@ pub fn parse_response(raw: &[u8]) -> io::Result<Response> {
     } else if let Some(len) = header(head, "content-length").and_then(|v| v.parse::<usize>().ok()) {
         body.truncate(len);
     }
+    let headers = head
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let (k, v) = line.split_once(':')?;
+            Some((k.trim().to_ascii_lowercase(), v.trim().to_string()))
+        })
+        .collect();
     Ok(Response {
         status,
+        headers,
         body: String::from_utf8_lossy(&body).into_owned(),
     })
 }
@@ -602,10 +622,16 @@ mod tests {
 
     #[test]
     fn parses_a_sized_response() {
-        let r = parse_response(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n[]extra").unwrap();
+        let r = parse_response(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nHue-Application-Id: 1a2b-3c\r\n\r\n[]extra",
+        )
+        .unwrap();
         assert_eq!(r.status, 200);
         assert_eq!(r.body, "[]");
         assert!(r.ok());
+        assert_eq!(r.header("hue-application-id"), Some("1a2b-3c"));
+        assert_eq!(r.header("Content-Length"), Some("2"));
+        assert_eq!(r.header("x-missing"), None);
     }
 
     #[test]

@@ -15,7 +15,7 @@
 
 use crate::devices;
 use lueur_core::color::BulbOutput;
-use lueur_core::device::{Endpoint, LightStream};
+use lueur_core::device::{self, Endpoint, LightStream};
 use lueur_core::safety::FlashGuard;
 use lueur_core::yeelight::Effect;
 use std::collections::HashMap;
@@ -116,6 +116,10 @@ impl Manual {
             }
         }
 
+        // A Hue lamp over REST: a stream for its bridge would be set up
+        // anew, interrupting the others, each time another lamp is set, and
+        // when it closed the bridge would put the lamp back as it was.
+        let ep = &device::unstreamed(ep);
         let opened = devices::set_power(ep, true).and_then(|()| devices::open_stream(ep, 1, false));
         let mut slots = self.lock();
         let stream = match opened {
