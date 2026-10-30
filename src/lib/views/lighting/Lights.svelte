@@ -110,7 +110,12 @@
               <Icon name="plus" size={14} />
             </button>
           {:else if lm && other !== null}
-            <button class="btn sm act" title={t("take_over_tip")} onclick={() => takeLight(l.id)}>
+            <button
+              class="btn sm act"
+              title={t("take_over_tip")}
+              aria-label={t("labelled", { name: l.name, what: t("take_over") })}
+              onclick={() => takeLight(l.id)}
+            >
               {t("take_over")}
             </button>
           {:else}

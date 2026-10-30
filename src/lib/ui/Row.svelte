@@ -5,6 +5,7 @@
   // focus, and Escape closes it.
   import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
+  import { t } from "../i18n";
 
   interface Props {
     label: string;
@@ -26,7 +27,7 @@
         <button
           type="button"
           class="tip"
-          aria-label={label}
+          aria-label={t("about", { name: label })}
           aria-describedby={tipId}
           onpointerenter={() => (shown = true)}
           onpointerleave={() => (shown = false)}
@@ -123,5 +124,8 @@
     justify-content: flex-end;
     gap: var(--s-2);
     width: min(320px, 50%);
+    /* Never narrower than what it holds: three long French choices take a
+       few pixels from the label rather than spill out of their control. */
+    min-width: max-content;
   }
 </style>

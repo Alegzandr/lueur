@@ -117,8 +117,16 @@ export function adjustLight(lightId: string, patch: Partial<LightState>): void {
  *  every light playing it). Lights off are turned on. */
 export function setBrightness(lightIds: string[], bright: number): void {
   const modes = new Set(lightIds.map(modeOf));
-  if (modes.has("ambilight")) edit((c) => (c.engine.brightness = Math.max(0.05, bright / 100)));
-  if ([...modes].some((m) => m !== null && m !== "ambilight")) edit((c) => (c.show.bright = Math.max(5, bright)));
+  if (modes.has("ambilight")) {
+    edit((c) => {
+      c.engine.brightness = Math.max(0.05, bright / 100);
+    });
+  }
+  if ([...modes].some((m) => m !== null && m !== "ambilight")) {
+    edit((c) => {
+      c.show.bright = Math.max(5, bright);
+    });
+  }
   for (const id of lightIds) if (modeOf(id) === null) adjustLight(id, { bright });
 }
 

@@ -100,8 +100,25 @@ function newLight(name: string, pos: Vec2): Light {
   return { id: crypto.randomUUID(), name, pos, height: 0.5, zone_override: null, enabled: true };
 }
 
+/** "Light n" for the smallest n no light of the room is called yet, so a
+ *  light added after a removal never takes a name already in use. */
+function freshName(): string {
+  const taken = new Set(app.config.room.lights.map((l) => l.name));
+  let n = app.config.room.lights.length + 1;
+  for (let i = 1; i <= n; i++) {
+    if (!taken.has(t("light_n", { n: i }))) {
+      n = i;
+      break;
+    }
+  }
+  return t("light_n", { n });
+}
+
+/** The longest name a light can have, as the fields that rename it allow. */
+export const MAX_LIGHT_NAME = 60;
+
 export function addLight(name?: string): Light {
-  const light = newLight(name ?? t("light_n", { n: app.config.room.lights.length + 1 }), freshPositions(1)[0]);
+  const light = newLight(name ?? freshName(), freshPositions(1)[0]);
   edit((c) => {
     c.room.lights.push(light);
   });
@@ -158,8 +175,18 @@ export function unassign(lightId: string): void {
 export function renameLight(id: string, name: string): void {
   edit((c) => {
     const l = c.room.lights.find((x) => x.id === id);
-    if (l) l.name = name;
+    if (l) l.name = name.slice(0, MAX_LIGHT_NAME);
   });
+}
+
+/** Once its field is left, a light without a name gets back the one it had
+ *  (`before`), or a fresh one: a nameless light would leave its card, its row
+ *  and its pin on the plan blank. */
+export function settleName(id: string, before = ""): void {
+  const l = lightById(id);
+  if (!l) return;
+  const name = l.name.trim() || before.trim() || freshName();
+  if (name !== l.name) renameLight(id, name);
 }
 
 export function setLightEnabled(id: string, enabled: boolean): void {
@@ -185,6 +212,8 @@ export function removeLight(id: string): void {
     label: t("undo"),
     run: () =>
       edit((c) => {
+        // Already back, by the plan's own undo: once is enough.
+        if (c.room.lights.some((l) => l.id === light.id)) return;
         c.room.lights.splice(Math.min(index, c.room.lights.length), 0, light);
         // The bulb went to another light since: it stays there.
         if (binding && !c.bindings.some((b) => b.device_id === binding.device_id)) c.bindings.push(binding);
@@ -194,7 +223,11 @@ export function removeLight(id: string): void {
 
 /** The plan has been arranged: the first-run guide moves on. */
 export function markRoomArranged(): void {
-  if (!app.config.interface.room_arranged) edit((c) => (c.interface.room_arranged = true));
+  if (app.config.interface.room_arranged) return;
+  app.lastStepPending = true;
+  edit((c) => {
+    c.interface.room_arranged = true;
+  });
 }
 
 /** Open the room plan with light `id` picked, to see or move it. */

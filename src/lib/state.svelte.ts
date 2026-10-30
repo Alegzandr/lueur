@@ -65,8 +65,10 @@ export {
   markRoomArranged,
   removeLight,
   renameLight,
+  MAX_LIGHT_NAME,
   scan,
   setLightEnabled,
+  settleName,
   showOnPlan,
   unassign,
 } from "./state/devices.svelte";

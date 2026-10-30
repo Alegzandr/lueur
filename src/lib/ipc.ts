@@ -270,13 +270,14 @@ export async function setAllPower(on: boolean): Promise<PowerResult> {
 }
 
 // The browser preview pretends to run, so the UI can be exercised end to end:
-// each demo light's mode, if it plays one.
+// each light with a bulb, its mode if it plays one. The lights are read from
+// the preview's config, so those added in `?fresh` play too.
 let previewModes: Record<string, Mode> = {};
-const PREVIEW_LIGHTS = ["demo-0", "demo-1", "demo-2"];
+const previewLights = () => previewCfg().bindings.map((b) => b.light_id);
 const previewStatus = (): EffectStatus => {
   const groups = [...new Set(Object.values(previewModes))].map((mode) => ({
     mode,
-    light_ids: PREVIEW_LIGHTS.filter((id) => previewModes[id] === mode),
+    light_ids: previewLights().filter((id) => previewModes[id] === mode),
   }));
   const light_ids = groups.flatMap((g) => g.light_ids);
   return {
@@ -304,7 +305,7 @@ const previewStatus = (): EffectStatus => {
 /** Start the ambilight, or a show, on the whole room, replacing whatever runs. */
 export async function startEffect(mode: Mode = "ambilight"): Promise<EffectStatus> {
   if (!inTauri()) {
-    previewModes = demo() || preview("fresh") ? Object.fromEntries(PREVIEW_LIGHTS.map((id) => [id, mode])) : {};
+    previewModes = demo() || preview("fresh") ? Object.fromEntries(previewLights().map((id) => [id, mode])) : {};
     return previewStatus();
   }
   return invoke<EffectStatus>("start_effect", { mode });

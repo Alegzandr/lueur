@@ -67,7 +67,7 @@ export function deleteScene(id: string): void {
   const index = app.config.scenes.findIndex((s) => s.id === id);
   if (index < 0) return;
   const scene = $state.snapshot(app.config.scenes[index]);
-  edit((c) => (c.scenes = c.scenes.filter((s) => s.id !== id)));
+  edit((c) => { c.scenes = c.scenes.filter((s) => s.id !== id); });
   notify("info", t("scene_deleted", { name: scene.name }), {
     label: t("undo"),
     run: () =>

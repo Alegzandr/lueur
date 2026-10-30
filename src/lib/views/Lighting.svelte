@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { app, bindingFor, chooseMode, isOn, moodTargets, pickedLights, setAllPower } from "../state.svelte";
+  import {
+    app,
+    bindingFor,
+    chooseMode,
+    isOn,
+    moodTargets,
+    pickedLights,
+    setAllPower,
+    toggleEffect,
+  } from "../state.svelte";
   import { t, tn } from "../i18n";
   import Icon from "../ui/Icon.svelte";
   import RestartBanner from "../ui/RestartBanner.svelte";
@@ -16,8 +25,13 @@
   const lights = $derived(app.config.room.lights);
   const bound = $derived(app.config.bindings.length);
   const arranged = $derived(app.config.interface.room_arranged);
-  const setupDone = $derived(bound > 0 && arranged);
   const live = $derived(app.status.running);
+  // Once the lights have followed the screen, the guide has done its work,
+  // even if they stop.
+  $effect(() => {
+    if (live) app.lastStepPending = false;
+  });
+  const setupDone = $derived(bound > 0 && arranged && !app.lastStepPending);
 
   // The last step starts the Ambilight the way its tile does.
   const steps = $derived([
@@ -72,6 +86,10 @@
           />
         </label>
       </div>
+    {:else if live}
+      <!-- Every bulb removed while an effect plays: the one way to stop it
+           left on the page, beside Ctrl+Enter and the tray. -->
+      <button class="btn" disabled={app.busy} onclick={() => toggleEffect()}>{t("stop_effects")}</button>
     {/if}
   </header>
 

@@ -111,11 +111,12 @@
   <section class="group" aria-label={t("adjust")}>
     <div class="card rows">
       <div class="block">
+        <!-- An effect goes no dimmer than 5 %: the thumb stops where its light does. -->
         <Row label={t("brightness")}>
           <Slider
             label={t("brightness")}
             value={brightness}
-            min={1}
+            min={byHand.length > 0 ? 1 : 5}
             max={100}
             step={1}
             format={(v) => (mixed ? t("bright_mixed", { value: pct(v / 100) }) : pct(v / 100))}

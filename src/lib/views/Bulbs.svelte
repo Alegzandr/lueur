@@ -19,6 +19,8 @@
     PAIR_WINDOW_MS,
     removeLight,
     renameLight,
+    MAX_LIGHT_NAME,
+    settleName,
     scan,
     signInTuya,
     unassign,
@@ -43,6 +45,8 @@
   const fresh = $derived(unbound.filter((d) => d.paired));
 
   let userCode = $state("");
+  /** A light's name as its field was entered, to give back if it is left empty. */
+  let nameBefore = "";
   /** What is wrong with the user code, once Continue was pressed. */
   let codeProblem = $state<ReturnType<typeof userCodeProblem>>(null);
   // Characters a code can never hold are pointed out while typing; a code
@@ -315,6 +319,7 @@
                 id="tuya-code"
                 class="code-input"
                 type="text"
+                {@attach (el) => el.focus()}
                 bind:value={userCode}
                 oninput={() => (codeProblem = null)}
                 spellcheck="false"
@@ -477,10 +482,13 @@
                   value={l.name}
                   spellcheck="false"
                   aria-label={t("light_name")}
+                  maxlength={MAX_LIGHT_NAME}
+                  onfocus={(e) => (nameBefore = e.currentTarget.value)}
                   oninput={(e) => renameLight(l.id, e.currentTarget.value)}
+                  onchange={() => settleName(l.id, nameBefore)}
                 />
                 <span class="device-meta">
-                  {#if b}{bulbLabel(b)}{#if sharedBulbNames.has(bulbLabel(b))}<span class="num"> · {b.ip}</span>{/if}{:else}<span
+                  {#if b}{bulbLabel(b)}{#if sharedBulbNames.has(bulbLabel(b))}<span class="num">&nbsp;· {b.ip}</span>{/if}{:else}<span
                       class="warn">{t("pick_above")}</span
                     >{/if}
                 </span>

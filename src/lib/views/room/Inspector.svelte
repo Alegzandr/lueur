@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { app, edit, bindingFor, identifyLight, renameLight, setLightEnabled } from "../../state.svelte";
+  import {
+    app,
+    edit,
+    bindingFor,
+    identifyLight,
+    MAX_LIGHT_NAME,
+    renameLight,
+    setLightEnabled,
+    settleName,
+  } from "../../state.svelte";
   import { describe, mapLight, EDGE_COLOR } from "../../geometry";
   import { t, pct } from "../../i18n";
   import { bulbLabel } from "../../brands";
@@ -35,6 +44,8 @@
   } = $props();
 
   const DEF = defaultConfig();
+  /** A light's name as its field was entered, to give back if it is left empty. */
+  let nameBefore = "";
 
   const room = $derived(app.config.room);
   const scr = $derived(room.screen);
@@ -73,7 +84,10 @@
     aria-label={t("light_name")}
     spellcheck="false"
     data-autofocus
+    maxlength={MAX_LIGHT_NAME}
+    onfocus={(e) => (nameBefore = e.currentTarget.value)}
     oninput={(e) => renameLight(l.id, e.currentTarget.value)}
+    onchange={() => settleName(l.id, nameBefore)}
   />
 
   <!-- The screen as it sits on a desk, with the part this light mirrors. -->
@@ -173,7 +187,7 @@
         step={1}
         def={DEF.room.screen.facing_deg}
         format={(v) => `${v}°`}
-        onchange={(v) => edit((c) => (c.room.screen.facing_deg = v))}
+        onchange={(v) => edit((c) => { c.room.screen.facing_deg = v; })}
       />
     </div>
     <div class="field">
@@ -186,7 +200,7 @@
         step={5}
         def={DEF.room.screen.width}
         format={(v) => String(Math.round(v))}
-        onchange={(v) => edit((c) => (c.room.screen.width = v))}
+        onchange={(v) => edit((c) => { c.room.screen.width = v; })}
       />
     </div>
     {@render exact(scr.center)}

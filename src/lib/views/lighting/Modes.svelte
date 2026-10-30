@@ -188,7 +188,7 @@
             def={DEF.show.speed}
             format={(v) => times(showPace(v))}
             ends={[t("speed_slow"), t("speed_fast")]}
-            onchange={(v) => edit((c) => (c.show.speed = v))}
+            onchange={(v) => edit((c) => { c.show.speed = v; })}
           />
         </Row>
       {/if}
@@ -197,7 +197,7 @@
           <Switch
             checked={app.config.show.flashes}
             label={t("flashes")}
-            onchange={(v) => edit((c) => (c.show.flashes = v))}
+            onchange={(v) => edit((c) => { c.show.flashes = v; })}
           />
         </Row>
         <Row label={t("listens_to")}>

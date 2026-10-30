@@ -289,7 +289,8 @@ is hidden fades out.
 Pages stack **groups**: a small `text-3` group title, then a card. Groups are
 28px apart. Inside a card, rows are 44px minimum, padded 16px, split by 1px
 hairlines; the control sits on the right in a column of at most 320px or half
-the row. The Lighting page is the one exception to the 820px column: up to
+the row, wider only when what it holds needs it (three long French choices).
+The Lighting page is the one exception to the 820px column: up to
 1240px wide, its lights and scenes sit on the left and the settings of the
 lights picked on the right once the window is 1200px wide, one column below
 that. Its mode grids count their columns from the room they have: still

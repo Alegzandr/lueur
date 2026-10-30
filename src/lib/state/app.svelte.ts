@@ -92,6 +92,9 @@ class AppState {
   powerBusy = $state<Record<string, boolean>>({});
   /** The mood or mode being switched to, while it starts. */
   pending = $state<string | null>(null);
+  /** The room was just arranged for the first time: the first-run guide
+   *  stays for its last step, starting Screen, until the lights follow it. */
+  lastStepPending = $state(false);
 
   /** The lights effects and moods go to; none picked means the whole room. */
   target = $state<string[]>([]);

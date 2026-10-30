@@ -88,7 +88,9 @@
   function onKey(e: KeyboardEvent) {
     const mod = e.ctrlKey || e.metaKey;
     if (!mod || e.altKey || e.shiftKey) return;
-    const item = nav.find((n) => n.key === e.key);
+    // By the key's place as well as its character: on a French keyboard the
+    // digit row types & é " ' without Shift.
+    const item = nav.find((n) => n.key === e.key || e.code === `Digit${n.key}` || e.code === `Numpad${n.key}`);
     if (item) {
       e.preventDefault();
       app.view = item.id;

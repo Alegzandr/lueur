@@ -44,7 +44,7 @@
   });
 
   function setWall(rgb: Rgb) {
-    edit((c) => (c.room.wall = { ...rgb }));
+    edit((c) => { c.room.wall = { ...rgb }; });
   }
 
   /** The wall swatches are a radio group: the arrows move the choice. */

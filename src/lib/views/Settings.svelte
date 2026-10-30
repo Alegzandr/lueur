@@ -51,7 +51,7 @@
   async function setStartup(v: boolean) {
     try {
       await ipc.setRunOnStartup(v);
-      edit((x) => (x.behavior.run_on_startup = v));
+      edit((x) => { x.behavior.run_on_startup = v; });
     } catch (e) {
       fail(e);
     }
@@ -59,7 +59,7 @@
 
   function setBehavior(key: keyof BehaviorSettings, v: boolean) {
     if (key === "run_on_startup") void setStartup(v);
-    else edit((x) => (x.behavior[key] = v));
+    else edit((x) => { x.behavior[key] = v; });
   }
 
   const behaviour = $derived<{ key: keyof BehaviorSettings; label: string }[]>([
@@ -145,7 +145,7 @@
     else if (app) next = { kind: "app", exe: app.exe, name: app.label };
     // A choice gone missing keeps the name it was saved with.
     if (soundKey(next) === soundKey(c.audio)) return;
-    edit((x) => (x.audio = next));
+    edit((x) => { x.audio = next; });
   }
 
   // Language names are written in their own language, so anyone can find theirs.
@@ -169,15 +169,16 @@
           <Switch
             checked={c.behavior.auto_fullscreen}
             label={t("auto_mode")}
-            onchange={(v) => edit((x) => (x.behavior.auto_fullscreen = v))}
+            onchange={(v) => edit((x) => { x.behavior.auto_fullscreen = v; })}
           />
         </Row>
       {/if}
       {#if monitors.length > 1}
         <Row label={t("display")}>
           <select
+            aria-label={t("display")}
             value={c.capture.monitor_index}
-            onchange={(e) => edit((x) => (x.capture.monitor_index = +e.currentTarget.value))}
+            onchange={(e) => edit((x) => { x.capture.monitor_index = +e.currentTarget.value; })}
           >
             {#each monitors as m (m.index)}
               <option value={m.index}>{m.name} · {m.width}×{m.height}{m.is_primary ? ` · ${t("display_main")}` : ""}</option>
@@ -190,14 +191,14 @@
           label={t("frame_rate")}
           value={String(c.capture.target_fps)}
           options={fpsOptions}
-          onchange={(v: string) => edit((x) => (x.capture.target_fps = +v))}
+          onchange={(v: string) => edit((x) => { x.capture.target_fps = +v; })}
         />
       </Row>
       <Row label={t("crop_bars")} tip={t("crop_bars_tip")}>
         <Switch
           checked={c.engine.crop_bars}
           label={t("crop_bars")}
-          onchange={(v) => edit((x) => (x.engine.crop_bars = v))}
+          onchange={(v) => edit((x) => { x.engine.crop_bars = v; })}
         />
       </Row>
       <Row label={t("colour_strength")} tip={t("colour_strength_tip")}>
@@ -210,7 +211,7 @@
           def={DEF.engine.saturation}
           format={pct}
           ends={[t("colour_strength_true"), t("colour_strength_vivid")]}
-          onchange={(v) => edit((x) => (x.engine.saturation = v))}
+          onchange={(v) => edit((x) => { x.engine.saturation = v; })}
         />
       </Row>
       <Row label={t("dark_scenes")} tip={t("dark_scenes_tip")}>
@@ -218,7 +219,7 @@
           label={t("dark_scenes")}
           value={curveValue}
           options={curveOptions}
-          onchange={(v: string) => edit((x) => (x.engine.brightness_curve = +v))}
+          onchange={(v: string) => edit((x) => { x.engine.brightness_curve = +v; })}
         />
       </Row>
     </div>
@@ -229,7 +230,7 @@
       <div class="group-head"><h2 class="group-title">{t("mode_music")}</h2></div>
       <div class="card rows">
         <Row label={t("sound_source")} tip={sound.loopback ? t("sound_source_tip") : undefined}>
-          <select value={soundValue} onfocus={refreshSound} onchange={(e) => setSound(e.currentTarget.value)}>
+          <select aria-label={t("sound_source")} value={soundValue} onfocus={refreshSound} onchange={(e) => setSound(e.currentTarget.value)}>
             <option value="default">{soundDefault}</option>
             {#if soundDevices.length > 0}
               <optgroup label={t(sound.loopback ? "audio_outputs" : "audio_inputs")}>
@@ -257,7 +258,7 @@
             def={0}
             format={(v) => t("ms", { n: v > 0 ? `+${v}` : String(v) })}
             ends={[t("sound_delay_early"), t("sound_delay_late")]}
-            onchange={(v) => edit((x) => (x.show.delay_ms = v))}
+            onchange={(v) => edit((x) => { x.show.delay_ms = v; })}
           />
         </Row>
       </div>
@@ -271,7 +272,7 @@
         <Switch
           checked={c.safety.flash_guard}
           label={t("flash_guard")}
-          onchange={(v) => edit((x) => (x.safety.flash_guard = v))}
+          onchange={(v) => edit((x) => { x.safety.flash_guard = v; })}
         />
       </Row>
     </div>
@@ -285,7 +286,7 @@
           label={t("language")}
           value={c.interface.language}
           options={languageOptions}
-          onchange={(v: Language) => edit((x) => (x.interface.language = v))}
+          onchange={(v: Language) => edit((x) => { x.interface.language = v; })}
         />
       </Row>
       <Row label={t("appearance")}>
@@ -293,7 +294,7 @@
           label={t("appearance")}
           value={c.interface.appearance}
           options={appearanceOptions}
-          onchange={(v: Appearance) => edit((x) => (x.interface.appearance = v))}
+          onchange={(v: Appearance) => edit((x) => { x.interface.appearance = v; })}
         />
       </Row>
       {#each behaviour as b (b.key)}
