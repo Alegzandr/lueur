@@ -386,7 +386,7 @@ again on a thread of its own, half a second later, then doubling up to every
 ## 7. The flash limiter
 
 Every mode's output goes through a `safety::FlashGuard` (in
-`runner/ambilight.rs` and `runner/show.rs` for the ambilight and the shows,
+`runner/ambilight.rs` and `runner/show.rs` for the screen mode and the shows,
 in `manual.rs` for lights set by hand) before
 it reaches `push`, after the walls' correction so it measures the light the
 bulb really gives, so the photosensitivity protection holds for any family
@@ -452,5 +452,5 @@ log file holds.
   runs the same).
 - The family is in the README's *Supported bulbs*, marked untested until
   someone has run it on real hardware, and in `first_text` and `tip_5`.
-- A trace log of a few seconds of ambilight on the real device, attached to
+- A trace log of a few seconds of Screen on the real device, attached to
   the pull request, if you have one.

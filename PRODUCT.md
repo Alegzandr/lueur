@@ -12,38 +12,47 @@ mobile layout.
 
 ## Users
 
-The heart of the audience is the PC player who games at night in a dim room:
-they set the room up once, then mostly drive the lights from the tray without
-leaving the game. The audience is wider than that, though: people watching
-films, people listening to music (the Music effect), and people who simply
-want one app to drive their smart bulbs, with effects, moods, per-light
-power, brightness, white and colour, and a sleep timer.
+People who want one app to drive the smart bulbs in their home, whatever
+the brands they bought: per-light power, brightness, white and colour, moods,
+effects and a sleep timer, set from the window or the tray. Among them, PC
+players who game at night in a dim room, people watching films and people
+listening to music (the Music effect) also let the lights follow the screen
+or the sound.
 
 Most are not lighting specialists. They own one or several brands of bulb,
 know their phone app, and expect setup to take minutes.
 
 ## Product Purpose
 
-Lueur turns the smart bulbs already in a room into a low-latency ambilight:
-the light around you follows what's on screen. You sketch your room, place
-the screen, the seat and each light where it really stands, and each light
-mirrors the part of the picture that matches its place. Outside games, the
-same window plays effects (Music, Rainbow, Sunset, Ocean, Candle) and moods
-(Natural light, Daylight, Reading, Relax, Night light) on the whole room or
-on chosen lights.
+Lueur makes the smart bulbs already in a home easy to drive, from one app,
+whatever their brand, and takes care of the details the bulbs' own apps
+leave out. Each light has its power, brightness, white and colour; moods
+(Natural light, Daylight, Reading, Relax, Night light) and effects (Music,
+Rainbow, Sunset, Ocean, Candle) go to the whole room or to chosen lights; a
+sleep timer fades everything off. With Screen, the light around you follows
+what's on screen: you sketch your room, place the screen, the seat and each
+light where it really stands, and each light mirrors the part of the
+picture that matches its place.
 
-Success: the bulbs are found and placed in a few minutes, the light follows
-the screen with no visible delay, and the user forgets the app is running.
+Success: the bulbs are found in a few minutes, every light does what was
+asked at the first try, the small cases (walls, quitting, several
+computers, a mistake) are already handled, and the user forgets the app is
+running.
 
 ## Positioning
 
-Several things together, none ranked above the others:
+Several things together, the first one leading:
 
+- **Care in every detail.** Light corrected for the wall colour, effects
+  that keep playing on the bulb after quitting, computers that share bulbs
+  instead of fighting over them, undo for every removal, a bulb called by
+  its name, flashes kept under three a second.
 - **The room plan.** Each light mirrors the slice of the picture that matches
   where it really stands (sideways position, height, distance), not a generic
   left/right zone.
-- **Latency.** Colours reach the bulbs many times a second (Yeelight music
-  mode, Hue Entertainment streaming), with no visible delay.
+- **Latency.** With Screen and Music, colours reach the bulbs many times a
+  second (Yeelight music mode, Hue Entertainment streaming), with no visible
+  delay.
 - **Local, free, many brands.** One open-source (MIT) app for Yeelight, Smart
   Life / Tuya, Philips Hue, WiZ, LIFX, Govee and Nanoleaf, driven over the
   local network with no cloud once a bulb is set up.
@@ -54,10 +63,10 @@ Several things together, none ranked above the others:
 
 - Used at night in a dim room, often while a fullscreen game or film runs;
   the window is opened briefly between sessions, the tray menu during them.
-- Four pages: **Lighting** (Ambilight, effects, moods, per-light controls,
+- Four pages: **Lighting** (Screen, effects, moods, per-light controls,
   sleep timer), **Room** (top-down floor plan to draw on), **Bulbs**
   (discovery, identify, pairing, Smart Life import), **Settings**.
-- On Windows the Ambilight starts by itself when a game or video goes
+- On Windows, Screen starts by itself when a game or video goes
   fullscreen and restores each light afterwards.
 - Several computers in the house can run Lueur; a bulb driven by one shows
   that computer's name on the others, with *Take over*.
@@ -87,8 +96,11 @@ Several things together, none ranked above the others:
   you follows what's on screen"); no jargon, no superlatives, no hype. A bulb
   is called by its name or brand where its light is shown, never by its
   address.
-- Tagline: "A low-latency ambilight for your smart bulbs, made for cosy night
-  gaming."
+- Tagline: "One app for all your smart bulbs, whatever the brand, with care
+  in every detail."
+- The mode that follows the screen is called **Screen** (**Écran**), never
+  "ambilight", a term that is both a Philips trademark and too narrow for
+  what Lueur is.
 
 ## Evidence on Hand
 

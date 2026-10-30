@@ -2,7 +2,7 @@
 //!
 //! The tray is how Lueur is used mid-game, and how the lights are switched
 //! without opening the window: the menu says what the lights show, starts
-//! and stops the Ambilight and the effects, applies the moods, sets the
+//! and stops following the screen and the effects, applies the moods, sets the
 //! sleep timer, turns every light on or off and, once an update is
 //! installed, restarts into it. What plays and what the
 //! room shows are ticked. Its labels follow the interface language the
@@ -59,8 +59,8 @@ struct Labels {
 fn labels(lang: &str) -> Labels {
     match lang {
         "fr" => Labels {
-            start: "Démarrer l'Ambilight",
-            stop: "Arrêter l'Ambilight",
+            start: "Suivre l'écran",
+            stop: "Ne plus suivre l'écran",
             stop_show: "Arrêter l'effet",
             stop_all: "Tout arrêter",
             shows: "Effets",
@@ -77,8 +77,8 @@ fn labels(lang: &str) -> Labels {
             dark: "Toutes les lumières sont éteintes",
         },
         _ => Labels {
-            start: "Start Ambilight",
-            stop: "Stop Ambilight",
+            start: "Follow the screen",
+            stop: "Stop following the screen",
             stop_show: "Stop the effect",
             stop_all: "Stop everything",
             shows: "Effects",
@@ -97,7 +97,7 @@ fn labels(lang: &str) -> Labels {
     }
 }
 
-/// What the Ambilight, the built-in moods and the shows are called (see
+/// What the screen mode, the built-in moods and the shows are called (see
 /// `lueur_core::scene::MOODS` and `lueur_core::show::SHOWS`), as in the
 /// interface.
 fn name(lang: &str, id: &str) -> &'static str {
@@ -112,7 +112,8 @@ fn name(lang: &str, id: &str) -> &'static str {
         ("fr", "sunset") => "Coucher de soleil",
         ("fr", "ocean") => "Océan",
         ("fr", "candle") => "Bougie",
-        (_, "ambilight") => "Ambilight",
+        ("fr", "ambilight") => "Écran",
+        (_, "ambilight") => "Screen",
         (_, "daylight") => "Daylight",
         (_, "reading") => "Reading",
         (_, "relax") => "Relax",
@@ -139,7 +140,7 @@ fn running_modes(state: &AppState) -> Vec<Mode> {
 /// What the lights show, as the tray tells it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Now {
-    /// The effects playing: the Ambilight first, then the shows in menu
+    /// The effects playing: the screen mode first, then the shows in menu
     /// order.
     modes: Vec<Mode>,
     /// The mood every light no effect drives shows, when they all show the
@@ -521,7 +522,7 @@ mod tests {
         let modes = vec![Mode::Show(ShowKind::Rainbow), Mode::Ambilight];
         let now = Now::of(&cfg, modes, &["a".to_string()]);
         assert_eq!(now.modes, [Mode::Ambilight, Mode::Show(ShowKind::Rainbow)]);
-        assert_eq!(now.line("en"), "Playing: Ambilight + Rainbow + Relax");
+        assert_eq!(now.line("en"), "Playing: Screen + Rainbow + Relax");
     }
 
     #[test]
@@ -559,7 +560,7 @@ mod tests {
         let all = ["a".to_string(), "b".to_string()];
         let now = Now::of(&cfg, vec![Mode::Ambilight], &all);
         assert_eq!(now.mood, None);
-        assert_eq!(now.line("fr"), "En cours\u{a0}: Ambilight");
+        assert_eq!(now.line("fr"), "En cours\u{a0}: Écran");
     }
 
     #[test]

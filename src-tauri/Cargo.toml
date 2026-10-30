@@ -1,6 +1,6 @@
 [package]
 name = "lueur"
-description = "Lueur: a low-latency ambilight for smart bulbs, made for cosy night gaming."
+description = "Lueur: one app for all your smart bulbs, whatever the brand, with care in every detail."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

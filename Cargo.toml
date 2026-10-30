@@ -2,7 +2,7 @@
 #
 # `lueur-core` is a dependency-light, GUI-free crate that holds all the logic
 # we want to unit-test in isolation (room geometry, the Yeelight protocol,
-# colour processing, the ambilight engine and config persistence).
+# colour processing, the screen colour engine and config persistence).
 #
 # `src-tauri` is the desktop shell. It depends on `lueur-core` and wires it up
 # to real screen capture (xcap) and the Tauri webview. It is intentionally kept

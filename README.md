@@ -4,10 +4,11 @@
 
 # Lueur
 
-**A low-latency ambilight for your smart bulbs, made for cosy night gaming.**
+**One app for all your smart bulbs, whatever the brand, with care in every detail.**
 
-Draw your room, place your screen and lights, pick your bulbs, and the light
-around you follows what's on screen.
+Switch them, dim them, pick their white or their colour, play a mood or an
+effect, set a sleep timer, or let them follow what's on screen, from one
+window or the tray.
 
 [**Download the latest version**](https://github.com/Alegzandr/lueur/releases/latest)
 
@@ -26,25 +27,33 @@ around you follows what's on screen.
 
 ## Why Lueur
 
-The colours on screen reach your bulbs many times a second. Yeelight bulbs
-run in *music mode*, which has no rate limit, so there is no visible delay.
+Yeelight, Philips Hue, WiZ, LIFX, Govee, Nanoleaf and Smart Life / Tuya
+bulbs sit side by side in one window, found on your network and driven over
+it, with no cloud once a bulb is set up. Each light has its power,
+brightness, white and colour, here or in the tray menu, and is called by
+its name, never by its address.
 
-You sketch your room, place the screen and drop each light where it really
-stands. A lamp right behind the screen mirrors its own slice of the picture;
-one across the room glows softly with the whole scene. On Windows the
-Ambilight turns on by itself when a game or a video goes fullscreen, and
-gives every light back what it was showing when it ends.
+Moods (Natural light, which follows the time of day, Daylight, Reading,
+Relax and Night light) and effects (Music, which plays the track on your
+lights like a stage, Rainbow, Sunset, Ocean and Candle) go to the whole room
+or to the lights you pick. A sleep timer fades everything off at night,
+after a preset or any number of minutes.
 
-HDR screens are supported on Windows. The Ambilight reads the colours as
-Windows composes them, so they don't come out washed out and a dark scene
-stays dark, with nothing to set ([details below](#4-start)).
+The small things are taken care of. Lueur corrects every light for the
+colour of your walls. Quit it, and on most bulbs a light playing Rainbow or
+Candle goes on playing it by itself. Run it on several computers, and they
+share the bulbs instead of fighting over them. Remove a light by mistake,
+and one click brings it back. Whatever plays, no light flashes more than
+three times a second.
 
-When you aren't playing, the same window runs effects (Music, which plays
-the track on your lights like a stage, Rainbow, Sunset, Ocean and Candle)
-and moods (Natural light, Daylight, Reading, Relax and Night light), on the
-whole room or on the lights you pick. Each bulb also has its power,
-brightness, white and colour, here or in the tray menu, and a sleep timer
-fades everything off at night, after a preset or any number of minutes.
+With **Screen**, the lights follow what's on screen, many times a second
+and with no visible delay. You sketch your room, place the screen and drop
+each light where it really stands: a lamp right behind the screen mirrors
+its own slice of the picture, one across the room glows softly with the
+whole scene. On Windows it starts by itself when a game or a video goes
+fullscreen, gives every light back what it was showing when it ends, and
+reads HDR screens without washing them out
+([details below](#4-follow-the-screen)).
 
 Lueur only reads the screen, the way OBS or Discord do, so it is safe to run
 next to anti-cheat ([details below](#competitive-games-and-anti-cheat)). It
@@ -58,10 +67,10 @@ to date.
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/lighting-light.png">
-        <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: who effects and moods go to, the Ambilight, five effects, five moods with Relax on, a sleep timer and every light with its mood and brightness.">
+        <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: who effects and moods go to, Screen, five effects, five moods with Relax on, a sleep timer and every light with its mood and brightness.">
       </picture>
-      <p><b>Lighting</b>: start the Ambilight, pick an effect or a mood,
-      and adjust each light.</p>
+      <p><b>Lighting</b>: adjust each light, pick a mood or an effect,
+      or let the lights follow the screen.</p>
     </td>
     <td width="50%">
       <picture>
@@ -84,10 +93,10 @@ to date.
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/settings-light.png">
-        <img src="docs/screenshots/settings-dark.png" alt="The Settings page: Ambilight in fullscreen, language, appearance, startup and configuration export.">
+        <img src="docs/screenshots/settings-dark.png" alt="The Settings page: following fullscreen games and videos, language, appearance, startup and configuration export.">
       </picture>
-      <p><b>Settings</b>: automatic Ambilight, English or French, light or
-      dark, start at login, and a backup of your setup.</p>
+      <p><b>Settings</b>: following fullscreen games, English or French,
+      light or dark, start at login, and a backup of your setup.</p>
     </td>
   </tr>
 </table>
@@ -140,14 +149,14 @@ Each light also has a **height** (floor to ceiling), which picks the part of
 the picture it follows: a lamp on the floor mirrors the bottom of the screen,
 one on a shelf the top.
 
-### 4. Start
+### 4. Follow the screen
 
-Back on **Lighting**, click the **Ambilight** tile (or press
+Back on **Lighting**, click the **Screen** tile (or press
 <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd>), then launch a game or a
-film. On Windows you can skip this step: with *Ambilight in fullscreen* on
-(the default, in **Settings**) it starts and stops by itself when a game or a
-video goes fullscreen on the screen it reads; a video fullscreen on another
-screen leaves the lights alone.
+film. On Windows you can skip this step: with *Follow fullscreen games and
+videos* on (the default, in **Settings**) it starts and stops by itself when
+a game or a video goes fullscreen on the screen it reads; a video fullscreen
+on another screen leaves the lights alone.
 
 The lights follow the shot, not every small movement in it: while a scene
 stays the same and only someone or the camera moves a little, each bulb keeps
@@ -155,13 +164,13 @@ its colour, and only its brightness follows. A new shot changes it at once.
 A grey or near-black picture gives a white of the matching warmth rather than
 a faint tint, so a night scene does not turn the room lavender.
 
-With HDR on in Windows, the Ambilight reads the colours as they are composed
+With HDR on in Windows, Lueur reads the colours as they are composed
 and matches them to your *SDR content brightness* setting, so they don't come
 out washed out the way an HDR screen often looks in screen sharing. There is
-nothing to set: an *HDR* tag beside the Ambilight's name shows when it is so.
+nothing to set: an *HDR* tag on the Screen tile shows when it is so.
 
 When a film or video doesn't fill the screen (a wide film with bands above
-and below it, a 16:9 video on an ultrawide screen), the Ambilight leaves the
+and below it, a 16:9 video on an ultrawide screen), Lueur leaves the
 black bars out after a couple of seconds, so the lights near those edges
 follow the picture instead of going dark. Subtitles or a player's controls in
 a bar don't bring it back. *Ignore black bars* in **Settings** turns this
@@ -181,7 +190,7 @@ as a flashbang, takes a tenth of a second to reach full brightness, and
 longer when the picture keeps flashing.
 
 If the screen can't be read for a while (screen sharing stopped on Linux, a
-display gone), the Ambilight tile says so, and the lights keep their colour
+display gone), the Screen tile says so, and the lights keep their colour
 until it's back. Films from apps that protect their picture, such as the
 Netflix or Disney+ apps, come out black to every screen capture, Lueur's
 included: the lights then stay dim.
@@ -219,7 +228,7 @@ Bulbs someone shared with you one by one aren't visible this way: ask their
 owner to add you to their home instead.
 
 A Tuya bulb takes about ten colours a second, fewer than the other families.
-In the music show and the Ambilight it changes colour as often as it can,
+In the music show and with Screen it changes colour as often as it can,
 straight to each new colour rather than fading, so it keeps up with the
 others in coarser steps.
 
@@ -228,8 +237,8 @@ others in coarser steps.
 - **Tray.** Closing the window keeps Lueur in the tray. Turn off *Keep
   running when closed* in Settings and closing quits instead, while
   minimising goes to the tray (on Windows and Linux; a Mac minimises to the
-  Dock). The tray menu says what the lights show, starts and stops the Ambilight
-  and the effects and applies a mood, so you never have to leave a game.
+  Dock). The tray menu says what the lights show, starts and stops Screen and
+  the effects and applies a mood, so you never have to leave a game.
   Once an update is installed, it also restarts Lueur into it.
 - **Sleep timer.** While it runs, Lueur stays open even when closing the
   window would quit it, and keeps the computer from going to sleep by itself
@@ -240,7 +249,7 @@ others in coarser steps.
   loop, a WiZ bulb its matching scene (True colours, Sunset, Ocean,
   Candlelight), a LIFX bulb sways between two of the colours, and a Hue lamp
   plays its colour loop for Rainbow. The rest settle on a warm white: the
-  Ambilight and the music need Lueur to see and hear, and a Govee light
+  screen and the music need Lueur to see and hear, and a Govee light
   takes no loop over the network.
 - **At login.** *Open at login* and *Start hidden in the tray* in Settings;
   each light picks up the effect it was left playing.
@@ -282,7 +291,7 @@ others in coarser steps.
   those alone: a light one computer drives shows *On* and that computer's
   name on the other, and waits there, picking up again as soon as the first
   one lets go. *Take over* moves it at once. Nothing Lueur starts by itself,
-  like the Ambilight of a fullscreen game, ever takes a bulb from another
+  like following a fullscreen game, ever takes a bulb from another
   computer, and the sleep timer only puts out the lights it drives. A
   Yeelight that another app streams to is left alone the same way.
 - **Backup.** **Settings → Configuration** exports your setup to a file and

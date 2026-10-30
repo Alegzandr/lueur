@@ -1,6 +1,6 @@
 ---
 name: Lueur
-description: A low-latency ambilight for your smart bulbs, made for cosy night gaming.
+description: One app for all your smart bulbs, whatever the brand, with care in every detail.
 colors:
   paper: "oklch(0.972 0 0)"
   paper-sidebar: "oklch(0.948 0 0)"

@@ -40,7 +40,7 @@ lueur/
 │   │  └─ apps.rs        Windows: one application's sound
 │   ├─ lights.rs          Everyday control shared by window and tray
 │   ├─ manual.rs          Lights set by hand, through the flash guard
-│   ├─ auto.rs            Windows: Ambilight on while a game or video is fullscreen
+│   ├─ auto.rs            Windows: Screen on while a game or video is fullscreen
 │   ├─ natural.rs         The natural light, following the time of day
 │   ├─ sleep.rs           The sleep timer: fade out, then everything off
 │   ├─ devices.rs         Dispatch between the core families and Tuya
@@ -118,7 +118,7 @@ DXGI factory whether its view of the displays is still current, and opens
 again if not: one opened while Windows was still switching would otherwise
 keep reading the old format.
 
-On a Linux Wayland session the ambilight opens one xdg-desktop-portal
+On a Linux Wayland session the screen mode opens one xdg-desktop-portal
 ScreenCast session and reads its PipeWire stream, shrunk on arrival. The
 desktop asks once which screen to share; where the portal can remember it
 (ScreenCast version 4 and up: recent GNOME and KDE), the restore token it
@@ -310,7 +310,7 @@ would show both streams at once. Two things keep them apart.
   This covers another app, or a Lueur older than the leases. Other families
   cannot tell.
 
-The automatic Ambilight, resuming at launch and moving lights between
+Screen starting by itself, resuming at launch and moving lights between
 effects never take a bulb: only the user's *Take over* does, and it then
 opens the stream impolitely. Restoring hand-set colours and the sleep
 timer skip the bulbs another computer holds.
