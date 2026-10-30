@@ -11,6 +11,7 @@
     p,
     width,
     onset,
+    legend = true,
   }: {
     /** Where the selected object is now. */
     p: Vec2;
@@ -18,6 +19,8 @@
     width: number;
     /** Move it along one axis (the value is clamped to the plan). */
     onset: (axis: "x" | "y", v: number) => void;
+    /** Show the "Position" legend; off where a heading above already says it. */
+    legend?: boolean;
   } = $props();
 
   function onPosInput(axis: "x" | "y", e: Event & { currentTarget: HTMLInputElement }) {
@@ -34,7 +37,7 @@
 </script>
 
 <fieldset class="place">
-  <legend class="field-label">{t("position")}</legend>
+  <legend class="field-label" class:sr-only={!legend}>{t("position")}</legend>
   <div class="xy">
     {#each ["x", "y"] as const as axis}
       <label class="axis">

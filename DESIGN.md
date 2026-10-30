@@ -210,7 +210,8 @@ the floor plan alone. All values are OKLCH; every chrome grey has zero chroma.
 ### Neutral
 - **Paper** (`paper`) / **Night** (`night-bg`): the page behind everything.
 - **Sidebar Grey** (`paper-sidebar` / `night-sidebar`): one step darker than
-  the page, so the navigation recedes.
+  the page, so the navigation recedes. The navigation itself is frosted
+  (`sidebar-material`, that grey at about 73 % over the room's light).
 - **Surface** (`surface` / `night-surface`): cards, rows, fields, popovers.
   `surface-2`, `surface-hover` and `sunken` are single steps around it for
   disabled fills, hover and recessed wells (effect previews, the plan).
@@ -271,11 +272,19 @@ they change.
 
 ## Layout
 
-A fixed 200px sidebar on the left, the page on the right in a single scroll
+A 200px sidebar on the left (60px, icons only, once the window is 1100px wide
+or less), the page on the right in a single scroll
 column, max 820px wide, padded 28px top and bottom and 40px on the sides
 (same room below as above, so a page that fits never scrolls a few pixels).
 The Room page breaks the column: the plan takes the width and an inspector
-column sits on the right.
+column, 296px, sits on its right, on the page's ground like any other cards,
+under the same title line and with the plan's top edge. It is never a panel
+against the window's edge. With nothing selected it lists the lights (a zone
+mark, the name, the zone in words, a lamp dot when the bulb is missing), the
+screen and the walls (paint, then the corners folded away), each as a card
+of rows with its own *add*. A pick opens the object in its place, behind a
+back link. The column scrolls on its own, without a bar: the edge where more
+is hidden fades out.
 
 Pages stack **groups**: a small `text-3` group title, then a card. Groups are
 28px apart. Inside a card, rows are 44px minimum, padded 16px, split by 1px
@@ -373,9 +382,14 @@ on the field's own edge (offset 0). Selects take the raised control look with
 a drawn double chevron.
 
 ### Navigation
-Sidebar items 36px high, 7px radius, icon plus label. Hover fills
-`surface-hover`; the active page becomes a small card (surface + card edge)
-with its icon in Filament Amber. Count badges are grey pills.
+A frosted column over the same light as the page (the glow on Lighting,
+the room's photograph elsewhere, which run under it), parted from the page
+by a separator hairline. Sidebar items 36px high, 7px radius, icon plus
+label. Hover fills `surface-hover`; the active page becomes a small card
+(surface + card edge) with its icon in Filament Amber. Count badges are grey
+pills. In a window 1100px wide or less the column folds to 60px: icons
+alone, each still named in its tooltip and for screen readers, the logo
+without the name, and a count badge as a small pill on its icon's corner.
 
 ### The room's photographs (signature)
 The Lighting page shows its modes as photographs of one room (white wall,
@@ -403,7 +417,8 @@ photographs reads as a wall of thumbnails, not an interface.
 - **Mode tile.** Three columns beside the lights, six with the room for
   them; every picture in a grid is as high as a single column's (46 % of its
   width), the natural light's too, though it spans two columns. Playing on
-  every light picked: a 2px Active Amber ring and a lamp before the name; on
+  every light picked: a 2px Active Amber ring, an edge the colour need not
+  carry alone; on
   some of them, a dashed ring, with their names on hover. A playing animated
   mode's picture drifts slowly closer (8s); a pending one breathes; both
   stand still under reduced motion.
@@ -437,10 +452,14 @@ at night (0.7, 1.15). Still under reduced motion.
 Behind every page but Lighting (which has its glow pools), the photograph
 of the room as its lights make it now: the look most of them share, the
 dark room when they are off, a light set by hand tinting the neutral one.
-It sits at the top of the page, out of focus (6px blur), and dissolves
-into the ground by 62 % of the window's height, so cards stand on plain
-ground. `room-photo-opacity` and `room-photo-filter` set it per theme:
-lighter and brighter on paper (0.38), fuller at night (0.62). When the
+It sits at the top of the window, under the navigation too, out of focus,
+and dissolves into the ground by 62 % of the window's height, so cards
+stand on plain ground. `room-photo-opacity`, `room-photo-filter` and
+`room-photo-middle` set it per theme. At night it is the room in the dark,
+6px out of focus, at 0.62. On paper a dark room would only grey the
+ground, so it is blurred until no furniture is left, lifted to a high key
+and its middle (the dark screen) masked out: what remains is the warm wash
+of its two lamps, at 0.85. When the
 lights change it dissolves into the new room over 700 ms, at once under
 reduced motion. Page and section titles carry a halo of the page's ground
 so they read over it.

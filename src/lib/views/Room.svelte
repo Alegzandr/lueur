@@ -24,6 +24,13 @@
   /** True while something on the plan is being dragged. */
   let dragging = $state(false);
 
+  /** The list of corners stays unfolded while one of them is selected, so
+   *  going back lands on its row. */
+  let cornersOpen = $state(false);
+  $effect(() => {
+    if (other?.kind === "corner") cornersOpen = true;
+  });
+
   // --- Focus ---
   // Picking from the list, or adding, moves the focus to the inspector; going
   // back returns it to where it came from, or to the object's row in the list.
@@ -235,7 +242,7 @@
   /** Where an object's row sits in the list, to land on its neighbour. */
   function rowIndex(key: string): number {
     const { lights, walls } = app.config.room;
-    return ["screen", ...lights.map((l) => `light:${l.id}`), ...walls.map((_, i) => `corner:${i}`)].indexOf(key);
+    return [...lights.map((l) => `light:${l.id}`), "screen", ...walls.map((_, i) => `corner:${i}`)].indexOf(key);
   }
 
   // --- History ---
@@ -304,34 +311,29 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="room">
-  <section class="stage-col">
-    <header class="bar">
-      <h1 class="page-title">{t("nav_room")}</h1>
-      <div class="tools">
-        <div class="btn-group">
-          <button
-            class="btn icon"
-            title="{t('undo')} ({MOD_KEY}Z)"
-            aria-label={t("undo")}
-            disabled={!history.canUndo}
-            onclick={() => travel("undo")}><Icon name="undo" size={15} /></button
-          >
-          <button
-            class="btn icon"
-            title="{t('redo')} ({MOD_KEY === '⌘' ? '⇧⌘Z' : 'Ctrl+Y'})"
-            aria-label={t("redo")}
-            disabled={!history.canRedo}
-            onclick={() => travel("redo")}><Icon name="redo" size={15} /></button
-          >
-        </div>
-        <button class="btn plain" onclick={resetShape}>{t("reset_shape")}</button>
-        <div class="btn-group">
-          <button class="btn" onclick={addCorner}>{t("add_corner")}</button>
-          <button class="btn" onclick={newLight}>{t("add_light")}</button>
-        </div>
-      </div>
-    </header>
+  <header class="bar">
+    <h1 class="page-title">{t("nav_room")}</h1>
+    <!-- Adding and resetting live in the column beside the plan, next to
+         what they act on; only the history stays up here. -->
+    <div class="btn-group">
+      <button
+        class="btn icon"
+        title="{t('undo')} ({MOD_KEY}Z)"
+        aria-label={t("undo")}
+        disabled={!history.canUndo}
+        onclick={() => travel("undo")}><Icon name="undo" size={15} /></button
+      >
+      <button
+        class="btn icon"
+        title="{t('redo')} ({MOD_KEY === '⌘' ? '⇧⌘Z' : 'Ctrl+Y'})"
+        aria-label={t("redo")}
+        disabled={!history.canRedo}
+        onclick={() => travel("redo")}><Icon name="redo" size={15} /></button
+      >
+    </div>
+  </header>
 
+  <section class="stage-col">
     {#if !app.config.interface.room_arranged && app.config.room.lights.length > 0}
       <div class="coach" role="status">
         <span class="lamp" aria-hidden="true"></span>
@@ -362,7 +364,7 @@
         onset={setPos}
       />
     {:else}
-      <Objects onpick={pick} />
+      <Objects onpick={pick} onaddlight={newLight} onaddcorner={addCorner} onreset={resetShape} bind:cornersOpen />
     {/if}
   </aside>
 
@@ -371,11 +373,18 @@
 </div>
 
 <style>
+  /* The plan and the column beside it sit in the page like the cards of the
+     other pages, under one title and on one top line: the column is not a
+     panel against the window's edge, which the title bar and the scrollbar's
+     gutter would leave ragged. The right padding is the left one less that
+     gutter. */
   .room {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 288px;
-    grid-template-rows: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 296px;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: var(--s-3) var(--s-5);
     height: 100%;
+    padding: var(--s-5) var(--s-3) var(--s-5) var(--s-6);
   }
 
   /* Stage */
@@ -384,10 +393,10 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    padding: var(--s-5) var(--s-5) var(--s-5) var(--s-6);
     gap: var(--s-3);
   }
   .bar {
+    grid-column: 1 / -1;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -405,22 +414,71 @@
   .coach p {
     flex: 1;
   }
-  .tools {
-    display: flex;
-    gap: var(--s-2);
-  }
   .banner-slot:empty {
     display: none;
   }
 
-  /* Inspector */
+  /* Inspector. It scrolls on its own when the window is short; the few
+     pixels of padding keep the cards' edges and focus rings from being cut
+     by that scroll box. */
   .inspector {
-    border-left: 1px solid var(--line);
-    background: var(--sidebar);
-    padding: var(--s-4);
+    min-height: 0;
     overflow: auto;
     display: flex;
     flex-direction: column;
     align-items: stretch;
+    margin: -4px;
+    padding: 4px;
+    /* No bar squeezed against the cards: the wheel, the keyboard and the
+       fades below say there is more. */
+    scrollbar-width: none;
+  }
+  .inspector::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* The edge where more is hidden fades out, and only while there is more
+     that way: the fades follow the scroll position, and a column that fits
+     has no scroll timeline, so no fade. */
+  @property --fade-top {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+  }
+  @property --fade-bottom {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+  }
+  @supports (animation-timeline: scroll()) {
+    .inspector {
+      mask-image: linear-gradient(
+        to bottom,
+        transparent,
+        #000 var(--fade-top),
+        #000 calc(100% - var(--fade-bottom)),
+        transparent
+      );
+      animation: inspector-fades linear both;
+      animation-timeline: scroll(self);
+      /* This follows the scroll, it is not motion: the reduced-motion rule's
+         short duration would freeze it at its end. */
+      animation-duration: auto !important;
+    }
+  }
+  @keyframes inspector-fades {
+    0% {
+      --fade-top: 0px;
+      --fade-bottom: 32px;
+    }
+    6%,
+    94% {
+      --fade-top: 32px;
+      --fade-bottom: 32px;
+    }
+    100% {
+      --fade-top: 32px;
+      --fade-bottom: 0px;
+    }
   }
 </style>

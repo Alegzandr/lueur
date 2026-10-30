@@ -149,6 +149,11 @@ your seat to turn the screen towards you, and drag each **light** to where it
 really stands. New bulbs start in a row behind the screen, the most common
 setup.
 
+The column beside the plan lists the lights, the screen and the walls. Pick
+a light to rename it, set its height or find its bulb; add one with *Add
+light*. The wall paint is there too, and the corners, folded under *Corners*,
+with *Add corner* and *Reset shape*.
+
 Each light also has a **height** (floor to ceiling), which picks the part of
 the picture it follows: a lamp on the floor mirrors the bottom of the screen,
 one on a shelf the top.

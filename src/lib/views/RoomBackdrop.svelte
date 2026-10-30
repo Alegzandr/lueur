@@ -53,8 +53,13 @@
     overflow: hidden;
     pointer-events: none;
     opacity: var(--room-photo-opacity);
-    /* Gone by the time the cards gather: the page's own ground below. */
-    mask-image: linear-gradient(to bottom, #000 0%, rgb(0 0 0 / 0.55) 45%, transparent 100%);
+    /* Gone by the time the cards gather: the page's own ground below. On
+       paper its middle goes too (--room-photo-middle), where the dark
+       screen would leave a grey stain. */
+    mask-image:
+      linear-gradient(to bottom, #000 0%, rgb(0 0 0 / 0.55) 45%, transparent 100%),
+      radial-gradient(ellipse 34% 75% at 50% 20%, var(--room-photo-middle) 20%, #000 100%);
+    mask-composite: intersect;
   }
   .layer {
     position: absolute;

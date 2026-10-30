@@ -113,9 +113,8 @@
         onclick={() => applyScene(m.id)}
       >
         <span class="pic"><img src={pictureOf(m.id)} alt="" draggable="false" /></span>
-        <!-- Showing: an amber ring and a lamp, not the colour alone. -->
         <span class="tile-name">
-          {#if moodAll(m.id)}<span class="lamp" aria-hidden="true"></span>{/if}{m.name}
+          {m.name}
         </span>
       </button>
     {/each}
@@ -137,7 +136,7 @@
       >
         <span class="pic"><img src={pictureOf(a.id)} alt="" draggable="false" /></span>
         <span class="tile-name">
-          {#if playsAll(a.id)}<span class="lamp" aria-hidden="true"></span>{/if}{modeName(a.id)}
+          {modeName(a.id)}
         </span>
       </button>
     {/each}
@@ -319,12 +318,9 @@
     line-height: 1.25;
     text-wrap: balance;
   }
-  .tile-name .lamp {
-    --lamp: 6px;
-  }
 
-  /* Playing on every light picked: an amber ring and a lamp before the
-     name; on some of them, a dashed ring, with their names on hover. */
+  /* Playing on every light picked: an amber ring, an edge rather than a
+     colour alone; on some of them, a dashed ring, with their names on hover. */
   .tile.active {
     box-shadow: inset 0 0 0 2px var(--active);
   }

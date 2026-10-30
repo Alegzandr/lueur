@@ -14,6 +14,9 @@
 :root {
   --bg: oklch(0.972 0 0);
   --sidebar: oklch(0.948 0 0);
+  /* The navigation is frosted like the cards, over the same room's light,
+     a little more opaque so the page stays the brighter of the two. */
+  --sidebar-material: oklch(0.955 0 0 / 0.74);
   --surface: oklch(1 0 0);
   --surface-2: oklch(0.962 0 0);
   --surface-hover: oklch(0.935 0 0);
@@ -42,10 +45,14 @@
   --active-soft: oklch(0.76 0.15 70 / 0.16);
   --select: oklch(0.34 0 0);
   --select-soft: oklch(0 0 0 / 0.045);
-  /* The room's photograph behind the pages: lighter on paper, where a night
-     picture would muddy the ground, fuller at night. */
-  --room-photo-opacity: 0.38;
-  --room-photo-filter: brightness(1.2) saturate(1.1);
+  /* The room's photograph behind the pages. On paper the dim room would
+     only grey the ground: blurred until its furniture is gone, lifted to a
+     high key, and with its middle (the dark screen) left out, it leaves the
+     two lamps' light as a wash. Whole and fuller at night, where it is a
+     room in the dark. */
+  --room-photo-opacity: 0.85;
+  --room-photo-filter: blur(40px) contrast(0.5) brightness(1.8) saturate(1.6);
+  --room-photo-middle: transparent;
 
   --ok: oklch(0.58 0.14 150);
   --danger: oklch(0.55 0.19 27);
@@ -138,6 +145,7 @@
   :root:not([data-theme="light"]) {
     --bg: oklch(0.205 0 0);
     --sidebar: oklch(0.18 0 0);
+    --sidebar-material: oklch(0.17 0 0 / 0.72);
     --surface: oklch(0.24 0 0);
     --surface-2: oklch(0.26 0 0);
     --surface-hover: oklch(0.29 0 0);
@@ -160,6 +168,7 @@
     --select-soft: oklch(1 0 0 / 0.06);
     --room-photo-opacity: 0.62;
     --room-photo-filter: none;
+    --room-photo-middle: #000;
     --ok: oklch(0.76 0.13 150);
     --danger: oklch(0.72 0.16 27);
     --danger-soft: oklch(0.72 0.16 27 / 0.15);
@@ -196,6 +205,7 @@
 :root[data-theme="dark"] {
   --bg: oklch(0.205 0 0);
   --sidebar: oklch(0.18 0 0);
+  --sidebar-material: oklch(0.17 0 0 / 0.72);
   --surface: oklch(0.24 0 0);
   --surface-2: oklch(0.26 0 0);
   --surface-hover: oklch(0.29 0 0);
@@ -218,6 +228,7 @@
   --select-soft: oklch(1 0 0 / 0.06);
   --room-photo-opacity: 0.62;
   --room-photo-filter: none;
+  --room-photo-middle: #000;
   --ok: oklch(0.76 0.13 150);
   --danger: oklch(0.72 0.16 27);
   --danger-soft: oklch(0.72 0.16 27 / 0.15);

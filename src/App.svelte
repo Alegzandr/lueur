@@ -106,10 +106,15 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="shell">
+  <!-- Behind the lighting, what the bulbs do; behind the other pages, the
+       room as they make it. Under the whole window, the navigation too,
+       and outside the scroll, so they stay put. -->
+  {#if app.view === "lighting"}<Backdrop />{:else}<RoomBackdrop />{/if}
+
   <aside class="sidebar">
     <div class="brand" data-tauri-drag-region={OWN_TITLEBAR || undefined}>
       <Logo size={22} />
-      Lueur
+      <span class="brand-name">Lueur</span>
     </div>
 
     <!-- Settings sit apart at the foot, away from the views used day to day. -->
@@ -134,9 +139,6 @@
   </aside>
 
   <main class="content">
-    <!-- Behind the lighting, what the bulbs do; behind the other pages, the
-         room as they make it. Outside the scroll, so they stay put. -->
-    {#if app.view === "lighting"}<Backdrop />{:else}<RoomBackdrop />{/if}
     {#if OWN_TITLEBAR}
       <TitleBar />
     {:else if app.updateReady}
@@ -168,8 +170,14 @@
 
 <style>
   .shell {
+    position: relative;
+    isolation: isolate;
     display: flex;
     height: 100vh;
+  }
+  .shell > :global(.backdrop),
+  .shell > :global(.room-backdrop) {
+    z-index: -1;
   }
 
   .sidebar {
@@ -178,8 +186,13 @@
     display: flex;
     flex-direction: column;
     padding: var(--s-3) var(--s-2);
-    background: var(--sidebar);
-    border-right: 1px solid var(--line);
+    /* Frosted, like the cards: the room's light reaches the navigation too,
+       softened, instead of stopping at a grey wall. */
+    background: var(--sidebar-material);
+    -webkit-backdrop-filter: var(--material-filter);
+    backdrop-filter: var(--material-filter);
+    box-shadow: 1px 0 0 var(--separator);
+    transition: width 220ms var(--ease);
   }
 
   .brand {
@@ -252,6 +265,44 @@
     margin-top: auto;
   }
 
+  /* A narrow window keeps its width for the page: the navigation folds to
+     its icons. Each keeps its name, in its tooltip and for screen readers,
+     and the count of bulbs without a place becomes a dot on its icon. */
+  @media (max-width: 1100px) {
+    .sidebar {
+      width: 60px;
+    }
+    .brand {
+      justify-content: center;
+      padding-inline: 0;
+    }
+    .brand-name,
+    .nav-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .nav-item {
+      position: relative;
+      justify-content: center;
+      padding: 0;
+    }
+    .badge {
+      position: absolute;
+      top: 3px;
+      right: 4px;
+      min-width: 15px;
+      height: 15px;
+      padding: 0 4px;
+      font-size: 9.5px;
+      line-height: 15px;
+      box-shadow: 0 0 0 2px var(--sidebar);
+    }
+  }
+
   .content {
     position: relative;
     isolation: isolate;
@@ -260,10 +311,6 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-  }
-  .content > :global(.backdrop),
-  .content > :global(.room-backdrop) {
-    z-index: -1;
   }
   .topbar {
     display: flex;
