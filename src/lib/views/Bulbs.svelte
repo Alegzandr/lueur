@@ -532,6 +532,8 @@
   .col {
     min-width: 0;
   }
+  /* A pairing or an import open above the lists stands a group apart. */
+  .group + .layout,
   .layout > .col + .col,
   .col > :global(.group + .group) {
     margin-top: var(--s-6);

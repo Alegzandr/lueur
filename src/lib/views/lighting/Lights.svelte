@@ -75,10 +75,10 @@
                 aria-describedby="light-sub-{l.id}"
                 onclick={() => toggleTarget(l.id)}
               >
-                <span class="name">{l.name}</span>
+                <span class="name" title={l.name}>{l.name}</span>
               </button>
             {:else}
-              <span class="name">{l.name}</span>
+              <span class="name" title={l.name}>{l.name}</span>
             {/if}
             <span class="sub" id="light-sub-{l.id}">
               {#if !b}
@@ -162,9 +162,13 @@
     background: linear-gradient(var(--select-soft), var(--select-soft)), var(--material-hover);
     box-shadow: inset 0 0 0 1.5px var(--select);
   }
-  /* No bulb yet: an outline waiting for one, not a card. */
+  /* No bulb yet: an outline waiting for one, not a card. The glow behind it
+     is drained of its colour: bare, it would read as the brightest light of
+     the row, when this one gives none. */
   .light.unbound {
     background: none;
+    -webkit-backdrop-filter: blur(28px) saturate(0.2);
+    backdrop-filter: blur(28px) saturate(0.2);
     box-shadow: inset 0 0 0 1px var(--line-strong);
   }
   .disc {

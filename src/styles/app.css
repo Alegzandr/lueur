@@ -307,6 +307,12 @@ h3 {
   font-weight: 600;
 }
 
+/* No word left alone on a paragraph's last line, in either language. */
+p,
+li {
+  text-wrap: pretty;
+}
+
 button,
 input,
 select {

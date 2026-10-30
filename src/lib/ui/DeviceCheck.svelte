@@ -77,6 +77,8 @@
 <!-- Always present, so only the arrival of news is read out. -->
 <div class="sr-only" role="status">{news}</div>
 
+{#if shown.length > 0}
+<div class="checks">
 {#each shown as d (d.id)}
   <div class="banner">
     <div class="text">
@@ -103,8 +105,17 @@
     </div>
   </div>
 {/each}
+</div>
+{/if}
 
 <style>
+  /* Above the page's groups, a group apart from them. */
+  .checks {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-2);
+    margin-bottom: var(--s-6);
+  }
   .banner {
     display: flex;
     align-items: center;

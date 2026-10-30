@@ -375,16 +375,15 @@
 <style>
   /* The plan and the column beside it sit in the page like the cards of the
      other pages, under one title and on one top line: the column is not a
-     panel against the window's edge, which the title bar and the scrollbar's
-     gutter would leave ragged. The right padding is the left one less that
-     gutter. */
+     panel against the window's edge. The title and both edges stand where
+     every other page has its own, so nothing jumps when the page changes. */
   .room {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 296px;
     grid-template-rows: auto minmax(0, 1fr);
     gap: var(--s-3) var(--s-5);
     height: 100%;
-    padding: var(--s-5) var(--s-3) var(--s-5) var(--s-6);
+    padding: var(--s-6) var(--s-7) var(--s-5);
   }
 
   /* Stage */
@@ -401,6 +400,7 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--s-4);
+    min-height: 34px;
   }
   .coach {
     display: flex;
