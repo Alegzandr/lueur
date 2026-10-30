@@ -389,6 +389,10 @@ If a game hides itself from capture, the bulbs simply see a black screen;
 switching the game to *borderless windowed* usually fixes it. Lueur never
 tries to get around that.
 
+On Windows the program is `lueur-app.exe`. Overwolf knows a game by the name
+`lueur.exe`, so with the old name Outplayed and other Overwolf apps took
+Lueur for that game and ended the recording of the one being played.
+
 ## Privacy
 
 Lueur talks to your bulbs on your local network, and only at private

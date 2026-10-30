@@ -406,7 +406,12 @@ somewhere other than the user config dir while testing.
 **Windows.** Started from anywhere, the executable copies itself to
 `%LOCALAPPDATA%\Lueur`, adds a Start menu shortcut and an entry in *Installed
 apps*, then relaunches from there. An older download never replaces a newer
-install.
+install. The installed copy is `lueur-app.exe`, not `lueur.exe`: Overwolf
+lists a game under that name and matches it by name alone, so Outplayed took
+Lueur for a game. An install from 0.18 or earlier, still `lueur.exe`, copies
+itself to the new name on its first launch of a later version, which then
+remakes the Start menu shortcut and deletes the old file. Development builds
+keep Cargo's `lueur.exe`.
 
 **Updates.** Each launch shows a small window while Lueur checks the latest
 GitHub release; a new version is downloaded, its signature checked, installed,

@@ -30,7 +30,13 @@ use winreg::RegKey;
 use winreg::enums::{HKEY_CURRENT_USER, KEY_SET_VALUE};
 
 const DIR_NAME: &str = "Lueur";
-const EXE_NAME: &str = "lueur.exe";
+/// Not `lueur.exe`: Overwolf lists a game, Dawnfolk, under that name and
+/// matches it by name alone, so Outplayed took Lueur for a game and ended the
+/// session of the one being played.
+const EXE_NAME: &str = "lueur-app.exe";
+/// The name installs had up to 0.18. An install still under it moves to
+/// `EXE_NAME` the first time it runs this version.
+const LEGACY_EXE_NAME: &str = "lueur.exe";
 const OLD_EXE_NAME: &str = "lueur.old.exe";
 const PRODUCT: &str = "Lueur";
 const UNINSTALL_ARG: &str = "--uninstall";
@@ -66,8 +72,16 @@ pub fn prepare() -> bool {
 
     if same_file(&current, &target) {
         let _ = fs::remove_file(dir.join(OLD_EXE_NAME));
-        if let Err(e) = register(&dir, &target) {
-            log::error!("install: {e}");
+        let legacy = dir.join(LEGACY_EXE_NAME);
+        let moved = legacy.exists();
+        match register(&dir, &target, moved) {
+            // Only once the shortcut points here. The old copy that launched
+            // this one may not have exited yet; the next launch tries again.
+            Ok(()) if moved => {
+                let _ = fs::remove_file(&legacy);
+            }
+            Ok(()) => {}
+            Err(e) => log::error!("install: {e}"),
         }
         return true;
     }
@@ -163,7 +177,10 @@ fn copy_to(current: &Path, dir: &Path, target: &Path) -> io::Result<()> {
     fs::rename(&staged, target)
 }
 
-fn register(dir: &Path, target: &Path) -> io::Result<()> {
+/// `moved`: the install was under `LEGACY_EXE_NAME`, so an existing shortcut
+/// points at a file about to go and is made again. The login item follows on
+/// its own once the app starts (see `crate::start`).
+fn register(dir: &Path, target: &Path, moved: bool) -> io::Result<()> {
     let exe = target.display().to_string();
     let size_kb = fs::metadata(target).map(|m| m.len() / 1024).unwrap_or(0);
     let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(UNINSTALL_KEY)?;
@@ -181,7 +198,7 @@ fn register(dir: &Path, target: &Path) -> io::Result<()> {
     key.set_value("NoRepair", &1u32)?;
     key.set_value("EstimatedSize", &(size_kb as u32))?;
 
-    if let Some(link) = shortcut_path().filter(|p| !p.exists()) {
+    if let Some(link) = shortcut_path().filter(|p| moved || !p.exists()) {
         create_shortcut(target, &link).map_err(io::Error::other)?;
     }
     Ok(())
