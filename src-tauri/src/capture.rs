@@ -9,6 +9,13 @@
 //! is the one piece that must know about the OS, so it is kept deliberately
 //! small: everything downstream consumes plain [`Frame`]s.
 //!
+//! ## HDR
+//! With HDR on, Windows composes the desktop in 16-bit floats. Desktop
+//! Duplication reads those as they are and brings them back to the colours
+//! an SDR desktop would show, at the SDR white the user picked in Windows
+//! (see [`hdr`]). The GDI fallback only sees the 8-bit image, which looks
+//! washed out on an HDR display.
+//!
 //! ## Exclusive fullscreen
 //! Desktop Duplication sees borderless *and* exclusive-fullscreen games on
 //! Windows 10/11. If a title still refuses to be captured (a handful of
@@ -26,6 +33,8 @@ pub mod bench;
 mod dxgi;
 #[cfg(windows)]
 mod gdi;
+#[cfg(windows)]
+mod hdr;
 #[cfg(any(windows, target_os = "linux"))]
 mod scale;
 #[cfg(target_os = "linux")]

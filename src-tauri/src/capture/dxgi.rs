@@ -11,10 +11,21 @@
 //! The mip chain is built in an sRGB view of the desktop, so the GPU averages
 //! in linear light; that keeps the averages as vivid as the engine's own
 //! squared-value accumulation would.
+//!
+//! On a display with HDR on, the desktop is read in the 16-bit floats Windows
+//! composes it in, which are already linear, and brought back to sRGB after
+//! the shrink (see [`hdr`](super::hdr)).
 
+use super::hdr::{self, ToSdr};
 use lueur_core::engine::{Frame, PixelFormat};
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::HMODULE;
+use windows::Win32::Devices::Display::{
+    DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL, DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+    DISPLAYCONFIG_DEVICE_INFO_HEADER, DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO,
+    DISPLAYCONFIG_SDR_WHITE_LEVEL, DISPLAYCONFIG_SOURCE_DEVICE_NAME, DisplayConfigGetDeviceInfo,
+    GetDisplayConfigBufferSizes, QDC_ONLY_ACTIVE_PATHS, QueryDisplayConfig,
+};
+use windows::Win32::Foundation::{ERROR_SUCCESS, HMODULE};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CPU_ACCESS_READ,
@@ -25,18 +36,24 @@ use windows::Win32::Graphics::Direct3D11::{
     ID3D11Resource, ID3D11ShaderResourceView, ID3D11Texture2D,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
-    DXGI_MODE_ROTATION_IDENTITY, DXGI_MODE_ROTATION_UNSPECIFIED, DXGI_SAMPLE_DESC,
+    DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM,
+    DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_MODE_ROTATION_IDENTITY,
+    DXGI_MODE_ROTATION_UNSPECIFIED, DXGI_SAMPLE_DESC,
 };
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO, IDXGIAdapter1,
-    IDXGIFactory1, IDXGIOutput1, IDXGIOutputDuplication, IDXGIResource,
+    IDXGIFactory1, IDXGIOutput1, IDXGIOutput5, IDXGIOutput6, IDXGIOutputDuplication, IDXGIResource,
 };
 use windows::core::Interface;
 
 /// The readback is the smallest mip level at least this wide: plenty for zone
 /// averages, and small enough that copying it out is negligible.
 const MIN_READBACK_WIDTH: u32 = 256;
+
+/// How often an HDR session asks Windows for the SDR white again: moving the
+/// brightness slider does not always interrupt the duplication, so nothing
+/// else would tell.
+const WHITE_REFRESH: Duration = Duration::from_secs(2);
 
 /// The mip level whose width is the smallest one still `>= MIN_READBACK_WIDTH`.
 fn readback_level(width: u32) -> u32 {
@@ -95,10 +112,12 @@ impl DxgiSource {
     }
 }
 
-/// GPU objects sized for one desktop resolution.
+/// GPU objects sized for one desktop resolution and format.
 struct Target {
     source_width: u32,
     source_height: u32,
+    /// The mip chain's format: 8-bit BGRA, or 16-bit floats on an HDR desktop.
+    format: DXGI_FORMAT,
     mips: ID3D11Resource,
     view: ID3D11ShaderResourceView,
     staging: ID3D11Resource,
@@ -111,8 +130,15 @@ struct Session {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     duplication: IDXGIOutputDuplication,
+    /// The mip chain's format for an 8-bit desktop.
     format: DXGI_FORMAT,
     target: Option<Target>,
+    /// The GDI name of the display, which is how Windows is asked for its
+    /// SDR white.
+    display: [u16; 32],
+    to_sdr: ToSdr,
+    /// When an HDR session next asks for the SDR white.
+    white_at: Instant,
 }
 
 impl Session {
@@ -158,8 +184,21 @@ impl Session {
         let device: ID3D11Device = device.ok_or("no D3D11 device")?;
         let context = context.ok_or("no D3D11 context")?;
 
-        let duplication =
-            unsafe { output.DuplicateOutput(&device) }.map_err(err("desktop duplication"))?;
+        let name = unsafe { output.GetDesc() }
+            .map_err(err("output description"))?
+            .DeviceName;
+        let hdr_on = is_hdr(output);
+        let white = if hdr_on { sdr_white(&name) } else { None };
+        let duplication = if hdr_on {
+            log::info!(
+                "HDR display, SDR white at {:.0} nits{}",
+                white.unwrap_or(hdr::DEFAULT_WHITE) * 80.0,
+                if white.is_some() { "" } else { " (assumed)" }
+            );
+            duplicate_hdr(output, &device)?
+        } else {
+            unsafe { output.DuplicateOutput(&device) }.map_err(err("desktop duplication"))?
+        };
 
         // A rotated desktop arrives in panel orientation. GDI hands it back the
         // way the user sees it, so leave those setups to the fallback.
@@ -184,6 +223,9 @@ impl Session {
             duplication,
             format,
             target: None,
+            display: name,
+            to_sdr: ToSdr::new(white.unwrap_or(hdr::DEFAULT_WHITE)),
+            white_at: Instant::now() + WHITE_REFRESH,
         })
     }
 
@@ -231,12 +273,18 @@ impl Session {
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         unsafe { texture.GetDesc(&mut desc) };
 
-        let stale = self
-            .target
-            .as_ref()
-            .is_none_or(|t| t.source_width != desc.Width || t.source_height != desc.Height);
+        // An HDR desktop arrives in 16-bit floats, which are already linear
+        // and stay floats down the mip chain; anything else is 8-bit BGRA.
+        let format = if desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT {
+            DXGI_FORMAT_R16G16B16A16_FLOAT
+        } else {
+            self.format
+        };
+        let stale = self.target.as_ref().is_none_or(|t| {
+            t.source_width != desc.Width || t.source_height != desc.Height || t.format != format
+        });
         if stale {
-            self.target = Some(self.make_target(desc.Width, desc.Height)?);
+            self.target = Some(self.make_target(desc.Width, desc.Height, format)?);
         }
         let Some(t) = self.target.as_ref() else {
             return Err("no capture target".into());
@@ -255,6 +303,13 @@ impl Session {
         let Some(t) = self.target.as_ref() else {
             return Err("no capture target".into());
         };
+        let floats = t.format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+        if floats && Instant::now() >= self.white_at {
+            self.white_at = Instant::now() + WHITE_REFRESH;
+            if let Some(white) = sdr_white(&self.display) {
+                self.to_sdr.set_white(white);
+            }
+        }
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         unsafe {
             self.context.GenerateMips(Some(&t.view));
@@ -273,37 +328,42 @@ impl Session {
                 .map_err(err("map readback"))?;
         }
 
-        let row = t.width as usize * 4;
+        let pixel = if floats { 8 } else { 4 };
+        let row = t.width as usize * pixel;
         let out = frame.get_or_insert_with(|| Frame::new(0, 0, PixelFormat::Bgra, Vec::new()));
         out.width = t.width;
         out.height = t.height;
         out.format = PixelFormat::Bgra;
         out.data.clear();
-        out.data.reserve(row * t.height as usize);
+        out.data.reserve(t.width as usize * 4 * t.height as usize);
         for y in 0..t.height as usize {
             // SAFETY: the mapped staging texture is `height` rows of `RowPitch`
-            // bytes, each at least `width * 4` long, and stays mapped until the
-            // `Unmap` below.
+            // bytes, each at least `width * pixel` long, and stays mapped until
+            // the `Unmap` below.
             let line = unsafe {
                 std::slice::from_raw_parts(
                     (mapped.pData as *const u8).add(y * mapped.RowPitch as usize),
                     row,
                 )
             };
-            out.data.extend_from_slice(line);
+            if floats {
+                self.to_sdr.convert_row(line, &mut out.data);
+            } else {
+                out.data.extend_from_slice(line);
+            }
         }
         unsafe { self.context.Unmap(Some(&t.staging), 0) };
         Ok(())
     }
 
-    fn make_target(&self, width: u32, height: u32) -> Result<Target, String> {
+    fn make_target(&self, width: u32, height: u32, format: DXGI_FORMAT) -> Result<Target, String> {
         let level = readback_level(width);
         let base = D3D11_TEXTURE2D_DESC {
             Width: width,
             Height: height,
             MipLevels: level + 1,
             ArraySize: 1,
-            Format: self.format,
+            Format: format,
             SampleDesc: DXGI_SAMPLE_DESC {
                 Count: 1,
                 Quality: 0,
@@ -348,6 +408,7 @@ impl Session {
         Ok(Target {
             source_width: width,
             source_height: height,
+            format,
             mips: mips.cast().map_err(err("mip resource"))?,
             view: view.ok_or("no mip view")?,
             staging: staging.cast().map_err(err("readback resource"))?,
@@ -356,6 +417,104 @@ impl Session {
             height: small_height,
         })
     }
+}
+
+/// Whether HDR is on for this output: Windows then drives it in the BT.2100
+/// PQ colour space. Before Windows 10 1803 there is no `IDXGIOutput6`, and no
+/// way to ask, so the output is taken as SDR.
+fn is_hdr(output: &IDXGIOutput1) -> bool {
+    output
+        .cast::<IDXGIOutput6>()
+        .and_then(|o| unsafe { o.GetDesc1() })
+        .is_ok_and(|d| d.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020)
+}
+
+/// Duplicate an HDR output in the 16-bit floats it is composed in. Where
+/// Windows refuses, the 8-bit image still works, only washed out.
+fn duplicate_hdr(
+    output: &IDXGIOutput1,
+    device: &ID3D11Device,
+) -> Result<IDXGIOutputDuplication, String> {
+    // The 8-bit format stays on the list, as the documentation asks: DXGI
+    // falls back to it when the floats are not available.
+    let formats = [DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_B8G8R8A8_UNORM];
+    match output
+        .cast::<IDXGIOutput5>()
+        .and_then(|o| unsafe { o.DuplicateOutput1(device, 0, &formats) })
+    {
+        Ok(duplication) => Ok(duplication),
+        Err(e) => {
+            log::warn!("HDR desktop duplication unavailable, colours may look washed out: {e}");
+            unsafe { output.DuplicateOutput(device) }.map_err(err("desktop duplication"))
+        }
+    }
+}
+
+/// The SDR white Windows uses on the display named `device`, in scRGB units
+/// (1.0 is 80 nits): what the "SDR content brightness" slider is set to.
+/// None where Windows does not say: before Windows 10 1709, or for a display
+/// it does not list.
+fn sdr_white(device: &[u16; 32]) -> Option<f32> {
+    let (mut path_count, mut mode_count) = (0u32, 0u32);
+    let sized = unsafe {
+        GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count)
+    };
+    if sized != ERROR_SUCCESS {
+        return None;
+    }
+    let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); path_count as usize];
+    let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); mode_count as usize];
+    let queried = unsafe {
+        QueryDisplayConfig(
+            QDC_ONLY_ACTIVE_PATHS,
+            &mut path_count,
+            paths.as_mut_ptr(),
+            &mut mode_count,
+            modes.as_mut_ptr(),
+            None,
+        )
+    };
+    if queried != ERROR_SUCCESS {
+        return None;
+    }
+    paths.truncate(path_count as usize);
+
+    // A path joins the source DXGI names to the target, the panel, whose
+    // white it is.
+    paths.iter().find_map(|path| {
+        let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
+            header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+                r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+                size: size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32,
+                adapterId: path.sourceInfo.adapterId,
+                id: path.sourceInfo.id,
+            },
+            viewGdiDeviceName: [0; 32],
+        };
+        if unsafe { DisplayConfigGetDeviceInfo(&mut source.header) } != 0
+            || !same_name(&source.viewGdiDeviceName, device)
+        {
+            return None;
+        }
+        let mut white = DISPLAYCONFIG_SDR_WHITE_LEVEL {
+            header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+                r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL,
+                size: size_of::<DISPLAYCONFIG_SDR_WHITE_LEVEL>() as u32,
+                adapterId: path.targetInfo.adapterId,
+                id: path.targetInfo.id,
+            },
+            SDRWhiteLevel: 0,
+        };
+        // Windows gives the level in thousandths of 80 nits.
+        (unsafe { DisplayConfigGetDeviceInfo(&mut white.header) } == 0 && white.SDRWhiteLevel > 0)
+            .then(|| white.SDRWhiteLevel as f32 / 1000.0)
+    })
+}
+
+/// Two NUL-terminated wide strings, compared up to their terminators.
+fn same_name(a: &[u16; 32], b: &[u16; 32]) -> bool {
+    let end = |s: &[u16; 32]| s.iter().position(|&c| c == 0).unwrap_or(s.len());
+    a[..end(a)] == b[..end(b)]
 }
 
 #[cfg(test)]
@@ -402,11 +561,15 @@ mod tests {
         let whole = lueur_core::geometry::SampleZone::new(0.0, 0.0, 1.0, 1.0);
         println!("dxgi: screen average {:?}", f.average_zone(&whole, 1));
         println!(
-            "dxgi: {}x{} readback, {:.3} ms per frame over {reads} frames (srgb mips: {})",
+            "dxgi: {}x{} readback, {:.3} ms per frame over {reads} frames (srgb mips: {}, hdr: {})",
             f.width,
             f.height,
             spent.as_secs_f64() * 1000.0 / reads.max(1) as f64,
-            session.format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
+            session.format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
+            session
+                .target
+                .as_ref()
+                .is_some_and(|t| t.format == DXGI_FORMAT_R16G16B16A16_FLOAT)
         );
     }
 

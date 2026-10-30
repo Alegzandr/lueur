@@ -29,6 +29,7 @@ lueur/
 │   ├─ capture.rs         Screen capture behind a FrameSource trait
 │   │  ├─ dxgi.rs        Windows: Desktop Duplication, GPU-downscaled
 │   │  ├─ gdi.rs         Windows fallback: GDI, shrunk while it copies
+│   │  ├─ hdr.rs         Windows: an HDR desktop back to SDR colours
 │   │  ├─ screencast.rs  Wayland: ScreenCast portal + PipeWire stream
 │   │  ├─ scale.rs       CPU shrink of a full-size frame (PipeWire)
 │   │  └─ bench.rs       What examples/capture_bench.rs measures
@@ -90,6 +91,15 @@ On Windows the desktop is read through DXGI Desktop Duplication and shrunk on
 the GPU, so a frame costs well under a millisecond and exclusive-fullscreen
 games are captured. Where duplication refuses (a rotated display, a remote
 session), GDI takes over, sampling the desktop straight into a small bitmap.
+
+On a display with HDR on, duplication is asked for the 16-bit float scRGB
+desktop Windows composes (`IDXGIOutput5::DuplicateOutput1`). It is shrunk in
+floats, which are already linear, then divided by the display's SDR white
+(`DisplayConfigGetDeviceInfo`, read again every two seconds so the
+brightness slider is followed) and encoded as sRGB on the CPU
+(`capture/hdr.rs`). The 8-bit image the older call returns ignores that white,
+which is what makes HDR captures look washed out. GDI only ever sees that
+8-bit image.
 
 On a Linux Wayland session the ambilight opens one xdg-desktop-portal
 ScreenCast session and reads its PipeWire stream, shrunk on arrival. The

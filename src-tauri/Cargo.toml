@@ -65,13 +65,15 @@ log = { version = "0.4.29", features = ["kv"] }
 # only (no frontend permission).
 tauri-plugin-opener = "2"
 
-# Desktop Duplication and GDI capture (see src/capture/dxgi.rs, gdi.rs), the
-# capture benchmark's CPU time, the per-user install (src/install.rs) and one
-# application's sound for the music show (src/audio/apps.rs), and keeping
-# the computer awake for the sleep timer (src/awake.rs). Same `windows`
-# version xcap already pulls in, so it adds no second copy.
+# Desktop Duplication and GDI capture (see src/capture/dxgi.rs, gdi.rs) and
+# the SDR white of an HDR display, the capture benchmark's CPU time, the
+# per-user install (src/install.rs) and one application's sound for the
+# music show (src/audio/apps.rs), and keeping the computer awake for the
+# sleep timer (src/awake.rs). Same `windows` version xcap already pulls in,
+# so it adds no second copy.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
+    "Win32_Devices_Display",
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",

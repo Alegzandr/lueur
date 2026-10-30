@@ -143,6 +143,10 @@ Back on **Lighting**, click the **Ambilight** tile (or press
 film. On Windows you can skip this step: with *Ambilight in fullscreen* on
 (the default, in **Settings**) it starts and stops by itself.
 
+With HDR on in Windows, the Ambilight reads the colours as they are composed
+and matches them to your *SDR content brightness* setting, so they don't come
+out washed out the way an HDR screen often looks in screen sharing.
+
 ## Supported bulbs
 
 | Family | Status |
