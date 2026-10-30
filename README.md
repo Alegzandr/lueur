@@ -46,8 +46,9 @@ share the bulbs instead of fighting over them. Remove a light by mistake,
 and one click brings it back. Whatever plays, no light flashes more than
 three times a second.
 
-With **Screen**, the lights follow what's on screen, many times a second
-and with no visible delay. You sketch your room, place the screen and drop
+With **Screen**, the lights follow what's on screen, many times a second,
+with every step from the screen to the bulb kept as short as Lueur can make
+it ([how](#keeping-the-delay-down)). You sketch your room, place the screen and drop
 each light where it really stands: a lamp right behind the screen mirrors
 its own slice of the picture, one across the room glows softly with the
 whole scene. On Windows it starts by itself when a game or a video goes
@@ -325,6 +326,39 @@ taller than it is wide mirrors it from the bottom up.
 Neighbouring lights hand over gradually when something bright crosses between
 them, and colours are mixed the way light mixes, so reds and blues stay vivid
 instead of turning muddy.
+
+## Keeping the delay down
+
+A light that follows the screen or the music only convinces if it keeps up,
+so Lueur shortens every step between the picture or the sound and the bulb:
+
+- **Reading the screen.** On Windows the screen is read through Desktop
+  Duplication, the API OBS uses, and the picture is shrunk on the graphics
+  card before it reaches the processor; on Linux it is shrunk as it arrives.
+  Each update takes the latest picture shown, and on a still screen Lueur
+  waits for the next one instead of reading the same one again.
+- **Reaching the bulbs.** Each family gets its quickest way in. Yeelight
+  bulbs run in *music mode*, a direct connection with no rate limit. Hue
+  lamps are streamed to through the bridge's Entertainment API rather than
+  sent one command at a time, and Nanoleaf panels take a stream too. WiZ,
+  LIFX and Govee get a single network packet per colour. A Tuya bulb, which
+  takes about ten colours a second, goes straight to each new colour instead
+  of fading.
+- **No fade left behind.** A bulb's fade never lasts longer than the gap to
+  the next colour, so a bulb never chases a colour it has no time to reach.
+- **All together.** Bulbs don't answer at the same speed: a Yeelight shows a
+  colour in a few hundredths of a second, a Hue lamp behind its bridge takes
+  several times that. The quick ones wait for the slowest, so a cut on
+  screen reaches the whole room at once instead of rippling across it. A
+  lamp too slow to strike, such as a Hue lamp the bridge can't stream to, is
+  not waited for: it would hold the whole room back.
+- **Ahead of the beat.** A beat, unlike the next picture, can be seen
+  coming. The Music effect sends each one early by however long each bulb
+  takes to show it, so every light lands with the sound, and *Sound delay*
+  covers headphones or speakers that are late themselves.
+
+There is no measured figure yet: the delay you see depends on the bulbs, the
+network and the computer.
 
 ## Competitive games and anti-cheat
 
