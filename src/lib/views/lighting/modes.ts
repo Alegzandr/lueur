@@ -3,7 +3,7 @@
 
 import { app, isDriven, lightState, modeOf } from "../../state.svelte";
 import { t } from "../../i18n";
-import { MOODS, NATURAL, SHOWS, kelvinRgb, rgbCss, tintCss, type MoodId } from "../../scenes";
+import { MOODS, NATURAL, SHOWS, tintCss, type MoodId } from "../../scenes";
 import type { LightState, Mode } from "../../types";
 
 export const modeName = (m: Mode) => t(`mode_${m}`);
@@ -30,9 +30,6 @@ export const moodOf = (id: string): string | null => {
   );
 };
 export const moodName = (id: string) => t(id === NATURAL ? "mood_natural" : `mood_${id as MoodId}`);
-
-/** The natural light's swatch: its day, from night to noon and back. */
-export const naturalSwatch = `linear-gradient(135deg, ${[2200, 4000, 5500, 3000].map((k) => rgbCss(kelvinRgb(k))).join(", ")})`;
 
 // --- What a light does ---
 

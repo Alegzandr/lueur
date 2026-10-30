@@ -81,6 +81,12 @@
     align-items: center;
     gap: var(--s-3);
   }
+  /* The track gives way to a longer value ("Mixed (80 %)") rather than
+     pushing it out of the row. */
+  .track-row input {
+    flex: 1;
+    min-width: 0;
+  }
   .value {
     white-space: nowrap;
     min-width: 6.5ch;

@@ -1,31 +1,25 @@
 <script lang="ts">
   import { app, bindingFor, deleteScene, recallScene, saveScene, sceneNamed, showsScene } from "../../state.svelte";
   import { t } from "../../i18n";
-  import { DEFAULT_STATE, tintCss } from "../../scenes";
-  import type { SavedScene, SceneLight } from "../../types";
+  import type { SavedScene } from "../../types";
   import Icon from "../../ui/Icon.svelte";
-  import { modeSwatch, naturalSwatch } from "./modes";
+  import { distinctLooks, lookOfScene } from "./pictures";
 
   // The scenes the user saved, first on the page: the whole room as it was,
   // back in one click.
 
   const scenes = $derived(app.config.scenes ?? []);
 
-  /** A scene's lights that still have a bulb, as dots in the order of the room. */
-  const dotsOf = (scene: SavedScene) =>
-    app.config.room.lights.flatMap((l) => {
-      const s = scene.lights[l.id];
-      return s && bindingFor(l.id) ? [{ id: l.id, s }] : [];
-    });
-
-  const dotStyle = (s: SceneLight) =>
-    s.kind === "mode"
-      ? `background:${modeSwatch(s.mode, DEFAULT_STATE)}`
-      : s.kind === "natural"
-        ? `background:${naturalSwatch}`
-        : s.state.on
-          ? `--c:${tintCss(s.state.tint)};--a:${0.4 + (0.6 * s.state.bright) / 100}`
-          : "";
+  /** A scene as the room it makes: the photograph of each thing its lights
+   *  do, side by side, in the order of the room. */
+  const looksOf = (scene: SavedScene) =>
+    distinctLooks(
+      app.config.room.lights.flatMap((l) => {
+        const s = scene.lights[l.id];
+        return s && bindingFor(l.id) ? [lookOfScene(s)] : [];
+      }),
+      3,
+    );
 
   // Saving asks for a name in place; the name of a scene already saved
   // replaces it.
@@ -123,46 +117,52 @@
         {#if confirming === s.id}
           <li class="scene confirm">
             <span class="confirm-text">{t("scene_delete_ask", { name: s.name })}</span>
-            <button
-              class="btn sm danger"
-              use:focusOnMount
-              onkeydown={(e) => escapeKeeps(e, s.id)}
-              onclick={() => {
-                confirming = null;
-                deleteScene(s.id);
-              }}>{t("delete")}</button
-            >
-            <button class="btn plain sm" onkeydown={(e) => escapeKeeps(e, s.id)} onclick={() => keep(s.id)}
-              >{t("sleep_cancel")}</button
-            >
+            <span class="confirm-actions">
+              <button
+                class="btn sm danger"
+                use:focusOnMount
+                onkeydown={(e) => escapeKeeps(e, s.id)}
+                onclick={() => {
+                  confirming = null;
+                  deleteScene(s.id);
+                }}>{t("delete")}</button
+              >
+              <button class="btn plain sm" onkeydown={(e) => escapeKeeps(e, s.id)} onclick={() => keep(s.id)}
+                >{t("sleep_cancel")}</button
+              >
+            </span>
           </li>
         {:else}
-        <li class="scene" class:active={on} class:pending={app.pending === s.id}>
-          <button
-            class="recall"
-            aria-pressed={on}
-            disabled={app.busy && app.pending !== s.id}
-            onclick={() => recallScene(s)}
-          >
-            <span class="dots" aria-hidden="true">
-              {#each dotsOf(s) as d (d.id)}
-                <span class="dot" class:off={d.s.kind === "hand" && !d.s.state.on} style={dotStyle(d.s)}></span>
-              {/each}
-            </span>
-            <span class="scene-name">{s.name}</span>
-            <!-- Showing now: an amber ring and a lamp, not the colour alone. -->
-            {#if on}<span class="lamp" aria-hidden="true"></span>{/if}
-          </button>
-          <button
-            class="btn plain icon sm del"
-            id="scene-del-{s.id}"
-            title={t("scene_delete", { name: s.name })}
-            aria-label={t("scene_delete", { name: s.name })}
-            onclick={() => (confirming = s.id)}
-          >
-            <Icon name="close" size={12} />
-          </button>
-        </li>
+          <li class="scene" class:active={on} class:pending={app.pending === s.id}>
+            <button
+              class="recall"
+              aria-pressed={on}
+              disabled={app.busy && app.pending !== s.id}
+              onclick={() => recallScene(s)}
+            >
+              <span class="slices" aria-hidden="true">
+                {#each looksOf(s) as look (look.key)}
+                  <span class="slice">
+                    <img src={look.src} alt="" draggable="false" />
+                    {#if look.tint}<span class="tint" style="background:{look.tint}"></span>{/if}
+                  </span>
+                {/each}
+              </span>
+              <!-- Showing now: an amber ring and a lamp, not the colour alone. -->
+              <span class="scene-name">
+                {#if on}<span class="lamp" aria-hidden="true"></span>{/if}<span class="label">{s.name}</span>
+              </span>
+            </button>
+            <button
+              class="del"
+              id="scene-del-{s.id}"
+              title={t("scene_delete", { name: s.name })}
+              aria-label={t("scene_delete", { name: s.name })}
+              onclick={() => (confirming = s.id)}
+            >
+              <Icon name="close" size={11} />
+            </button>
+          </li>
         {/if}
       {/each}
     </ul>
@@ -191,6 +191,7 @@
     align-items: center;
     gap: var(--s-3);
     width: 100%;
+    min-height: 90px;
     padding: var(--s-3);
     border-radius: var(--r-lg);
     box-shadow: inset 0 0 0 1px var(--line-strong);
@@ -227,9 +228,11 @@
   .naming + .hint {
     margin-top: var(--s-1);
   }
+  /* A scene is a card like the modes: the photographs of what its lights
+     do side by side, its name on the card beneath them. */
   .scenes {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: var(--s-2);
     margin: 0;
     padding: 0;
@@ -240,13 +243,12 @@
   }
   .scene {
     position: relative;
-    display: flex;
-    align-items: center;
-    max-width: 100%;
     border-radius: var(--r-lg);
     background: var(--surface);
     box-shadow: var(--card-edge);
-    transition: box-shadow 200ms var(--ease);
+    transition:
+      box-shadow 200ms var(--ease),
+      background var(--dur) var(--ease);
   }
   .scene:has(.recall:hover:not(:disabled)) {
     background: var(--surface-hover);
@@ -256,49 +258,73 @@
   }
   .recall {
     display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    min-width: 0;
-    height: 36px;
-    padding: 0 var(--s-1) 0 var(--s-3);
-    border-radius: var(--r-lg) 0 0 var(--r-lg);
-    font-weight: 500;
+    flex-direction: column;
+    gap: 7px;
+    width: 100%;
+    padding: 5px 5px 9px;
+    border-radius: inherit;
+    text-align: left;
   }
   .scene:not(.pending) .recall:disabled {
     opacity: 0.6;
   }
+  .slices {
+    position: relative;
+    display: flex;
+    gap: 2px;
+    height: 48px;
+    overflow: hidden;
+    border-radius: 6px;
+    background: var(--sunken);
+  }
+  .slices::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.14);
+  }
+  .slice {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .slice img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: 50% 42%;
+    transition: transform 500ms var(--ease);
+  }
+  .recall:hover:not(:disabled) .slice img {
+    transform: scale(1.05);
+  }
+  .tint {
+    position: absolute;
+    inset: 0;
+    mix-blend-mode: color;
+    opacity: 0.9;
+  }
   .scene-name {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 0 4px;
+    font-weight: 600;
+  }
+  .label {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .recall .lamp {
+  .scene-name .lamp {
     --lamp: 6px;
   }
-  /* The lights of the scene, overlapping a little like a group of lamps. */
-  .dots {
-    display: flex;
-  }
-  .dot {
-    width: 12px;
-    height: 12px;
-    flex: none;
-    border-radius: 50%;
-    background: color-mix(in oklab, var(--c) calc(var(--a) * 100%), transparent);
-    box-shadow:
-      0 0 0 1.5px var(--surface),
-      inset 0 0 0 1px oklch(0 0 0 / 0.14);
-  }
-  .dot + .dot {
-    margin-left: -3px;
-  }
-  .dot.off {
-    background: var(--surface);
-    box-shadow:
-      0 0 0 1.5px var(--surface),
-      inset 0 0 0 1.5px var(--line-strong);
-  }
-  .pending .dots {
+  .pending .slices {
     animation: breathe 800ms var(--ease) infinite alternate;
   }
   @keyframes breathe {
@@ -306,23 +332,20 @@
       opacity: 0.45;
     }
   }
-  .confirm {
-    gap: var(--s-2);
-    height: 36px;
-    padding: 0 var(--s-1) 0 var(--s-3);
-  }
-  .confirm-text {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: 500;
-  }
   /* Delete waits out of sight until the scene is hovered or reached by
-     the keyboard. */
+     the keyboard: a small round mark on the corner of its pictures. */
   .del {
-    margin-right: var(--s-1);
-    color: var(--text-3);
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--surface);
+    box-shadow: var(--control-edge);
+    color: var(--text-2);
     opacity: 0;
     transition: opacity var(--dur) var(--ease);
   }
@@ -330,10 +353,36 @@
   .del:focus-visible {
     opacity: 1;
   }
+  .confirm {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--s-2);
+    min-height: 90px;
+    padding: 0 var(--s-2) 0 var(--s-3);
+  }
+  .confirm-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .confirm-actions {
+    display: flex;
+    gap: var(--s-1);
+    margin-left: -6px;
+  }
   @media (prefers-reduced-motion: reduce) {
-    .pending .dots {
+    .pending .slices {
       animation: none;
       opacity: 0.5;
+    }
+    .slice img {
+      transition: none;
+    }
+    .recall:hover:not(:disabled) .slice img {
+      transform: none;
     }
   }
 </style>

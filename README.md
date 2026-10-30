@@ -71,7 +71,7 @@ to date.
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/lighting-light.png">
-        <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: saved scenes and every light as a card with what it does, beside the modes, still and animated, and the brightness of the lights picked.">
+        <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: saved scenes and every light as a card with what it does, beside the modes, still and animated, each a photograph of the same room in its light, and the brightness of the lights picked.">
       </picture>
       <p><b>Lighting</b>: pick lights, give them a mode and a
       brightness, or bring back a scene you saved.</p>

@@ -353,18 +353,32 @@ Sidebar items 36px high, 7px radius, icon plus label. Hover fills
 `surface-hover`; the active page becomes a small card (surface + card edge)
 with its icon in Filament Amber. Count badges are grey pills.
 
-### Mode tile (signature)
-A card holding a picture and a name, and nothing else. Every mode, still or
-animated, shows the same room (white wall, oak sideboard, a table lamp, a
-floor lamp, a television) under its own light, so the tiles read as one
-series and differ only by the light: content, kept in its own colours in
-both themes. The pictures were generated once, locally, and ship as small
-WebP files in `src/lib/assets/modes/`, one per mode or mood id. Playing on
-every light picked draws a 2px inset ring of Active Amber and a lamp before
-the name; on some of them, a dashed ring, with their names on hover. A
-playing animated mode's picture drifts slowly closer (8s); a pending one
-breathes. Both stand still under reduced motion. The natural light spans
-two columns.
+### The room's photographs (signature)
+The Lighting page shows its modes as photographs of one room (white wall,
+oak sideboard, a table lamp, a floor lamp, a television), each under one
+light: every mood and show, `screen` for the mode that follows the screen,
+`off` for the lights out, and `custom`, neutral white, which a light set by
+hand tints with its colour (`mix-blend-mode: color`). They are content, so
+they keep their own colours in both themes. Generated once, locally, they
+ship as 960px WebP files (about 130 KB in all) in `src/lib/assets/modes/`
+and are looked up in `src/lib/views/lighting/pictures.ts`.
+
+**The Framed Picture Rule.** A photograph always sits inside a card like
+every other on the page: 5px of card around it, 6px corners, a hairline
+edge, and its name on the card beneath it. Nothing is written over a
+picture, and no picture bleeds to a card's edge. A page full of bare
+photographs reads as a wall of thumbnails, not an interface.
+
+- **Mode tile.** Three columns beside the lights, six with the room for
+  them; every picture in a grid is as high as a single column's (46 % of its
+  width), the natural light's too, though it spans two columns. Playing on
+  every light picked: a 2px Active Amber ring and a lamp before the name; on
+  some of them, a dashed ring, with their names on hover. A playing animated
+  mode's picture drifts slowly closer (8s); a pending one breathes; both
+  stand still under reduced motion.
+- **Scene card.** The pictures of what its lights do side by side (up to
+  three, 48px high), its name beneath, the same amber ring while the room
+  shows it, and a small round delete mark on hover or focus.
 
 ### Light card
 Each light on the Lighting page: a disc of the light it gives (its white or

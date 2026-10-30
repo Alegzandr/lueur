@@ -22,6 +22,7 @@
   import Icon from "../../ui/Icon.svelte";
   import ZoneBadge from "../../ui/ZoneBadge.svelte";
   import { modeName, moodName, moodOf } from "./modes";
+  import { pictureOf } from "./pictures";
 
   // What the lights picked do: one grid of modes, the fixed ones (moods) and
   // the animated ones (the screen and the shows), and under them the settings
@@ -38,13 +39,6 @@
   const moodIds = $derived(moodTargets());
   const showingMood = (mood: string) => moodIds.filter((id) => moodOf(id) === mood);
   const moodAll = (mood: string) => moodIds.length > 0 && showingMood(mood).length === moodIds.length;
-  // Each mode is shown by the same room under its light (generated once,
-  // in `src/lib/assets/modes/`, one picture per mode or mood id).
-  const PICTURES = Object.fromEntries(
-    Object.entries(
-      import.meta.glob<string>("../../assets/modes/*.webp", { eager: true, import: "default" }),
-    ).map(([path, url]) => [path.slice(path.lastIndexOf("/") + 1, -".webp".length), url]),
-  );
   const fixed = $derived([
     { id: NATURAL, name: moodName(NATURAL), tip: t("mood_natural_tip") },
     ...MOODS.map((m) => ({ id: m.id, name: moodName(m.id), tip: undefined })),
@@ -118,7 +112,7 @@
         disabled={app.pending !== null}
         onclick={() => applyScene(m.id)}
       >
-        <span class="preview"><img src={PICTURES[m.id]} alt="" draggable="false" /></span>
+        <span class="pic"><img src={pictureOf(m.id)} alt="" draggable="false" /></span>
         <!-- Showing: an amber ring and a lamp, not the colour alone. -->
         <span class="tile-name">
           {#if moodAll(m.id)}<span class="lamp" aria-hidden="true"></span>{/if}{m.name}
@@ -133,7 +127,6 @@
       {@const some = playing(a.id).length > 0}
       <button
         class="tile"
-        class:screen={a.id === "ambilight"}
         class:active={playsAll(a.id)}
         class:partial={some && !playsAll(a.id)}
         class:pending={app.pending === a.id}
@@ -142,7 +135,7 @@
         disabled={app.busy && app.pending !== a.id}
         onclick={() => chooseMode(a.id)}
       >
-        <span class="preview"><img src={PICTURES[a.id]} alt="" draggable="false" /></span>
+        <span class="pic"><img src={pictureOf(a.id)} alt="" draggable="false" /></span>
         <span class="tile-name">
           {#if playsAll(a.id)}<span class="lamp" aria-hidden="true"></span>{/if}{modeName(a.id)}
         </span>
@@ -247,21 +240,29 @@
   .natural {
     grid-column: span 2;
   }
-  @container (min-width: 560px) {
+  /* Each picture is as high as a single column's is, the natural light's
+     too, so a row's pictures line up whatever their width. */
+  .grid {
+    --cols: 3;
+    --pic-h: calc((100cqw - (var(--cols) - 1) * var(--s-2)) / var(--cols) * 0.46 - 6px);
+  }
+  @container (min-width: 760px) {
     .grid {
+      --cols: 6;
       grid-template-columns: repeat(6, minmax(0, 1fr));
     }
   }
 
-  /* --- Animated --- */
+  /* --- The tiles: the room under each light --- */
+  /* A card like every other on the page, framing its photograph, the name
+     on the card beneath it: nothing is written over the picture. */
   .tile {
     position: relative;
     display: flex;
     flex-direction: column;
-    align-items: stretch;
-    gap: var(--s-2);
+    gap: 7px;
     min-width: 0;
-    padding: var(--s-2);
+    padding: 5px 5px 9px;
     border-radius: var(--r-lg);
     background: var(--surface);
     box-shadow: var(--card-edge);
@@ -276,44 +277,40 @@
   .tile:disabled:not(.pending) {
     opacity: 0.55;
   }
-  /* The picture of the room under the mode's light. Content, so it keeps
-     its own colours in both themes; a hairline keeps its edge on paper. */
-  .preview {
+  .pic {
     position: relative;
     display: block;
-    height: 68px;
+    height: var(--pic-h);
+    min-height: 54px;
     overflow: hidden;
-    border-radius: var(--r-md);
+    border-radius: 6px;
     background: var(--sunken);
   }
-  .preview::after {
+  /* A hairline keeps a bright picture's edge on a white card. */
+  .pic::after {
     content: "";
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.12);
+    box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.14);
   }
-  .preview img {
+  .pic img {
     display: block;
     width: 100%;
     height: 100%;
     object-fit: cover;
+    object-position: 50% 42%;
+    transition: transform 500ms var(--ease);
   }
-  /* An animated mode playing: its picture drifts closer, slowly. */
-  .tile:not(.still).active .preview img {
-    animation: drift 8s var(--ease) infinite alternate;
-  }
-  @keyframes drift {
-    to {
-      transform: scale(1.06);
-    }
+  .tile:hover:not(:disabled) .pic img {
+    transform: scale(1.04);
   }
   /* Names wrap rather than truncate: French ones run long. */
   .tile-name {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 0 2px 2px;
+    padding: 0 4px;
     font-weight: 600;
     line-height: 1.25;
     text-wrap: balance;
@@ -322,16 +319,25 @@
     --lamp: 6px;
   }
 
-  /* Playing: an amber ring, with a lamp and "Playing" in words. Some of the
-     lights picked play it: a dashed ring and their names. */
+  /* Playing on every light picked: an amber ring and a lamp before the
+     name; on some of them, a dashed ring, with their names on hover. */
+  .tile.active {
+    box-shadow: inset 0 0 0 2px var(--active);
+  }
   .tile.partial {
     outline: 1.5px dashed var(--active);
     outline-offset: -1.5px;
   }
-  .tile.active {
-    box-shadow: inset 0 0 0 2px var(--active);
+  /* An animated mode playing: its picture drifts closer, slowly. */
+  .tile:not(.still).active .pic img {
+    animation: drift 8s var(--ease) infinite alternate;
   }
-  .tile.pending .preview {
+  @keyframes drift {
+    to {
+      transform: scale(1.07);
+    }
+  }
+  .tile.pending .pic {
     animation: breathe 800ms var(--ease) infinite alternate;
   }
   @keyframes breathe {
@@ -408,10 +414,15 @@
   /* Reduced motion: the loops stand still, and a pending choice dims
      instead of breathing. */
   @media (prefers-reduced-motion: reduce) {
-    .active .preview img {
-      animation: none;
+    .pic img {
+      transition: none;
     }
-    .tile.pending .preview {
+    .tile:hover:not(:disabled) .pic img,
+    .active .pic img {
+      animation: none;
+      transform: none;
+    }
+    .tile.pending .pic {
       animation: none;
       opacity: 0.5;
     }

@@ -4,9 +4,9 @@
   import Icon from "../ui/Icon.svelte";
   import RestartBanner from "../ui/RestartBanner.svelte";
   import Switch from "../ui/Switch.svelte";
-  import LightDot from "./lighting/LightDot.svelte";
   import Lights from "./lighting/Lights.svelte";
   import Modes from "./lighting/Modes.svelte";
+  import LightDot from "./lighting/LightDot.svelte";
   import Scenes from "./lighting/Scenes.svelte";
   import SleepButton from "./lighting/SleepButton.svelte";
   import Tune from "./lighting/Tune.svelte";
