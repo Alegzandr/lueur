@@ -20,8 +20,9 @@ use windows::Win32::Graphics::Direct3D11::{
 use windows::core::{PCSTR, s};
 
 /// One triangle that covers the target, and a pixel shader that reads the
-/// desktop pixel under it. NaNs become black, infinities the largest half
-/// float, so neither spreads through the averages.
+/// desktop pixel under it. NaNs become 0 and infinities the largest half
+/// float, so neither spreads through the averages. A colour outside the sRGB gamut is
+/// brought into it the way [`ToSdr`](super::hdr::ToSdr) does.
 const SHADER: &str = r"
 Texture2D<float4> desktop : register(t0);
 cbuffer Clip : register(b0) { float scale; };
@@ -32,7 +33,14 @@ float4 vs(uint id : SV_VertexID) : SV_Position {
 }
 
 float4 ps(float4 position : SV_Position) : SV_Target {
-    float3 c = clamp(desktop.Load(int3(position.xy, 0)).rgb * scale, 0, 65504);
+    float3 raw = desktop.Load(int3(position.xy, 0)).rgb * scale;
+    // min and max return the other operand for a NaN: this reads one as 0.
+    float3 c = clamp(max(raw, 0) + min(raw, 0), -65504, 65504);
+    float y = dot(c, float3(0.2126, 0.7152, 0.0722));
+    float low = min(c.r, min(c.g, c.b));
+    if (low < 0) {
+        c = y > 0 ? y + (c - y) * (y / (y - low)) : float3(0, 0, 0);
+    }
     float peak = max(c.r, max(c.g, c.b));
     return float4(peak > 1 ? c / peak : c, 1);
 }

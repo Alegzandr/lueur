@@ -53,10 +53,16 @@ impl ToSdr {
 
     /// Convert one row of 8-byte pixels and append it to `out` as BGRA.
     ///
-    /// Colours outside the sRGB gamut have negative channels in scRGB; those
-    /// are cut to zero. Light brighter than the SDR white is brought down by
-    /// its brightest channel rather than clipped channel by channel, so a
-    /// bright orange stays orange instead of turning yellow.
+    /// Colours outside the sRGB gamut have negative channels in scRGB. They
+    /// are brought into it towards the grey of the same luminance, just far
+    /// enough that no channel is negative: cutting the negative channel to
+    /// zero instead would shift the hue. Light brighter than the SDR white is
+    /// brought down by its brightest channel rather than clipped channel by
+    /// channel, so a bright orange stays orange instead of turning yellow.
+    ///
+    /// Highlights above the SDR white all reach the bulbs at full: a bulb
+    /// has nothing brighter than its full power, and keeping some of its
+    /// range for them would dim every white page.
     pub fn convert_row(&self, row: &[u8], out: &mut Vec<u8>) {
         for px in row.chunks_exact(8) {
             let channel = |i: usize| {
@@ -66,10 +72,10 @@ impl ToSdr {
                 if v.is_nan() {
                     0.0
                 } else {
-                    v.clamp(0.0, f32::MAX)
+                    v.clamp(f32::MIN, f32::MAX)
                 }
             };
-            let (r, g, b) = (channel(0), channel(2), channel(4));
+            let (r, g, b) = into_gamut(channel(0), channel(2), channel(4));
             let peak = r.max(g).max(b);
             let k = if peak > 1.0 { 1.0 / peak } else { 1.0 };
             out.extend_from_slice(&[
@@ -86,6 +92,23 @@ impl ToSdr {
         let i = (linear * (ENCODE_STEPS - 1) as f32 + 0.5) as usize;
         self.encode[i.min(ENCODE_STEPS - 1)]
     }
+}
+
+/// A linear sRGB colour with no negative channel: moved towards the grey of
+/// its own luminance (Rec. 709 weights) until its lowest channel is zero.
+/// Black when its luminance is not positive.
+fn into_gamut(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let low = r.min(g).min(b);
+    if low >= 0.0 {
+        return (r, g, b);
+    }
+    let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    if y <= 0.0 || !y.is_finite() {
+        return (0.0, 0.0, 0.0);
+    }
+    let t = y / (y - low);
+    let to = |c: f32| (y + (c - y) * t).max(0.0);
+    (to(r), to(g), to(b))
 }
 
 /// The sRGB transfer function, linear light to the encoded value.
@@ -182,9 +205,17 @@ mod tests {
     }
 
     #[test]
-    fn colours_outside_srgb_are_cut_to_the_gamut() {
+    fn colours_outside_srgb_are_brought_into_it_keeping_their_hue() {
+        // A green past sRGB's, towards cyan: no red at all, so the gamut's
+        // edge, and a little blue rather than none.
         let to_sdr = ToSdr::new(1.0);
-        assert_eq!(convert(&to_sdr, -0.25, 1.0, 0.0), [0, 255, 0, 255]);
+        let [b, g, r, _] = convert(&to_sdr, -0.25, 1.0, 0.0);
+        assert_eq!(r, 0);
+        assert!(g > 230 && b > 60, "{:?}", (r, g, b));
+        // Inside the gamut nothing moves.
+        assert_eq!(into_gamut(0.2, 0.5, 0.1), (0.2, 0.5, 0.1));
+        // Nothing with no light becomes light.
+        assert_eq!(into_gamut(-0.5, 0.1, 0.0), (0.0, 0.0, 0.0));
     }
 
     #[test]

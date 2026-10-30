@@ -277,6 +277,12 @@ impl FrameSource for ScreenSource {
     }
 }
 
+/// The id `xcap` gives the monitor at `index` (on Windows, its `HMONITOR`
+/// truncated to 32 bits), if there is one.
+pub fn monitor_id(index: usize) -> Option<u32> {
+    monitor_at(index).ok()?.id().ok()
+}
+
 fn monitor_at(index: usize) -> AppResult<Monitor> {
     let monitors = all_monitors()?;
     if monitors.is_empty() {

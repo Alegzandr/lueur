@@ -74,8 +74,12 @@
               >{t("hdr")}</span
             ><span class="sr-only">{t("hdr_tip")}</span>{/if}</span
         >
-        <span class="tile-sub">
-          {DETECTS_FULLSCREEN && app.config.behavior.auto_fullscreen ? t("mode_ambilight_auto") : t("mode_ambilight_sub")}
+        <span class="tile-sub" class:warn={app.status.screen_lost && shareOf("ambilight") > 0}>
+          {#if app.status.screen_lost && shareOf("ambilight") > 0}
+            {t("screen_lost")}
+          {:else}
+            {DETECTS_FULLSCREEN && app.config.behavior.auto_fullscreen ? t("mode_ambilight_auto") : t("mode_ambilight_sub")}
+          {/if}
         </span>
       </span>
       <Status all={playsAll("ambilight")} share={shareOf("ambilight")} total={targets.length} />
@@ -328,6 +332,10 @@
   .tile-sub {
     font-size: var(--t-sm);
     color: var(--text-3);
+  }
+  /* The screen cannot be read: said in words, the colour only marks it. */
+  .tile-sub.warn {
+    color: var(--danger);
   }
   .tune {
     margin-top: var(--s-3);

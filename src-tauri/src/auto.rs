@@ -4,9 +4,12 @@
 //! again, the lights set by hand show what they were set to.
 //!
 //! Fullscreen is read from the shell's notification state, the same signal
-//! Windows uses to hold notifications during a game or a presentation. It
-//! names no window and opens no process, so it keeps to the anti-cheat rules
-//! in `clippy.toml`. Other systems have no equivalent: there the mode is off.
+//! Windows uses to hold notifications during a game or a presentation. That
+//! state does not say which screen is fullscreen, so the window in front is
+//! located, only to learn which monitor it is on: it is never opened, read or
+//! named, and its process is never touched, which keeps to the anti-cheat
+//! rules in `clippy.toml`. Other systems have no equivalent: there the mode
+//! is off.
 
 use crate::lights;
 use crate::runner::Mode;
@@ -44,6 +47,37 @@ fn fullscreen() -> bool {
 #[cfg(not(windows))]
 fn fullscreen() -> bool {
     false
+}
+
+/// The monitor the window in front is on, as `xcap` numbers monitors (see
+/// [`crate::capture::monitor_id`]).
+#[cfg(windows)]
+fn front_monitor() -> Option<u32> {
+    use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONULL, MonitorFromWindow};
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    // SAFETY: both calls only read the window manager's state; the handle is
+    // not kept, and nothing is asked of the window itself.
+    let monitor = unsafe { MonitorFromWindow(GetForegroundWindow(), MONITOR_DEFAULTTONULL) };
+    (!monitor.is_invalid()).then_some(monitor.0 as usize as u32)
+}
+
+#[cfg(not(windows))]
+fn front_monitor() -> Option<u32> {
+    None
+}
+
+/// Whether something is fullscreen on the monitor the ambilight reads, the
+/// one at `index`. A video fullscreen on another screen is no reason to light
+/// the room after this one. Where the monitors cannot be told apart, any
+/// fullscreen counts.
+fn fullscreen_on(index: usize) -> bool {
+    if !fullscreen() {
+        return false;
+    }
+    match (crate::capture::monitor_id(index), front_monitor()) {
+        (Some(ours), Some(front)) => ours == front,
+        _ => true,
+    }
 }
 
 /// Who started the running effect, so automatic mode only ever stops what it
@@ -107,11 +141,17 @@ fn watch(app: &AppHandle) {
     loop {
         std::thread::sleep(POLL);
         let state = app.state::<AppState>();
-        let enabled = state
+        let (enabled, monitor_index) = state
             .lock_config()
-            .is_ok_and(|c| c.behavior.auto_fullscreen && !c.bindings.is_empty());
+            .map(|c| {
+                (
+                    c.behavior.auto_fullscreen && !c.bindings.is_empty(),
+                    c.capture.monitor_index,
+                )
+            })
+            .unwrap_or((false, 0));
 
-        if fullscreen() {
+        if fullscreen_on(monitor_index) {
             last_seen = Some(Instant::now());
         }
         let in_session = last_seen.is_some_and(|t| t.elapsed() < GRACE);

@@ -70,6 +70,11 @@ impl Effects {
         self.lock().iter().any(Handle::hdr)
     }
 
+    /// Whether the ambilight cannot read the screen right now.
+    pub fn screen_lost(&self) -> bool {
+        self.lock().iter().any(Handle::screen_lost)
+    }
+
     /// Every driven light whose bulb is not taking frames, and why.
     pub fn away(&self) -> Vec<(String, Link)> {
         self.lock()

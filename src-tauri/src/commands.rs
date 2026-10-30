@@ -67,6 +67,9 @@ pub struct EffectStatus {
     pub music_waiting: bool,
     /// The ambilight reads an HDR screen, its colours brought back to SDR.
     pub hdr: bool,
+    /// The ambilight has not been able to read the screen for a while; its
+    /// lights hold their colour meanwhile.
+    pub screen_lost: bool,
 }
 
 /// A room light whose bulb something else drives.
@@ -122,6 +125,7 @@ fn status(state: &AppState) -> EffectStatus {
         elsewhere,
         music_waiting: state.effects.waiting_for_sound(),
         hdr: state.effects.hdr(),
+        screen_lost: state.effects.screen_lost(),
         running: !groups.is_empty(),
         connected_lights: groups.iter().map(|g| g.2).sum(),
         mode: match groups.as_slice() {

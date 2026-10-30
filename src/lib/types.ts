@@ -334,6 +334,8 @@ export interface EffectStatus {
   music_waiting: boolean;
   /** The ambilight reads an HDR screen, its colours brought back to SDR. */
   hdr: boolean;
+  /** The ambilight has not been able to read the screen for a while. */
+  screen_lost: boolean;
 }
 
 export interface PowerResult {

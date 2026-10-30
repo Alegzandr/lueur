@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { app, edit, exportConfig, fail, importConfig } from "../state.svelte";
-  import { t } from "../i18n";
+  import { t, pct } from "../i18n";
   import * as ipc from "../ipc";
   import {
     type Appearance,
@@ -10,6 +10,7 @@
     type BehaviorSettings,
     type Language,
     type MonitorInfo,
+    defaultConfig,
   } from "../types";
   import { DETECTS_FULLSCREEN } from "../platform";
   import Row from "../ui/Row.svelte";
@@ -81,6 +82,8 @@
       .sort((a, b) => a - b)
       .map((n) => ({ value: String(n), label: String(n) })),
   );
+
+  const DEF = defaultConfig();
 
   // How dark scenes light the room: the engine's brightness curve, read as
   // the nearest of three choices when the file holds another value.
@@ -195,6 +198,19 @@
           checked={c.engine.crop_bars}
           label={t("crop_bars")}
           onchange={(v) => edit((x) => (x.engine.crop_bars = v))}
+        />
+      </Row>
+      <Row label={t("colour_strength")} tip={t("colour_strength_tip")}>
+        <Slider
+          label={t("colour_strength")}
+          value={c.engine.saturation}
+          min={0}
+          max={1}
+          step={0.05}
+          def={DEF.engine.saturation}
+          format={pct}
+          ends={[t("colour_strength_true"), t("colour_strength_vivid")]}
+          onchange={(v) => edit((x) => (x.engine.saturation = v))}
         />
       </Row>
       <Row label={t("dark_scenes")} tip={t("dark_scenes_tip")}>

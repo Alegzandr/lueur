@@ -518,10 +518,17 @@ impl ScreenCastSource {
         let on_frame = Rc::clone(&shared);
         let listener = stream
             .add_local_listener_with_user_data(())
-            .state_changed(move |_, _, _, state| {
-                if let StreamState::Error(e) = state {
+            .state_changed(move |_, _, old, state| match state {
+                StreamState::Error(e) => {
                     on_state.borrow_mut().error = Some(format!("screen stream: {e}"));
                 }
+                // Sharing stopped from the desktop (its "stop sharing"
+                // button): the stream does not come back, and the last image
+                // must not pass for the screen.
+                StreamState::Unconnected if !matches!(old, StreamState::Unconnected) => {
+                    on_state.borrow_mut().error = Some("screen sharing was stopped".into());
+                }
+                _ => {}
             })
             .param_changed(move |_, _, id, param| {
                 let Some(param) = param else {
