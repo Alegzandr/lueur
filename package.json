@@ -1,7 +1,7 @@
 {
   "name": "lueur",
   "private": true,
-  "version": "0.15.0",
+  "version": "0.16.0",
   "type": "module",
   "description": "Lueur: a low-latency ambilight for smart bulbs, made for cosy night gaming.",
   "scripts": {
