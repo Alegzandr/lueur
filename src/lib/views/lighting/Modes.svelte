@@ -11,7 +11,7 @@
   } from "../../state.svelte";
   import { t, times } from "../../i18n";
   import { applyFeel, currentFeel, FEEL_ORDER, type Feel } from "../../presets";
-  import { MOODS, NATURAL, PACED_SHOWS, SHOWS, kelvinRgb, rgbCss, showPace } from "../../scenes";
+  import { MOODS, NATURAL, PACED_SHOWS, SHOWS, showPace } from "../../scenes";
   import { defaultConfig, type Mode } from "../../types";
   import { HEARS_OUTPUTS } from "../../platform";
   import { describe, mapLight } from "../../geometry";
@@ -21,7 +21,7 @@
   import Switch from "../../ui/Switch.svelte";
   import Icon from "../../ui/Icon.svelte";
   import ZoneBadge from "../../ui/ZoneBadge.svelte";
-  import { modeName, moodName, moodOf, naturalSwatch } from "./modes";
+  import { modeName, moodName, moodOf } from "./modes";
 
   // What the lights picked do: one grid of modes, the fixed ones (moods) and
   // the animated ones (the screen and the shows), and under them the settings
@@ -38,13 +38,16 @@
   const moodIds = $derived(moodTargets());
   const showingMood = (mood: string) => moodIds.filter((id) => moodOf(id) === mood);
   const moodAll = (mood: string) => moodIds.length > 0 && showingMood(mood).length === moodIds.length;
-  // Each mood's well is the pool of its white on a dark wall, as strong as
-  // the mood is bright; the natural light's is its day, night to noon.
-  const pool = (kelvin: number, bright: number) =>
-    `radial-gradient(110% 150% at 50% 110%, color-mix(in oklab, ${rgbCss(kelvinRgb(kelvin))} ${25 + 0.75 * bright}%, transparent), transparent 80%)`;
+  // Each mode is shown by the same room under its light (generated once,
+  // in `src/lib/assets/modes/`, one picture per mode or mood id).
+  const PICTURES = Object.fromEntries(
+    Object.entries(
+      import.meta.glob<string>("../../assets/modes/*.webp", { eager: true, import: "default" }),
+    ).map(([path, url]) => [path.slice(path.lastIndexOf("/") + 1, -".webp".length), url]),
+  );
   const fixed = $derived([
-    { id: NATURAL, name: moodName(NATURAL), preview: naturalSwatch, tip: t("mood_natural_tip") },
-    ...MOODS.map((m) => ({ id: m.id, name: moodName(m.id), preview: pool(m.kelvin, m.bright), tip: undefined })),
+    { id: NATURAL, name: moodName(NATURAL), tip: t("mood_natural_tip") },
+    ...MOODS.map((m) => ({ id: m.id, name: moodName(m.id), tip: undefined })),
   ]);
 
   // --- Animated: the screen and the shows ---
@@ -60,8 +63,8 @@
     return names.length > 0 ? `${names.join(", ")}. ${t("click_to_extend")}` : undefined;
   };
   const animated = $derived([
-    { id: "ambilight" as Mode, preview: null },
-    ...SHOWS.map((s) => ({ id: s.id as Mode, preview: s.preview })),
+    { id: "ambilight" as Mode },
+    ...SHOWS.map((s) => ({ id: s.id as Mode })),
   ]);
 
   // --- The settings of what plays on the selection ---
@@ -115,7 +118,7 @@
         disabled={app.pending !== null}
         onclick={() => applyScene(m.id)}
       >
-        <span class="preview" style="--p:{m.preview}" aria-hidden="true"></span>
+        <span class="preview"><img src={PICTURES[m.id]} alt="" draggable="false" /></span>
         <!-- Showing: an amber ring and a lamp, not the colour alone. -->
         <span class="tile-name">
           {#if moodAll(m.id)}<span class="lamp" aria-hidden="true"></span>{/if}{m.name}
@@ -139,11 +142,7 @@
         disabled={app.busy && app.pending !== a.id}
         onclick={() => chooseMode(a.id)}
       >
-        {#if a.preview}
-          <span class="preview" style="--p:{a.preview}" aria-hidden="true"></span>
-        {:else}
-          <span class="preview" aria-hidden="true"><span class="monitor"></span></span>
-        {/if}
+        <span class="preview"><img src={PICTURES[a.id]} alt="" draggable="false" /></span>
         <span class="tile-name">
           {#if playsAll(a.id)}<span class="lamp" aria-hidden="true"></span>{/if}{modeName(a.id)}
         </span>
@@ -277,59 +276,37 @@
   .tile:disabled:not(.pending) {
     opacity: 0.55;
   }
+  /* The picture of the room under the mode's light. Content, so it keeps
+     its own colours in both themes; a hairline keeps its edge on paper. */
   .preview {
-    height: 38px;
+    position: relative;
+    display: block;
+    height: 68px;
+    overflow: hidden;
     border-radius: var(--r-md);
-    background: var(--p);
+    background: var(--sunken);
+  }
+  .preview::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
     box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.12);
   }
-  /* A mood's pool of light needs a wall to fall on: the same dark well in
-     both themes, as a room at night. */
-  .still .preview {
-    background: var(--p), var(--well-night);
+  .preview img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
-  .natural .preview {
-    background: var(--p);
-  }
-  .still:not(.active) .preview {
-    filter: saturate(0.85);
-  }
-  .tile:not(.still).active .preview {
-    animation: drift 6s linear infinite alternate;
-    background-size: 160% 160%;
+  /* An animated mode playing: its picture drifts closer, slowly. */
+  .tile:not(.still).active .preview img {
+    animation: drift 8s var(--ease) infinite alternate;
   }
   @keyframes drift {
-    from {
-      background-position: 0% 50%;
-    }
     to {
-      background-position: 100% 50%;
+      transform: scale(1.06);
     }
-  }
-  /* The screen: a monitor whose glow spills onto the wall behind. */
-  .screen .preview {
-    display: grid;
-    place-items: center;
-    background:
-      radial-gradient(60% 70% at 25% 50%, oklch(0.72 0.15 55 / 0.55), transparent 70%),
-      radial-gradient(60% 70% at 75% 50%, oklch(0.65 0.15 250 / 0.55), transparent 70%),
-      var(--sunken);
-  }
-  .screen.active .preview {
-    animation: none;
-  }
-  .screen:not(.active) .preview {
-    filter: saturate(0.5);
-  }
-  /* Sized from the well's height, so it fits however narrow the tile. */
-  .monitor {
-    height: 62%;
-    aspect-ratio: 16 / 9;
-    border-radius: 3px;
-    background: linear-gradient(90deg, oklch(0.66 0.16 55), oklch(0.45 0.12 300), oklch(0.6 0.16 250));
-    box-shadow:
-      0 0 0 2px var(--bezel),
-      var(--bezel-shadow);
   }
   /* Names wrap rather than truncate: French ones run long. */
   .tile-name {
@@ -431,7 +408,7 @@
   /* Reduced motion: the loops stand still, and a pending choice dims
      instead of breathing. */
   @media (prefers-reduced-motion: reduce) {
-    .active .preview {
+    .active .preview img {
       animation: none;
     }
     .tile.pending .preview {

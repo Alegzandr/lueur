@@ -353,17 +353,18 @@ Sidebar items 36px high, 7px radius, icon plus label. Hover fills
 `surface-hover`; the active page becomes a small card (surface + card edge)
 with its icon in Filament Amber. Count badges are grey pills.
 
-### Effect tile (signature)
-A card holding a colour preview well (`--p` gradient, 38px) and a name, and
-nothing else. Playing on every light picked draws a 2px inset ring of Active
-Amber and a lamp before the name; on some of them, a dashed ring, with their
-names on hover. A running
-preview drifts slowly (6s); a pending one breathes. The Screen tile shows a
-small monitor whose glow spills onto the wall behind it, desaturated when off.
-
-Still modes (the moods) take the same tile: their well is the pool of their
-white on a dark wall (`well-night`), as strong as the mood is bright; the
-natural light's is its day, and it spans two columns.
+### Mode tile (signature)
+A card holding a picture and a name, and nothing else. Every mode, still or
+animated, shows the same room (white wall, oak sideboard, a table lamp, a
+floor lamp, a television) under its own light, so the tiles read as one
+series and differ only by the light: content, kept in its own colours in
+both themes. The pictures were generated once, locally, and ship as small
+WebP files in `src/lib/assets/modes/`, one per mode or mood id. Playing on
+every light picked draws a 2px inset ring of Active Amber and a lamp before
+the name; on some of them, a dashed ring, with their names on hover. A
+playing animated mode's picture drifts slowly closer (8s); a pending one
+breathes. Both stand still under reduced motion. The natural light spans
+two columns.
 
 ### Light card
 Each light on the Lighting page: a disc of the light it gives (its white or
