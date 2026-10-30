@@ -210,6 +210,13 @@ impl Default for EngineSettings {
 /// flip-flop between white and colour every frame.
 const WHITE_HYSTERESIS: f32 = 1.6;
 
+/// The least spread between a colour's channels (0..=255) that counts as a
+/// hue, whatever its saturation. Near black, the saturation is a ratio of
+/// tiny numbers: (10, 10, 12) is 17% saturated, yet it is a grey with one
+/// unit of noise. Below this the light takes the white path; it leaves it
+/// only past `CHROMA * WHITE_HYSTERESIS`.
+const CHROMA: f32 = 8.0;
+
 /// How much of the smoothing factor a light keeps while the picture is
 /// still. Noise (compression, film grain, a blinking cursor) moves a zone's
 /// average by a unit or two every frame; followed at full speed it becomes
@@ -348,6 +355,10 @@ pub struct Ambilight {
     /// What each light was last given, so a black frame can dim it without
     /// changing its colour.
     shown: Vec<Option<BulbOutput>>,
+    /// Each light's colour this frame as the screen gave it, smoothed but
+    /// not yet saturated: what the white/colour decision is made on, since
+    /// the saturation boost would turn a grey's noise into a hue.
+    seen: Vec<Rgb>,
     /// The black bars around the picture, followed across frames.
     bars: Bars,
     /// Seconds since the previous frame.
@@ -361,6 +372,7 @@ impl Ambilight {
             smoothers: vec![ColorSmoother::new(); light_count],
             in_white: vec![false; light_count],
             shown: vec![None; light_count],
+            seen: vec![Rgb::BLACK; light_count],
             bars: Bars::new(),
             frame_time: REFERENCE_FRAME,
         }
@@ -390,6 +402,7 @@ impl Ambilight {
         self.smoothers.resize(light_count, ColorSmoother::new());
         self.in_white.resize(light_count, false);
         self.shown.resize(light_count, None);
+        self.seen.resize(light_count, Rgb::BLACK);
     }
 
     /// Compute the screen-referred colour for each light this frame.
@@ -420,6 +433,7 @@ impl Ambilight {
             // Floor the factor above 0: a zero would freeze the light forever.
             let smoothing = per_frame(factor, self.frame_time).clamp(0.01, 1.0);
             let smoothed = self.smoothers[i].push(raw, smoothing);
+            self.seen[i] = smoothed;
             let mut shaped = saturate(smoothed, self.settings.saturation);
             if self.settings.black_threshold > 0 && shaped.value() < self.settings.black_threshold {
                 shaped = Rgb::BLACK;
@@ -454,6 +468,7 @@ impl Ambilight {
             .clamp(1.0, MAX_BRIGHTNESS_CURVE);
         let enter = self.settings.white_threshold.clamp(0.0, 1.0);
         let leave = (enter * WHITE_HYSTERESIS).min(1.0);
+        let leave_chroma = CHROMA * WHITE_HYSTERESIS;
 
         colors
             .into_iter()
@@ -483,15 +498,20 @@ impl Ambilight {
                 let intensity = f32::from(color.value()) / 255.0;
                 let steepen = intensity.powf(curve - 1.0);
                 let brightness = (brightness * gain * steepen).clamp(0.0, 1.0);
-                let sat = saturation(color);
+                // Decided on the colour before the saturation boost, by its
+                // saturation and by the spread of its channels (see
+                // [`CHROMA`]).
+                let seen = self.seen[i];
+                let sat = saturation(seen);
+                let chroma = f32::from(seen.value() - seen.r.min(seen.g).min(seen.b));
                 // A latched decision with two thresholds: drop into white below
                 // `enter`, but only climb back out once clearly past `leave`.
                 let white = if enter <= 0.0 {
                     false
                 } else if self.in_white[i] {
-                    sat <= leave
+                    sat <= leave || chroma <= leave_chroma
                 } else {
-                    sat < enter
+                    sat < enter || chroma < CHROMA
                 };
                 self.in_white[i] = white;
                 let built =
@@ -835,6 +855,26 @@ mod tests {
         fast.process(&red, &full());
         let b = fast.process(&red, &full())[0].r;
         assert!(a.abs_diff(b) <= 1, "{a} vs {b}");
+    }
+
+    #[test]
+    fn a_near_black_grey_stays_white_through_its_noise() {
+        // The default saturation boost, as in use: it would make a lavender
+        // of the first, a white of the second.
+        let settings = EngineSettings {
+            saturation: 0.35,
+            white_threshold: 0.18,
+            ..passthrough()
+        };
+        let mut amb = Ambilight::new(1, settings);
+        for rgb in [(10, 10, 12), (10, 10, 11), (9, 10, 13), (11, 10, 12)] {
+            let out = amb.process_outputs(&split_frame(rgb, rgb), &full())[0];
+            assert!(matches!(out, BulbOutput::White { .. }), "{rgb:?}: {out:?}");
+        }
+        // A dark but plain colour is still one.
+        let night = (4, 8, 40);
+        let out = amb.process_outputs(&split_frame(night, night), &full())[0];
+        assert!(matches!(out, BulbOutput::Color { .. }), "{out:?}");
     }
 
     #[test]

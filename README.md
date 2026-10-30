@@ -145,11 +145,15 @@ one on a shelf the top.
 Back on **Lighting**, click the **Ambilight** tile (or press
 <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd>), then launch a game or a
 film. On Windows you can skip this step: with *Ambilight in fullscreen* on
-(the default, in **Settings**) it starts and stops by itself.
+(the default, in **Settings**) it starts and stops by itself when a game or a
+video goes fullscreen on the screen it reads; a video fullscreen on another
+screen leaves the lights alone.
 
 The lights follow the shot, not every small movement in it: while a scene
 stays the same and only someone or the camera moves a little, each bulb keeps
 its colour, and only its brightness follows. A new shot changes it at once.
+A grey or near-black picture gives a white of the matching warmth rather than
+a faint tint, so a night scene does not turn the room lavender.
 
 With HDR on in Windows, the Ambilight reads the colours as they are composed
 and matches them to your *SDR content brightness* setting, so they don't come
@@ -166,7 +170,21 @@ off.
 *Dark scenes*, in **Settings**, sets how much a dark picture lights the room:
 *Lit* (the default) keeps some light on even in a night scene, *As on screen*
 gives the room the same share of light the screen gives, and *Balanced* sits
-between them.
+between them. *Colour strength* sets how much the lights strengthen the
+picture's colours, from *As on screen* to *Vivid*: bulbs tend to wash out a
+screen's colours, so a little extra is on by default.
+
+With *Photosensitivity protection* on (the default, in **Settings**), no
+light flashes more than three times a second, and neither does the room when
+lights take turns, like a siren flashing left and right. A sudden glare, such
+as a flashbang, takes a tenth of a second to reach full brightness, and
+longer when the picture keeps flashing.
+
+If the screen can't be read for a while (screen sharing stopped on Linux, a
+display gone), the Ambilight tile says so, and the lights keep their colour
+until it's back. Films from apps that protect their picture, such as the
+Netflix or Disney+ apps, come out black to every screen capture, Lueur's
+included: the lights then stay dim.
 
 ## Supported bulbs
 
@@ -283,6 +301,17 @@ each light Lueur reads three things off the plan:
   tight slice; out across the room, the whole picture. Far lights are also
   dimmer and calmer, because a far wall that flickers at 60 Hz reads as a
   fault.
+
+A light with several segments uses them. A strip or a gradient lightstrip on
+the back of the screen follows the rim of the picture, from the bottom of its
+left side, across the top, to the bottom of its right side; one under the
+screen follows the bottom of the picture across its whole width, and one
+above it the top; one elsewhere in the room follows the part of the picture in front of the
+stretch of wall it lights.
+
+A Nanoleaf layout plays the way it hangs, turned as you turned it in the
+Nanoleaf app: across, its panels mirror the picture from left to right; one
+taller than it is wide mirrors it from the bottom up.
 
 Neighbouring lights hand over gradually when something bright crosses between
 them, and colours are mixed the way light mixes, so reds and blues stay vivid

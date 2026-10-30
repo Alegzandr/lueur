@@ -227,7 +227,11 @@ LUEUR_MDNS_SERVICES=_hue._tcp.local cargo test -p lueur-core browses_the_real_ne
 A layout plays in External Control v2: one `effects` write, then UDP
 frames to port 60222 (Light Panels take v2 too on a recent firmware). The
 pieces without LEDs (the Rhythm module, controllers, connectors, caps) are
-left out of the frame and the zones, by `shapeType`. A controller leaves
+left out of the frame and the zones, by `shapeType`. The zones follow the
+layout as it hangs: its positions (y going up) are turned back by the
+angle the user gave it in the Nanoleaf app (`panelLayout/globalOrientation`,
+anticlockwise, as openHAB reads it), then grouped along the longer side,
+left to right or bottom to top (`LightStream::upright`). A controller leaves
 External Control by itself when its app picks an effect, when the panels
 are touched, or after a power cut, and frames sent then are lost; so a
 keeper thread asks every five seconds what it plays (`effects/select`) and

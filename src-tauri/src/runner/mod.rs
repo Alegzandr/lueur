@@ -137,6 +137,9 @@ pub struct Handle {
     hearing: Option<Arc<AtomicBool>>,
     /// The ambilight's: whether it reads the screen in HDR right now.
     hdr: Option<Arc<AtomicBool>>,
+    /// The ambilight's: whether it has not been able to read the screen
+    /// for a while (see `LOST_AFTER` in `ambilight.rs`).
+    screen_lost: Option<Arc<AtomicBool>>,
 }
 
 impl Handle {
@@ -188,6 +191,14 @@ impl Handle {
         self.hdr.as_ref().is_some_and(|h| h.load(Ordering::Relaxed))
     }
 
+    /// An ambilight that cannot read the screen: its lights hold their
+    /// colour until it can again.
+    pub fn screen_lost(&self) -> bool {
+        self.screen_lost
+            .as_ref()
+            .is_some_and(|l| l.load(Ordering::Relaxed))
+    }
+
     /// The lights it drives whose bulb is not taking frames, and why: it
     /// dropped, or something else drives it.
     pub fn away(&self) -> impl Iterator<Item = (&String, Link)> {
@@ -207,7 +218,8 @@ impl Drop for Handle {
 /// One connected, ready-to-drive light.
 struct ConnectedLight {
     id: String,
-    mapping: LightMapping,
+    /// The part of the picture each of its zones mirrors, left to right.
+    mappings: Vec<LightMapping>,
     /// Where it stands and how fast it answers, for the shows: one fixture
     /// for each zone it plays as, left to right.
     fixtures: Vec<Fixture>,
@@ -336,6 +348,7 @@ fn spawn(
         mode,
         hearing: None,
         hdr: None,
+        screen_lost: None,
     })
 }
 
@@ -371,7 +384,11 @@ fn start_ambilight(
     check_monitor_index(monitor_index)?;
     let (lights, ids) = connect(config, ids, hosts, leases)?;
     let hdr = Arc::new(AtomicBool::new(false));
-    let seen = Arc::clone(&hdr);
+    let screen_lost = Arc::new(AtomicBool::new(false));
+    let flags = ambilight::Flags {
+        hdr: Arc::clone(&hdr),
+        lost: Arc::clone(&screen_lost),
+    };
     let mut handle = spawn(
         config,
         Mode::Ambilight,
@@ -382,12 +399,13 @@ fn start_ambilight(
             // thread for its whole life. A stop asked meanwhile (the user
             // still looking at Wayland's screen sharing dialog) cancels it.
             match ScreenSource::for_index(monitor_index, stop) {
-                Ok(source) => run_ambilight(source, lights, live, stop, &seen),
+                Ok(source) => run_ambilight(source, lights, live, stop, &flags),
                 Err(e) => log::error!("capture unavailable: {e}"),
             }
         },
     )?;
     handle.hdr = Some(hdr);
+    handle.screen_lost = Some(screen_lost);
     Ok(handle)
 }
 

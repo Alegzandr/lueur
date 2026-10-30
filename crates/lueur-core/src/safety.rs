@@ -25,9 +25,17 @@
 //! range a second at most) until it has been calm for a second: the flashing
 //! becomes a slow drift, never a jump.
 //!
-//! The ambilight also caps how fast a light may brighten ([`RISE`]), so a
-//! flashbang in a game swells over a moment instead of whiting out the room
-//! at once. Dimming stays immediate.
+//! The ambilight also caps how fast a light may brighten: over a tenth of a
+//! second ([`FIRST_RISE`]) from a steady picture, so a flashbang in a game
+//! still strikes, and over [`RISE`] once the light has already swung lately,
+//! so a picture that keeps flashing swells rather than whites out the room
+//! each time. Dimming stays immediate.
+//!
+//! The room keeps a budget too. In a show, every light's transitions count
+//! towards it. In the ambilight only alternations do, lights turning opposite
+//! ways at once: a siren flashing red left and right, each side within its
+//! own budget, flashes the room twice as often. A cut, or something moving
+//! across the picture now and then, stays free.
 //!
 //! Turned off, the guard lets everything through, with one exception: a show
 //! still holds its white flashes (a third signal, how much near-white light
@@ -44,8 +52,8 @@ use std::collections::VecDeque;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SafetySettings {
-    /// No light flashes more than three times a second, and the ambilight
-    /// brightens over a moment rather than at once.
+    /// No light flashes more than three times a second, nor the room, and
+    /// the ambilight brightens over a tenth of a second at least.
     pub flash_guard: bool,
 }
 
@@ -70,9 +78,18 @@ const MERGE: f64 = 0.1;
 /// How fast a light that used its budget may move, share of its range a
 /// second: across the whole range in half a second.
 pub const EASE: f32 = 2.0;
-/// How fast the ambilight may brighten a light when protected, share of its
-/// range a second: from dark to full in 0.28 s.
+/// How fast the ambilight may brighten a light when protected and it has
+/// turned [`BUSY`] times lately, share of its range a second: from dark to
+/// full in 0.28 s.
 pub const RISE: f32 = 1.0 / 0.28;
+/// How fast it may brighten one that has been steady: from dark to full in a
+/// tenth of a second, quick enough for a shot or an explosion to land.
+pub const FIRST_RISE: f32 = 1.0 / 0.1;
+/// Transitions of what a light is asked to show, within the last
+/// [`WINDOW`], after which it brightens at [`RISE`]: the picture has flashed
+/// once already. Counted on what is asked rather than what is sent, since
+/// the cap itself keeps what is sent from turning.
+const BUSY: usize = 2;
 /// The least a colour counts for, against a white at the same power.
 pub const FLOOR: f32 = 0.3;
 /// What one brightness percent is worth: the finest step a bulb takes.
@@ -235,13 +252,17 @@ impl Swings {
     }
 
     /// Whether moving to `v` at `now` stays within the budget, the room's
-    /// too when it keeps one.
-    fn allows(&self, v: f32, now: f64, room: Option<&Crowd>) -> bool {
+    /// too when it keeps one (`lamp` is which light this is).
+    fn allows(&self, v: f32, now: f64, room: Option<&Crowd>, lamp: usize) -> bool {
         let Some(dir) = self.turns(v) else {
             return true;
         };
-        self.at.iter().filter(|&&t| now - t < WINDOW).count() < TRANSITIONS
-            && room.is_none_or(|room| room.allows(dir, now))
+        self.recent(now) < TRANSITIONS && room.is_none_or(|room| room.allows(dir, now, lamp))
+    }
+
+    /// How many transitions it took in the last [`WINDOW`].
+    fn recent(&self, now: f64) -> usize {
+        self.at.iter().filter(|&&t| now - t < WINDOW).count()
     }
 
     /// The signal is now `v`. The transition it completed, if any.
@@ -282,17 +303,41 @@ impl Swings {
 struct Crowd {
     /// When the room's recent transitions happened, and which way.
     at: VecDeque<(f64, i8)>,
+    /// Only alternations count (the ambilight): a light's transition counts
+    /// when another light turned the other way within [`MERGE`].
+    alternations: bool,
+    /// Every light's transitions within the last [`MERGE`], and whose: what
+    /// tells an alternation.
+    turns: VecDeque<(f64, i8, usize)>,
 }
 
 impl Crowd {
+    fn alternating() -> Self {
+        Crowd {
+            alternations: true,
+            ..Crowd::default()
+        }
+    }
+
     /// The room is turning `dir` already: another light joining it is the
     /// same change.
     fn joins(&self, dir: i8, now: f64) -> bool {
         self.at.iter().any(|&(t, d)| d == dir && now - t < MERGE)
     }
 
-    fn allows(&self, dir: i8, now: f64) -> bool {
-        self.joins(dir, now)
+    /// Whether light `lamp` turning `dir` now counts towards the room's
+    /// budget.
+    fn counts(&self, dir: i8, now: f64, lamp: usize) -> bool {
+        !self.alternations
+            || self
+                .turns
+                .iter()
+                .any(|&(t, d, l)| d == -dir && l != lamp && now - t < MERGE)
+    }
+
+    fn allows(&self, dir: i8, now: f64, lamp: usize) -> bool {
+        !self.counts(dir, now, lamp)
+            || self.joins(dir, now)
             || self
                 .at
                 .iter()
@@ -301,14 +346,25 @@ impl Crowd {
                 < TRANSITIONS / 2
     }
 
-    fn see(&mut self, dir: Option<i8>, now: f64) {
+    fn see(&mut self, dir: Option<i8>, now: f64, lamp: usize) {
         while self.at.front().is_some_and(|&(t, _)| now - t >= WINDOW) {
             self.at.pop_front();
         }
-        if let Some(dir) = dir
-            && !self.joins(dir, now)
+        while self
+            .turns
+            .front()
+            .is_some_and(|&(t, _, _)| now - t >= MERGE)
         {
+            self.turns.pop_front();
+        }
+        let Some(dir) = dir else {
+            return;
+        };
+        if self.counts(dir, now, lamp) && !self.joins(dir, now) {
             self.at.push_back((now, dir));
+        }
+        if self.alternations {
+            self.turns.push_back((now, dir, lamp));
         }
     }
 }
@@ -321,6 +377,17 @@ struct Room {
     white: Crowd,
 }
 
+impl Room {
+    /// A room where only alternations between lights count (see [`Crowd`]).
+    fn alternating() -> Self {
+        Room {
+            general: Crowd::alternating(),
+            red: Crowd::alternating(),
+            white: Crowd::alternating(),
+        }
+    }
+}
+
 /// One light's history.
 #[derive(Debug, Clone, Default)]
 struct Lamp {
@@ -329,24 +396,32 @@ struct Lamp {
     general: Swings,
     red: Swings,
     white: Swings,
+    /// The turns of what it is asked to show, before any holding back: how
+    /// steady the picture behind it is.
+    asked: Swings,
     /// When it was last held back. For a [`WINDOW`] after, it moves at
     /// [`EASE`] whatever its budget, so a strobe that carries on becomes a
     /// drift rather than bursts of flashes each time the budget comes back.
     held_at: Option<f64>,
     /// The last output was not the one asked for.
     held: bool,
+    /// Which light of the guard's it is, for the room's budget.
+    index: usize,
 }
 
 impl Lamp {
     fn allows(&self, o: BulbOutput, now: f64, watch: Watch, room: Option<&Room>) -> bool {
-        let white = self.white.allows(glare(o), now, room.map(|r| &r.white));
+        let i = self.index;
+        let white = self.white.allows(glare(o), now, room.map(|r| &r.white), i);
         if watch == Watch::Whites {
             return white;
         }
         let (general, red) = signals(o);
         white
-            && self.general.allows(general, now, room.map(|r| &r.general))
-            && self.red.allows(red, now, room.map(|r| &r.red))
+            && self
+                .general
+                .allows(general, now, room.map(|r| &r.general), i)
+            && self.red.allows(red, now, room.map(|r| &r.red), i)
     }
 
     /// What to send instead of `target`, coming from `prev`, `dt` seconds on.
@@ -364,7 +439,14 @@ impl Lamp {
         let mut want = target;
         if let Some(rate) = rise {
             // Brighten no faster than `rate`, keeping the hue: the colour
-            // still answers at once, only its glare is eased in.
+            // still answers at once, only its glare is eased in. A light
+            // whose picture has been steady may rise faster (see
+            // [`FIRST_RISE`]).
+            let rate = if self.asked.recent(now) >= BUSY {
+                rate
+            } else {
+                rate.max(FIRST_RISE)
+            };
             let cap = from + rate * dt;
             let (to, _) = signals(want);
             if to > cap + QUANTUM {
@@ -410,9 +492,10 @@ impl Lamp {
 
     fn see(&mut self, o: BulbOutput, now: f64, room: &mut Room) {
         let (general, red) = signals(o);
-        room.general.see(self.general.see(general, now), now);
-        room.red.see(self.red.see(red, now), now);
-        room.white.see(self.white.see(glare(o), now), now);
+        let i = self.index;
+        room.general.see(self.general.see(general, now), now, i);
+        room.red.see(self.red.see(red, now), now, i);
+        room.white.see(self.white.see(glare(o), now), now, i);
         self.shown = Some(o);
     }
 }
@@ -428,10 +511,12 @@ pub struct FlashGuard {
     /// How fast a light may brighten, for the ambilight.
     rise: Option<f32>,
     /// A show: white flashes are held to the budget even with the
-    /// protection off, and the room keeps a budget of its own (see
-    /// [`Crowd`]).
+    /// protection off.
     show: bool,
-    room: Room,
+    /// Whether the room keeps a budget of its own (see [`Crowd`]).
+    crowd: bool,
+    /// Boxed: a guard is kept by value beside every light set by hand.
+    room: Box<Room>,
     /// Seconds since the guard started.
     now: f64,
 }
@@ -444,7 +529,8 @@ impl FlashGuard {
             lamps: vec![Lamp::default(); lights],
             rise: None,
             show: false,
-            room: Room::default(),
+            crowd: false,
+            room: Box::default(),
             now: 0.0,
         }
     }
@@ -455,15 +541,19 @@ impl FlashGuard {
     pub fn show(lights: usize) -> Self {
         FlashGuard {
             show: true,
+            crowd: true,
             ..FlashGuard::new(lights)
         }
     }
 
-    /// A guard for the ambilight: the flash budget, and brightening capped at
-    /// [`RISE`].
+    /// A guard for the ambilight: the flash budget, brightening capped (see
+    /// [`FIRST_RISE`] and [`RISE`]), and a room budget for lights that
+    /// alternate.
     pub fn ambilight(lights: usize) -> Self {
         FlashGuard {
             rise: Some(RISE),
+            crowd: true,
+            room: Box::new(Room::alternating()),
             ..FlashGuard::new(lights)
         }
     }
@@ -482,20 +572,22 @@ impl FlashGuard {
             self.lamps.resize(outputs.len(), Lamp::default());
         }
         let now = self.now;
-        // The ambilight answers to the room budget only through its lights:
-        // each mirrors its own part of the picture, a strobe on screen
-        // reaches them all at once, and a room budget would hold back the
-        // ordinary, unrelated changes of the zones.
+        // The ambilight's room counts only alternations (see [`Crowd`]): its
+        // lights mirror their own parts of the picture, and counting their
+        // ordinary, unrelated changes would hold them back.
         let FlashGuard {
             lamps,
             rise,
             show,
+            crowd,
             room,
             ..
         } = self;
-        for (lamp, out) in lamps.iter_mut().zip(outputs.iter_mut()) {
+        for (i, (lamp, out)) in lamps.iter_mut().zip(outputs.iter_mut()).enumerate() {
+            lamp.index = i;
             let target = *out;
-            let crowd = show.then_some(&*room);
+            lamp.asked.see(signals(target).0, now);
+            let crowd = crowd.then_some(&**room);
             let sent = match lamp.shown {
                 Some(prev) if on => {
                     let rules = Rules {
@@ -690,18 +782,98 @@ mod tests {
             .position(|f| f[0].bright() >= 95)
             .expect("never reaches full");
         let took = (full - 10) as f32 * dt;
-        assert!(took >= 0.25, "full white after {took} s");
-        assert!(took <= 0.4, "full white only after {took} s");
+        assert!(took >= 0.06, "full white after {took} s");
+        assert!(took <= 0.15, "full white only after {took} s");
         for w in sent.windows(2) {
             let (a, _) = signals(w[0][0]);
             let (b, _) = signals(w[1][0]);
-            assert!(b - a <= RISE * dt + 2.0 * QUANTUM, "{a} -> {b}");
+            assert!(b - a <= FIRST_RISE * dt + 2.0 * QUANTUM, "{a} -> {b}");
         }
         // It goes back to dark at once.
         assert_eq!(sent[55], frames[55]);
         // Unprotected, the room whites out on the spot.
         let mut guard = FlashGuard::ambilight(1);
         assert_eq!(guarded(&mut guard, &frames, dt, false), frames);
+    }
+
+    #[test]
+    fn a_light_that_keeps_flashing_rises_slower() {
+        // Dark and bright twice in quick succession, then bright again: the
+        // third rise comes after a flash already, and swells.
+        let dt = 1.0 / 45.0;
+        let dark = color(30, 40, 60, 5);
+        let mut frames = vec![vec![dark]; 10];
+        for _ in 0..2 {
+            frames.extend(vec![vec![white(100)]; 8]);
+            frames.extend(vec![vec![dark]; 8]);
+        }
+        frames.extend(vec![vec![white(100)]; 30]);
+        let mut guard = FlashGuard::ambilight(1);
+        let sent = guarded(&mut guard, &frames, dt, true);
+        let last_rise = 10 + 32;
+        let full = (last_rise..sent.len())
+            .find(|&i| sent[i][0].bright() >= 95)
+            .expect("never reaches full");
+        let took = (full - last_rise) as f32 * dt;
+        assert!(took >= 0.2, "full white after {took} s");
+    }
+
+    #[test]
+    fn a_siren_alternating_between_lights_is_held_for_the_room() {
+        // Red on the left while the right is dark, then the other way round,
+        // each side 2.5 times a second: within each light's budget, but five
+        // red flashes a second in the room.
+        let dt = 1.0 / 45.0;
+        let red = color(255, 0, 0, 100);
+        let dark = color(255, 0, 0, 5);
+        let mut frames = Vec::new();
+        for k in 0..45 * 4 {
+            let left = (k / 9) % 2 == 0;
+            frames.push(if left {
+                vec![red, dark]
+            } else {
+                vec![dark, red]
+            });
+        }
+        let mut guard = FlashGuard::ambilight(2);
+        let sent = guarded(&mut guard, &frames, dt, true);
+        let per_light = flashes(&sent, dt);
+        assert!(per_light <= 3, "{per_light} flashes a second on one light");
+        // Unguarded, the two lights alternate in full every 0.2 s; guarded,
+        // the room's alternations are held to its budget.
+        let turns = |frames: &[Vec<BulbOutput>]| {
+            frames
+                .windows(2)
+                .filter(|w| {
+                    let swap = |f: &Vec<BulbOutput>| signals(f[0]).1 > signals(f[1]).1;
+                    swap(&w[0]) != swap(&w[1])
+                        && (signals(w[1][0]).1 - signals(w[1][1]).1).abs() > 0.5
+                })
+                .count()
+        };
+        assert!(turns(&frames) >= 15, "the siren alternates");
+        assert!(
+            turns(&sent) * 2 < turns(&frames),
+            "{} of {} alternations went through",
+            turns(&sent),
+            turns(&frames)
+        );
+    }
+
+    #[test]
+    fn a_cut_reaches_every_light_at_once() {
+        // Every light turning the same way together is one change of the
+        // room, never held for it.
+        let dt = 1.0 / 45.0;
+        let dark = color(30, 40, 60, 5);
+        let bright = color(200, 120, 60, 90);
+        let mut frames = vec![vec![dark; 4]; 10];
+        frames.extend(vec![vec![bright; 4]; 20]);
+        let mut guard = FlashGuard::ambilight(4);
+        let sent = guarded(&mut guard, &frames, dt, true);
+        assert_eq!(sent.last(), frames.last());
+        let arrived = sent.iter().position(|f| f == &frames[29]).expect("arrives");
+        assert!(arrived <= 10 + 6, "arrived on frame {arrived}");
     }
 
     /// A frame of one flat colour.

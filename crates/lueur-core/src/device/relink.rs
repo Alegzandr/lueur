@@ -147,10 +147,11 @@ pub struct Relink {
     backoff: Backoff,
     next_try: Instant,
     interval: Duration,
-    /// How long a command takes to show, and how many zones the light
-    /// plays as: those of the stream it opened with.
+    /// How long a command takes to show, how many zones the light plays
+    /// as and which way they run: those of the stream it opened with.
     latency: Duration,
     zones: usize,
+    upright: bool,
     /// When the stream on trial was reopened (see [`RELINK_STABLE`]).
     trial: Option<Instant>,
     stable: Duration,
@@ -177,10 +178,11 @@ impl Relink {
     /// stream fails.
     pub fn new(stream: Box<dyn LightStream>, open: Opener) -> Self {
         let interval = stream.interval();
-        let (latency, zones) = (stream.latency(), stream.zones());
+        let (latency, zones, upright) = (stream.latency(), stream.zones(), stream.upright());
         let mut relink = Self::with(Some(stream), open, interval, Link::Up);
         relink.latency = latency;
         relink.zones = zones;
+        relink.upright = upright;
         relink
     }
 
@@ -205,6 +207,7 @@ impl Relink {
             interval,
             latency: super::DEFAULT_LATENCY,
             zones: 1,
+            upright: false,
             open,
             stream,
             stale: None,
@@ -276,6 +279,12 @@ impl Relink {
     /// How many zones the light plays as (see [`LightStream::zones`]).
     pub fn zones(&self) -> usize {
         self.zones
+    }
+
+    /// Whether those zones run from the bottom up (see
+    /// [`LightStream::upright`]).
+    pub fn upright(&self) -> bool {
+        self.upright
     }
 
     /// Send one frame if the bulb is there; otherwise move the reconnection

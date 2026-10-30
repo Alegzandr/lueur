@@ -2,10 +2,11 @@
 //!
 //! Pairing: hold the controller's power button 5–7 s until its LEDs flash,
 //! then ask for a token within 30 seconds. The ambilight runs in External
-//! Control mode, a UDP stream that sets every panel each frame. The
-//! ambilight shows one colour on the whole layout, since the room plan
-//! treats it as one light; the music plays it as a few zones, its panels
-//! grouped left to right, so a chase runs across it.
+//! Control mode, a UDP stream that sets every panel each frame. The layout
+//! plays as a few zones, its panels grouped along its longer side, left to
+//! right or bottom to top once turned the way the Nanoleaf app shows it:
+//! the ambilight mirrors a slice of the picture on each, and a chase runs
+//! across it.
 
 use super::common::{LastSent, REFRESH, Throttle, kelvin_to_rgb, rgb_to_hsv, udp_to};
 use super::http::{self, Response};
@@ -201,10 +202,11 @@ fn answers(ip: &str) -> bool {
 /// parts that never light.
 const UNLIT_SHAPES: [u64; 5] = [1, 12, 16, 19, 20];
 
-/// The lit panels of a `panelLayout/layout` reply, as (id, x). Every piece
-/// if none says it is lit, so a layout of shapes unknown here still plays.
-fn lit_panels(layout: &Value) -> Vec<(u16, i64)> {
-    let pieces: Vec<(u16, i64, bool)> = layout
+/// The lit panels of a `panelLayout/layout` reply, as (id, x, y), y going
+/// up. Every piece if none says it is lit, so a layout of shapes unknown
+/// here still plays.
+fn lit_panels(layout: &Value) -> Vec<(u16, f64, f64)> {
+    let pieces: Vec<(u16, f64, f64, bool)> = layout
         .get("positionData")
         .and_then(Value::as_array)
         .map(|panels| {
@@ -212,43 +214,78 @@ fn lit_panels(layout: &Value) -> Vec<(u16, i64)> {
                 .iter()
                 .filter_map(|p| {
                     let id = u16::try_from(p.get("panelId")?.as_u64()?).ok()?;
-                    let x = p.get("x").and_then(Value::as_i64).unwrap_or(0);
+                    let at = |k| p.get(k).and_then(Value::as_f64).unwrap_or(0.0);
                     let unlit = p
                         .get("shapeType")
                         .and_then(Value::as_u64)
                         .is_some_and(|s| UNLIT_SHAPES.contains(&s));
-                    Some((id, x, unlit))
+                    Some((id, at("x"), at("y"), unlit))
                 })
                 .collect()
         })
         .unwrap_or_default();
-    let all_unlit = pieces.iter().all(|&(_, _, unlit)| unlit);
+    let all_unlit = pieces.iter().all(|&(.., unlit)| unlit);
     pieces
         .into_iter()
-        .filter(|&(_, _, unlit)| all_unlit || !unlit)
-        .map(|(id, x, _)| (id, x))
+        .filter(|&(.., unlit)| all_unlit || !unlit)
+        .map(|(id, x, y, _)| (id, x, y))
         .collect()
 }
 
 /// Panel ids from a `panelLayout/layout` reply, without the pieces that
 /// carry no LEDs.
 pub fn panel_ids(layout: &Value) -> Vec<u16> {
-    lit_panels(layout).into_iter().map(|(id, _)| id).collect()
+    lit_panels(layout).into_iter().map(|(id, ..)| id).collect()
 }
 
-/// Each panel's zone in a `panelLayout/layout` reply, in the order
-/// [`panel_ids`] lists them: the panels grouped left to right into at most
-/// [`super::MAX_ZONES`] zones.
-pub fn panel_zones(layout: &Value) -> Vec<usize> {
-    let xs: Vec<i64> = lit_panels(layout).into_iter().map(|(_, x)| x).collect();
-    let mut order: Vec<usize> = (0..xs.len()).collect();
-    order.sort_by_key(|&i| xs[i]);
-    let groups = group_zones(xs.len());
-    let mut zones = vec![0; xs.len()];
+/// The angle of a `panelLayout/globalOrientation` reply, in degrees: how
+/// far the user turned the layout, anticlockwise, in the Nanoleaf app so
+/// that it looks there the way it hangs on the wall. 0 when it says nothing.
+pub fn orientation(reply: &Value) -> f64 {
+    reply.get("value").and_then(Value::as_f64).unwrap_or(0.0)
+}
+
+/// How a layout plays as zones.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Zoning {
+    /// Each panel's zone, in the order [`panel_ids`] lists them.
+    pub zone_of: Vec<usize>,
+    /// The layout is taller than it is wide, and its zones run from the
+    /// bottom up rather than from left to right.
+    pub upright: bool,
+}
+
+/// Each panel's zone in a `panelLayout/layout` reply, turned by
+/// `orientation` degrees (see [`orientation`]) to hang as it does on the
+/// wall: the panels grouped along the layout's longer side, left to right
+/// or bottom to top, into at most [`super::MAX_ZONES`] zones. Grouping a
+/// column of panels by x alone would order them however the controller
+/// lists them.
+pub fn panel_zones(layout: &Value, orientation: f64) -> Zoning {
+    // The app turns the picture anticlockwise; turning the positions back
+    // clockwise as much puts them the way they hang, as openHAB draws them.
+    let (sin, cos) = (-orientation).to_radians().sin_cos();
+    let at: Vec<(f64, f64)> = lit_panels(layout)
+        .into_iter()
+        .map(|(_, x, y)| (x * cos - y * sin, x * sin + y * cos))
+        .collect();
+    let extent = |axis: fn(&(f64, f64)) -> f64| {
+        let (lo, hi) = at
+            .iter()
+            .map(axis)
+            .fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)));
+        hi - lo
+    };
+    let upright = extent(|p| p.1) > extent(|p| p.0);
+    let key = |i: usize| if upright { at[i].1 } else { at[i].0 };
+    let mut order: Vec<usize> = (0..at.len()).collect();
+    order.sort_by(|&a, &b| key(a).total_cmp(&key(b)));
+    let groups = group_zones(at.len());
+    let mut zone_of = vec![0; at.len()];
     for (rank, &i) in order.iter().enumerate() {
-        zones[i] = groups[rank];
+        zone_of[i] = groups[rank];
     }
-    zones
+    Zoning { zone_of, upright }
 }
 
 /// An External Control v2 frame setting every panel to `rgb`.
@@ -380,6 +417,8 @@ pub struct NanoleafStream {
     /// Each panel's zone, and how many zones there are.
     zone_of: Vec<usize>,
     zones: usize,
+    /// The zones run from the bottom up (see [`Zoning::upright`]).
+    upright: bool,
     socket: UdpSocket,
     last: LastSent,
     /// The colours last sent zone by zone, and when.
@@ -399,7 +438,13 @@ impl NanoleafStream {
         if panels.is_empty() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "no panels"));
         }
-        let zone_of = panel_zones(&layout);
+        // A layout nobody turned in the app, or a controller that does not
+        // say, plays as the controller lists it.
+        let turned = get(ip, port, token, "panelLayout/globalOrientation")
+            .ok()
+            .and_then(|r| serde_json::from_str::<Value>(&r.body).ok())
+            .map_or(0.0, |v| orientation(&v));
+        let Zoning { zone_of, upright } = panel_zones(&layout, turned);
         let zones = zone_of.iter().max().map_or(1, |z| z + 1);
         // Full brightness: the stream folds the ambilight's own into RGB.
         put(
@@ -424,6 +469,7 @@ impl NanoleafStream {
             panels,
             zone_of,
             zones,
+            upright,
             socket: udp_to(ip, STREAM_PORT)?,
             last: LastSent::default(),
             last_zones: None,
@@ -488,6 +534,10 @@ impl LightStream for NanoleafStream {
 
     fn zones(&self) -> usize {
         self.zones
+    }
+
+    fn upright(&self) -> bool {
+        self.upright
     }
 
     fn push_zones(
@@ -588,7 +638,7 @@ mod tests {
             {"panelId": 12, "x": 150, "shapeType": 19},
         ]});
         assert_eq!(panel_ids(&v), vec![10, 11]);
-        assert_eq!(panel_zones(&v), vec![0, 1]);
+        assert_eq!(panel_zones(&v, 0.0).zone_of, vec![0, 1]);
         // Nothing said to be lit: everything is kept rather than nothing.
         let odd = json!({"positionData": [{"panelId": 3, "x": 0, "shapeType": 12}]});
         assert_eq!(panel_ids(&odd), vec![3]);
@@ -616,15 +666,60 @@ mod tests {
             r#"{"positionData":[{"panelId":1,"x":300},{"panelId":2,"x":0},{"panelId":3,"x":150}]}"#,
         )
         .unwrap();
-        assert_eq!(panel_zones(&v), vec![2, 0, 1]);
+        assert_eq!(panel_zones(&v, 0.0).zone_of, vec![2, 0, 1]);
         let panels: Vec<Value> = (0..20)
             .map(|i| json!({"panelId": i, "x": i * 10}))
             .collect();
-        let zones = panel_zones(&json!({ "positionData": panels }));
+        let zones = panel_zones(&json!({ "positionData": panels }), 0.0).zone_of;
         assert_eq!(zones.iter().max(), Some(&(super::super::MAX_ZONES - 1)));
         assert!(zones.windows(2).all(|w| w[0] <= w[1]));
         let f = zoned_frame(&[7, 8], |i| Rgb::new(i as u8, 0, 0), 0);
         assert_eq!((f[4], f[12]), (0, 1));
+    }
+
+    #[test]
+    fn a_column_of_panels_plays_from_the_bottom_up() {
+        // Lines up a wall: the x wanders a little, the y climbs. Listed out
+        // of order, as a controller may.
+        let v = json!({"positionData": [
+            {"panelId": 1, "x": 10, "y": 200},
+            {"panelId": 2, "x": 0, "y": 0},
+            {"panelId": 3, "x": 20, "y": 100},
+        ]});
+        let z = panel_zones(&v, 0.0);
+        assert!(z.upright);
+        assert_eq!(z.zone_of, vec![2, 0, 1]);
+        // A row is not upright, whatever its y.
+        let row = json!({"positionData": [
+            {"panelId": 1, "x": 0, "y": 10},
+            {"panelId": 2, "x": 300, "y": 0},
+        ]});
+        assert!(!panel_zones(&row, 0.0).upright);
+    }
+
+    #[test]
+    fn the_layout_is_turned_the_way_it_hangs() {
+        let v = json!({"positionData": [
+            {"panelId": 1, "x": 0, "y": 0},
+            {"panelId": 2, "x": 100, "y": 0},
+            {"panelId": 3, "x": 200, "y": 0},
+        ]});
+        // Turned upside down in the app: the right end hangs on the left.
+        let z = panel_zones(&v, 180.0);
+        assert!(!z.upright);
+        assert_eq!(z.zone_of, vec![2, 1, 0]);
+        // Turned a quarter anticlockwise in the app, the row stands, its
+        // first panel at the top (as openHAB draws it).
+        let z = panel_zones(&v, 90.0);
+        assert!(z.upright);
+        assert_eq!(z.zone_of, vec![2, 1, 0]);
+        let z = panel_zones(&v, 270.0);
+        assert_eq!((z.upright, z.zone_of), (true, vec![0, 1, 2]));
+        assert_eq!(
+            orientation(&json!({"value": 88, "max": 360, "min": 0})),
+            88.0
+        );
+        assert_eq!(orientation(&json!({})), 0.0);
     }
 
     #[test]

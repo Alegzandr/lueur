@@ -7,7 +7,7 @@ use lueur_core::config::AppConfig;
 use lueur_core::device::LightStream;
 use lueur_core::device::lease::{self, Leases};
 use lueur_core::device::relink::{Link, OnChange, Opener, Relink};
-use lueur_core::geometry::map_light;
+use lueur_core::geometry::map_zones;
 use lueur_core::stage::Fixture;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,8 +34,9 @@ pub(super) fn connect(
     hosts: &HashMap<String, usize>,
     leases: &Arc<Leases>,
 ) -> AppResult<(Vec<ConnectedLight>, Vec<String>)> {
-    // Resolve the lights that have a device binding, in room order, and
-    // compute each one's screen mapping (zone plus distance shaping).
+    // Resolve the lights that have a device binding, in room order. Each
+    // one's screen mapping waits for its stream, which says how many zones
+    // it plays as.
     let targets: Vec<_> = config
         .room
         .lights
@@ -44,7 +45,7 @@ pub(super) fn connect(
         .filter_map(|l| {
             let binding = config.binding_for(&l.id)?;
             let siblings = hosts.get(&binding.ip).copied().unwrap_or(1);
-            Some((map_light(&config.room.screen, l), binding, l, siblings))
+            Some((binding, l, siblings))
         })
         .collect();
     if targets.is_empty() {
@@ -54,7 +55,7 @@ pub(super) fn connect(
     // How each bulb is opened, now and again whenever it drops.
     let openers: Vec<Opener> = targets
         .iter()
-        .map(|(_, binding, _, siblings)| {
+        .map(|(binding, _, siblings)| {
             let endpoint = binding.endpoint();
             let siblings = *siblings;
             Arc::new(move |polite| devices::open_stream(&endpoint, siblings, polite)) as Opener
@@ -62,7 +63,7 @@ pub(super) fn connect(
         .collect();
     let gates: Vec<_> = targets
         .iter()
-        .map(|(_, binding, _, _)| leases.gate(&binding.device_id))
+        .map(|(binding, _, _)| leases.gate(&binding.device_id))
         .collect();
     // Open every bulb at once: an unplugged one costs its whole timeout, and
     // waiting on each in turn would make a few of them feel like a hang.
@@ -97,7 +98,7 @@ pub(super) fn connect(
     let mut failed = Vec::new();
     let mut details = Vec::new();
     let changed: OnChange = Arc::new(status_changed);
-    for ((((mapping, binding, light, siblings), result), open), gate) in
+    for ((((binding, light, siblings), result), open), gate) in
         targets.into_iter().zip(opened).zip(openers).zip(gates)
     {
         let link = match result {
@@ -118,7 +119,7 @@ pub(super) fn connect(
         let fixture = Fixture::place(&config.room.screen, light, link.interval(), link.latency());
         connected.push(ConnectedLight {
             id: light.id.clone(),
-            mapping,
+            mappings: map_zones(&config.room.screen, light, link.zones(), link.upright()),
             fixtures: fixture.zones(link.zones()),
             link: link
                 .gated(gate)

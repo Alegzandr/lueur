@@ -8,9 +8,22 @@ use lueur_core::safety::FlashGuard;
 use lueur_core::stage::Fixture;
 use lueur_core::sync::{self, Lag};
 use lueur_core::yeelight::Effect;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// How long the screen may stay unreadable before the window says so. Longer
+/// than a display mode change takes (a few seconds, see `DUPLICATION_PATIENCE`
+/// in `capture.rs`), so switching HDR on does not flash a warning.
+const LOST_AFTER: Duration = Duration::from_secs(10);
+
+/// What the ambilight tells the window about the screen it reads.
+pub(super) struct Flags {
+    /// It reads the screen in HDR.
+    pub hdr: Arc<AtomicBool>,
+    /// It has not been able to read the screen for [`LOST_AFTER`].
+    pub lost: Arc<AtomicBool>,
+}
 
 /// Fit a transition into the time available before the next frame replaces it.
 ///
@@ -47,16 +60,16 @@ pub(super) fn run_ambilight(
     lights: &mut [ConnectedLight],
     live: &Mutex<LiveSettings>,
     stop: &AtomicBool,
-    hdr: &AtomicBool,
+    flags: &Flags,
 ) {
     let Ok(initial) = live.lock().map(|g| g.clone()) else {
         return;
     };
-    // A light that colours several parts of itself mirrors the picture
-    // across them, a slice each.
+    // A light that colours several parts of itself mirrors a part of the
+    // picture with each (see `map_zones`).
     let mappings: Vec<LightMapping> = lights
         .iter()
-        .flat_map(|l| l.mapping.split(l.fixtures.len()))
+        .flat_map(|l| l.mappings.iter().copied())
         .collect();
     let spans = spans(lights);
     let mut engine = Ambilight::new(mappings.len(), initial.engine);
@@ -72,6 +85,8 @@ pub(super) fn run_ambilight(
     let mut unsharp = vec![false; mappings.len()];
     let mut last_tick: Option<Instant> = None;
     let mut last_frame: Option<Instant> = None;
+    // Since when the screen has refused to be read, every grab.
+    let mut failing_since: Option<Instant> = None;
 
     while !stop.load(Ordering::SeqCst) {
         // Read first: the rate itself is live, a new one paces this frame.
@@ -99,7 +114,31 @@ pub(super) fn run_ambilight(
         // reaches, which reads as fast, erratic colour swings.
         let (effect, duration_ms) = pace(settings.effect, settings.duration_ms, frame_budget);
 
-        match source.grab(frame_budget) {
+        let grabbed = source.grab(frame_budget);
+        let lost = match &grabbed {
+            Ok(_) => {
+                failing_since = None;
+                false
+            }
+            Err(e) => {
+                let since = *failing_since.get_or_insert_with(|| {
+                    log::warn!("the screen cannot be read: {e}");
+                    Instant::now()
+                });
+                since.elapsed() >= LOST_AFTER
+            }
+        };
+        if flags.lost.swap(lost, Ordering::Relaxed) != lost {
+            if lost {
+                log::error!(
+                    "the screen has not been readable for {LOST_AFTER:?}; the lights hold their colour"
+                );
+            } else {
+                log::info!("the screen can be read again");
+            }
+            status_changed();
+        }
+        match grabbed {
             Ok(frame) => {
                 // The real gap, not the budget: a still screen delivers frames
                 // late, and the smoothing should catch up by the time that
@@ -134,7 +173,7 @@ pub(super) fn run_ambilight(
         // HDR turned on or off in Windows reopens the capture in its new
         // format; the window says which one the colours come from.
         let reads_hdr = source.hdr();
-        if hdr.swap(reads_hdr, Ordering::Relaxed) != reads_hdr {
+        if flags.hdr.swap(reads_hdr, Ordering::Relaxed) != reads_hdr {
             status_changed();
         }
     }

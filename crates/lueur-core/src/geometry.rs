@@ -267,6 +267,25 @@ impl LightMapping {
             .collect()
     }
 
+    /// [`LightMapping::split`] for zones that run bottom to top, up a
+    /// standing layout: its zone of the picture cut into bands stacked from
+    /// the bottom, so the top of the layout shows the top of the picture.
+    pub fn split_up(&self, n: usize) -> Vec<LightMapping> {
+        let n = n.max(1);
+        let h = self.zone.h / n as f32;
+        (0..n)
+            .map(|i| LightMapping {
+                zone: SampleZone::new(
+                    self.zone.x,
+                    self.zone.y + h * (n - 1 - i) as f32,
+                    self.zone.w,
+                    h,
+                ),
+                ..*self
+            })
+            .collect()
+    }
+
     /// A mapping that samples `zone` verbatim, with no distance shaping. Used
     /// for manual zone overrides and by tests.
     pub fn direct(zone: SampleZone) -> Self {
@@ -301,6 +320,17 @@ const MIN_GAIN: f32 = 0.55;
 /// Floor for the distance smoothing multiplier.
 const MIN_RESPONSIVENESS: f32 = 0.35;
 
+/// Where `light` stands against `screen`, in screen half-widths: across it
+/// (-1 is the left end, +1 the right) and in front of it (negative behind).
+fn seen_from(screen: &Screen, light: &Light) -> (f32, f32) {
+    let half = (screen.width * 0.5).max(f32::EPSILON);
+    let rel = light.pos - screen.center;
+    (
+        rel.dot(screen.right_axis()) / half,
+        rel.dot(screen.facing()) / half,
+    )
+}
+
 /// Compute the full [`LightMapping`] for a light given the screen placement.
 ///
 /// Honours `zone_override` when present, in which case no distance shaping is
@@ -310,13 +340,7 @@ pub fn map_light(screen: &Screen, light: &Light) -> LightMapping {
         return LightMapping::direct(z);
     }
 
-    let right = screen.right_axis();
-    let half = (screen.width * 0.5).max(f32::EPSILON);
-    let rel = light.pos - screen.center;
-    // Signed position along the screen's width: -1 = left end, +1 = right end.
-    let u = rel.dot(right) / half;
-    // Signed depth: positive = on the viewer's side of the screen plane.
-    let v = rel.dot(screen.facing()) / half;
+    let (u, v) = seen_from(screen, light);
 
     let edge = if u <= -1.0 {
         ScreenEdge::Left
@@ -365,9 +389,241 @@ pub fn map_light(screen: &Screen, light: &Light) -> LightMapping {
     }
 }
 
+/// Closer to the screen's plane than this, in screen half-widths, and
+/// within its ends, a light is on the screen itself: a strip stuck to its
+/// back.
+const ON_SCREEN: f32 = 0.5;
+/// Below this height, a strip on the screen runs under it rather than round
+/// it; above the other, over it (a layout hung above a TV).
+const UNDER: f32 = 0.25;
+const OVER: f32 = 0.85;
+/// How far into the picture a strip round the screen reads, as a share of
+/// the frame: from the sides, and from the top.
+const RIM_X: f32 = 0.15;
+const RIM_Y: f32 = 0.2;
+/// A side of the screen against its top, for spreading zones evenly round
+/// it: 9/16 on a 16:9 screen.
+const RIM_SIDE: f32 = 9.0 / 16.0;
+/// The band of the picture a strip under or over the screen reads.
+const BAND: f32 = 0.3;
+/// How far either side of where it stands a light with several zones spreads
+/// them, in screen half-widths: the same stretch of wall the shows give it.
+const ZONE_SPAN: f32 = 0.5;
+
+/// The mappings of a light that colours `n` parts of itself (a strip's
+/// segments, a layout's panels), left to right, or bottom to top when
+/// `upright` (a layout standing taller than it is wide).
+///
+/// A strip on the screen reads the rim of the picture: up the left side,
+/// across the top, down the right side, the way a TV backlight is laid. One
+/// under the screen reads the bottom of the picture across its whole width,
+/// one over it the top.
+/// Anywhere else, the zones read the stretch of picture in front of the
+/// stretch of wall they cover. A standing layout reads the picture from
+/// its bottom to its top, in bands. A zone set by hand is cut into slices
+/// side by side (or bands, standing).
+pub fn map_zones(screen: &Screen, light: &Light, n: usize, upright: bool) -> Vec<LightMapping> {
+    let whole = map_light(screen, light);
+    if n <= 1 {
+        return vec![whole];
+    }
+    if light.zone_override.is_some() {
+        return if upright {
+            whole.split_up(n)
+        } else {
+            whole.split(n)
+        };
+    }
+    if upright {
+        let zone = SampleZone::new(whole.zone.x, 0.0, whole.zone.w, 1.0);
+        return LightMapping { zone, ..whole }.split_up(n);
+    }
+    let (u, v) = seen_from(screen, light);
+    let with = |zone| LightMapping { zone, ..whole };
+    if u.abs() <= 1.0 && v.abs() <= ON_SCREEN {
+        if light.height < UNDER {
+            return with(SampleZone::new(0.0, 1.0 - BAND, 1.0, BAND)).split(n);
+        }
+        if light.height > OVER {
+            return with(SampleZone::new(0.0, 0.0, 1.0, BAND)).split(n);
+        }
+        return (0..n).map(|i| with(rim(i, n))).collect();
+    }
+    // The picture in front of the wall the zones cover, never narrower than
+    // what the light as a whole reads.
+    let x_center = ((u + 1.0) * 0.5).clamp(0.0, 1.0);
+    let half = (ZONE_SPAN * 0.5).max(whole.zone.w * 0.5).min(MAX_HALF);
+    let x0 = (x_center - half).clamp(0.0, 1.0 - 2.0 * half);
+    let zone = SampleZone::new(x0, whole.zone.y, 2.0 * half, whole.zone.h);
+    with(zone).split(n)
+}
+
+/// Zone `i` of `n` laid evenly round the rim of the picture, from the bottom
+/// of its left side, over the top, to the bottom of its right side.
+fn rim(i: usize, n: usize) -> SampleZone {
+    let total = 2.0 * RIM_SIDE + 1.0;
+    let s0 = total * i as f32 / n as f32;
+    let s1 = total * (i + 1) as f32 / n as f32;
+    // The part of the frame read at a point of the rim, as (x0, y0, x1, y1).
+    let at = |s: f32| {
+        if s <= RIM_SIDE {
+            let y = 1.0 - s / RIM_SIDE;
+            (0.0, y, RIM_X, y)
+        } else if s <= RIM_SIDE + 1.0 {
+            let x = s - RIM_SIDE;
+            (x, 0.0, x, RIM_Y)
+        } else {
+            let y = (s - RIM_SIDE - 1.0) / RIM_SIDE;
+            (1.0 - RIM_X, y, 1.0, y)
+        }
+    };
+    let mut parts = vec![at(s0), at(s1)];
+    // A zone that turns a corner reads the corner whole.
+    if s0 < RIM_SIDE && RIM_SIDE < s1 {
+        parts.push((0.0, 0.0, RIM_X, RIM_Y));
+    }
+    if s0 < RIM_SIDE + 1.0 && RIM_SIDE + 1.0 < s1 {
+        parts.push((1.0 - RIM_X, 0.0, 1.0, RIM_Y));
+    }
+    let (x0, y0, x1, y1) = parts.iter().fold((1.0f32, 1.0f32, 0.0f32, 0.0f32), |b, p| {
+        (b.0.min(p.0), b.1.min(p.1), b.2.max(p.2), b.3.max(p.3))
+    });
+    SampleZone::new(x0, y0, x1 - x0, y1 - y0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn near(a: f32, b: f32) -> bool {
+        (a - b).abs() < 0.01
+    }
+
+    /// A light with its zone as `map_zones` computes it, on the default
+    /// screen, `across` and `ahead` of its centre in plan units.
+    fn zoned(across: f32, ahead: f32, height: f32, n: usize) -> Vec<SampleZone> {
+        let screen = Screen::default();
+        let mut l = light_at(0.0, 0.0);
+        l.height = height;
+        let (r, f) = (screen.right_axis(), screen.facing());
+        l.pos = Vec2::new(
+            screen.center.x + r.x * across + f.x * ahead,
+            screen.center.y + r.y * across + f.y * ahead,
+        );
+        map_zones(&screen, &l, n, false)
+            .iter()
+            .map(|m| m.zone)
+            .collect()
+    }
+
+    #[test]
+    fn a_strip_on_the_screen_reads_round_its_rim() {
+        let zones = zoned(0.0, -10.0, 0.5, 3);
+        // The left side, the top, the right side, left to right.
+        assert!(
+            near(zones[0].x, 0.0) && near(zones[0].w, RIM_X),
+            "{zones:?}"
+        );
+        assert!(near(zones[0].y, 0.0) && near(zones[0].h, 1.0), "{zones:?}");
+        assert!(
+            near(zones[1].y, 0.0) && near(zones[1].h, RIM_Y),
+            "{zones:?}"
+        );
+        assert!(
+            zones[1].x > 0.1 && zones[1].x + zones[1].w < 0.9,
+            "{zones:?}"
+        );
+        assert!(
+            near(zones[2].x + zones[2].w, 1.0) && near(zones[2].h, 1.0),
+            "{zones:?}"
+        );
+    }
+
+    #[test]
+    fn the_rim_runs_from_bottom_left_to_bottom_right() {
+        for n in 2..=8 {
+            for i in 0..n {
+                let z = rim(i, n);
+                assert!(z.w > 0.0 && z.h > 0.0, "zone {i} of {n}: {z:?}");
+            }
+            let (first, last) = (rim(0, n), rim(n - 1, n));
+            assert!(
+                near(first.x, 0.0) && near(first.y + first.h, 1.0),
+                "{first:?}"
+            );
+            assert!(
+                near(last.x + last.w, 1.0) && near(last.y + last.h, 1.0),
+                "{last:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_strip_under_the_screen_reads_the_bottom_across() {
+        let zones = zoned(0.0, 0.0, 0.0, 4);
+        assert!(
+            near(zones[0].x, 0.0) && near(zones[3].x + zones[3].w, 1.0),
+            "{zones:?}"
+        );
+        assert!(zones.iter().all(|z| near(z.y + z.h, 1.0)), "{zones:?}");
+    }
+
+    #[test]
+    fn a_layout_over_the_screen_reads_the_top_across() {
+        let zones = zoned(0.0, -10.0, 1.0, 4);
+        assert!(
+            near(zones[0].x, 0.0) && near(zones[3].x + zones[3].w, 1.0),
+            "{zones:?}"
+        );
+        assert!(zones.iter().all(|z| near(z.y, 0.0)), "{zones:?}");
+    }
+
+    #[test]
+    fn a_strip_elsewhere_reads_the_picture_before_its_stretch_of_wall() {
+        // In front of the screen's left end, well out in the room.
+        let zones = zoned(-150.0, 300.0, 0.5, 4);
+        let (x0, x1) = (zones[0].x, zones[3].x + zones[3].w);
+        assert!(x1 - x0 >= 0.5 - 1e-3, "{x0}..{x1}");
+        assert!(zones.windows(2).all(|p| p[0].x < p[1].x), "{zones:?}");
+    }
+
+    #[test]
+    fn a_single_zone_light_keeps_its_mapping() {
+        let screen = Screen::default();
+        let lamp = light_at(500.0, 500.0);
+        assert_eq!(
+            map_zones(&screen, &lamp, 1, false),
+            vec![map_light(&screen, &lamp)]
+        );
+        assert_eq!(
+            map_zones(&screen, &lamp, 1, true),
+            vec![map_light(&screen, &lamp)]
+        );
+    }
+
+    #[test]
+    fn a_standing_layout_reads_the_picture_from_the_bottom_up() {
+        let screen = Screen::default();
+        let mut panels = light_at(500.0, 500.0);
+        panels.pos = Vec2::new(screen.center.x - 400.0, screen.center.y + 200.0);
+        let zones = map_zones(&screen, &panels, 3, true);
+        assert!(zones[0].zone.y > zones[1].zone.y && zones[1].zone.y > zones[2].zone.y);
+        assert!(near(zones[2].zone.y, 0.0) && near(zones[0].zone.y + zones[0].zone.h, 1.0));
+    }
+
+    #[test]
+    fn a_standing_layout_s_zones_mirror_bands_from_the_bottom() {
+        let m = LightMapping::direct(SampleZone::new(0.2, 0.1, 0.6, 0.6));
+        let zones = m.split_up(3);
+        assert_eq!(zones.len(), 3);
+        // Zone 0 is the bottom band: the largest y, the picture's y going down.
+        for (i, z) in zones.iter().enumerate() {
+            assert!((z.zone.y - (0.5 - 0.2 * i as f32)).abs() < 1e-6);
+            assert!((z.zone.h - 0.2).abs() < 1e-6);
+            assert_eq!((z.zone.x, z.zone.w, z.gain), (0.2, 0.6, m.gain));
+        }
+        assert_eq!(m.split_up(0), vec![m]);
+    }
 
     #[test]
     fn a_strip_s_zones_mirror_slices_side_by_side() {

@@ -369,10 +369,16 @@ pub trait LightStream: Send {
     }
 
     /// How many parts of itself the light colours on its own, left to right
-    /// (a strip's segments, a layout's panels): 1 for a bulb, never more
-    /// than [`MAX_ZONES`].
+    /// or bottom to top (see [`LightStream::upright`]): a strip's segments,
+    /// a layout's panels. 1 for a bulb, never more than [`MAX_ZONES`].
     fn zones(&self) -> usize {
         1
+    }
+
+    /// Whether the zones run up the wall, bottom to top, rather than across
+    /// it: a layout taller than it is wide.
+    fn upright(&self) -> bool {
+        false
     }
 
     /// Send one frame with an output for each zone, left to right. However
