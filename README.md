@@ -147,10 +147,26 @@ Back on **Lighting**, click the **Ambilight** tile (or press
 film. On Windows you can skip this step: with *Ambilight in fullscreen* on
 (the default, in **Settings**) it starts and stops by itself.
 
+The lights follow the shot, not every small movement in it: while a scene
+stays the same and only someone or the camera moves a little, each bulb keeps
+its colour, and only its brightness follows. A new shot changes it at once.
+
 With HDR on in Windows, the Ambilight reads the colours as they are composed
 and matches them to your *SDR content brightness* setting, so they don't come
 out washed out the way an HDR screen often looks in screen sharing. There is
 nothing to set: an *HDR* tag beside the Ambilight's name shows when it is so.
+
+When a film or video doesn't fill the screen (a wide film with bands above
+and below it, a 16:9 video on an ultrawide screen), the Ambilight leaves the
+black bars out after a couple of seconds, so the lights near those edges
+follow the picture instead of going dark. Subtitles or a player's controls in
+a bar don't bring it back. *Ignore black bars* in **Settings** turns this
+off.
+
+*Dark scenes*, in **Settings**, sets how much a dark picture lights the room:
+*Lit* (the default) keeps some light on even in a night scene, *As on screen*
+gives the room the same share of light the screen gives, and *Balanced* sits
+between them.
 
 ## Supported bulbs
 

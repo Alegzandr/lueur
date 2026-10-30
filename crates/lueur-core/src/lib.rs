@@ -7,6 +7,8 @@
 //! * [`color`]: colour types, linear-space averaging and temporal smoothing.
 //! * [`geometry`]: the room/floor-plan model and the mapping from a light's
 //!   physical position to the region of the screen it mirrors.
+//! * [`bars`]: finding the black bars around a film, so the lights follow
+//!   the picture rather than the bands.
 //! * [`engine`]: turning a captured [`engine::Frame`] into one colour per light.
 //! * [`yeelight`]: the Yeelight LAN protocol, discovery and music-mode control.
 //! * [`device`]: every bulb family (Yeelight, WiZ, LIFX, Govee, Hue, Nanoleaf)
@@ -26,6 +28,7 @@
 //! everything colour- and protocol-critical lives here so it can be unit-tested
 //! without a display server.
 
+pub mod bars;
 pub mod color;
 pub mod config;
 pub mod device;

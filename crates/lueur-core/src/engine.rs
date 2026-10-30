@@ -5,6 +5,7 @@
 //! and network I/O live in the desktop shell. Keeping it pure means the
 //! colour-critical path is fully deterministic and unit-tested.
 
+use crate::bars::Bars;
 use crate::color::{
     BulbOutput, ColorAccumulator, ColorSmoother, MAX_KELVIN, MIN_BRIGHT, MIN_KELVIN, Rgb, saturate,
     saturation,
@@ -50,6 +51,13 @@ impl Frame {
             },
             None => (0, 0, 0),
         }
+    }
+
+    /// The brightest channel of the pixel at `x`, `y`.
+    #[inline]
+    pub(crate) fn value(&self, x: u32, y: u32) -> u8 {
+        let (r, g, b) = self.pixel(x, y);
+        r.max(g).max(b)
     }
 
     /// Average the colour inside a normalised zone, visiting roughly every
@@ -145,6 +153,18 @@ pub struct EngineSettings {
     /// Colour temperature used by the white path, in Kelvin (1700..6500).
     #[serde(default = "default_white_kelvin")]
     pub white_kelvin: u16,
+    /// Leave black bars around the picture out of every zone (see
+    /// [`crate::bars`]), so a film narrower or wider than the screen does
+    /// not darken the lights at its edges.
+    #[serde(default = "crate::default_true")]
+    pub crop_bars: bool,
+    /// How a colour's intensity becomes the bulb's brightness: the bulb
+    /// follows the intensity raised to this power (1..=3). At 1 it follows
+    /// the screen's encoded value, so a dark scene still lights the room
+    /// well; at 2.2 it follows the light the screen actually gives, and a
+    /// dark scene leaves the room as dark as the picture.
+    #[serde(default = "default_brightness_curve")]
+    pub brightness_curve: f32,
     /// Older versions' wall colour, now the room's
     /// ([`crate::geometry::Room::wall`]). Read once (see
     /// [`crate::config::AppConfig::from_json`]), never written.
@@ -160,6 +180,14 @@ fn default_white_kelvin() -> u16 {
     4000
 }
 
+fn default_brightness_curve() -> f32 {
+    1.0
+}
+
+/// The steepest [`EngineSettings::brightness_curve`]: past the screen's own
+/// curve, a dark scene would be darker in the room than on the screen.
+pub const MAX_BRIGHTNESS_CURVE: f32 = 3.0;
+
 impl Default for EngineSettings {
     fn default() -> Self {
         EngineSettings {
@@ -170,6 +198,8 @@ impl Default for EngineSettings {
             black_threshold: 6,
             white_threshold: default_white_threshold(),
             white_kelvin: default_white_kelvin(),
+            crop_bars: true,
+            brightness_curve: default_brightness_curve(),
             legacy_wall: None,
         }
     }
@@ -251,6 +281,63 @@ fn tinted_kelvin(color: Rgb, kelvin: u16) -> u16 {
 /// barely anything at 6500 K.
 const MIRED_STEP: f32 = 5.0;
 
+/// Smallest change of a bulb's hue worth showing, as the largest channel
+/// difference between two full-chroma colours (0..=255).
+///
+/// A shot that stays the same while something moves in it (a face turning, a
+/// slow pan) moves a zone's average by a few units every frame. The bulb gets
+/// that colour at full chroma, so the wobble reaches it as a hue that never
+/// settles. Under this, the bulb keeps the hue it shows.
+const HUE_HOLD: f32 = 10.0;
+
+/// How many units a zone's average wobbles by on a shot that does not change.
+/// Scaled to full chroma, those units weigh more the darker the colour: three
+/// units are 1% of a bright red and a third of a red at 10. The hold widens
+/// to match, so a dark scene does not change hue on noise alone.
+const HUE_NOISE: f32 = 3.0;
+
+/// How far the white must move, in mireds, before the bulb follows. Two
+/// steps of [`MIRED_STEP`], so a tint sitting on a rounding boundary does not
+/// flip the bulb between two whites.
+const WHITE_HOLD: f32 = 2.0 * MIRED_STEP;
+
+/// `next`, keeping the hue or white `prev` showed when the difference is
+/// within noise (see [`HUE_HOLD`]). The brightness always follows. `peak` is
+/// the brightest channel of the colour `next` was built from.
+///
+/// The hold is measured from what the bulb shows, not from the previous
+/// frame, so a slow drift still arrives: in steps of the hold, which a bulb's
+/// fade turns into a glide.
+fn hold(prev: Option<BulbOutput>, next: BulbOutput, peak: u8) -> BulbOutput {
+    match (prev, next) {
+        (Some(BulbOutput::Color { rgb: was, .. }), BulbOutput::Color { rgb, bright }) => {
+            let moved = was
+                .r
+                .abs_diff(rgb.r)
+                .max(was.g.abs_diff(rgb.g))
+                .max(was.b.abs_diff(rgb.b));
+            let noise = HUE_NOISE * 255.0 / f32::from(peak.max(1));
+            if f32::from(moved) < HUE_HOLD.max(noise) {
+                BulbOutput::Color { rgb: was, bright }
+            } else {
+                next
+            }
+        }
+        (Some(BulbOutput::White { kelvin: was, .. }), BulbOutput::White { kelvin, bright }) => {
+            let mireds = |k: u16| 1e6 / f32::from(k.max(1));
+            if (mireds(was) - mireds(kelvin)).abs() < WHITE_HOLD {
+                BulbOutput::White {
+                    kelvin: was,
+                    bright,
+                }
+            } else {
+                next
+            }
+        }
+        _ => next,
+    }
+}
+
 /// Holds per-light smoothing state across frames.
 pub struct Ambilight {
     settings: EngineSettings,
@@ -261,6 +348,8 @@ pub struct Ambilight {
     /// What each light was last given, so a black frame can dim it without
     /// changing its colour.
     shown: Vec<Option<BulbOutput>>,
+    /// The black bars around the picture, followed across frames.
+    bars: Bars,
     /// Seconds since the previous frame.
     frame_time: f32,
 }
@@ -272,6 +361,7 @@ impl Ambilight {
             smoothers: vec![ColorSmoother::new(); light_count],
             in_white: vec![false; light_count],
             shown: vec![None; light_count],
+            bars: Bars::new(),
             frame_time: REFERENCE_FRAME,
         }
     }
@@ -315,9 +405,16 @@ impl Ambilight {
     /// it down further (see [`steadiness`]), so noise never reaches the bulb.
     pub fn process(&mut self, frame: &Frame, mappings: &[LightMapping]) -> Vec<Rgb> {
         let n = mappings.len().min(self.smoothers.len());
+        let picture = if self.settings.crop_bars {
+            self.bars.see(frame, self.frame_time)
+        } else {
+            self.bars.reset();
+            self.bars.picture()
+        };
         let mut out = Vec::with_capacity(n);
         for (i, m) in mappings.iter().take(n).enumerate() {
-            let raw = frame.average_zone(&m.zone, self.settings.sample_step);
+            let zone = m.zone.within(picture);
+            let raw = frame.average_zone(&zone, self.settings.sample_step);
             let steady = steadiness(self.smoothers[i].current(), raw);
             let factor = self.settings.smoothing * m.responsiveness * steady;
             // Floor the factor above 0: a zero would freeze the light forever.
@@ -344,10 +441,17 @@ impl Ambilight {
     /// This is where a mapping's distance `gain` lands: it scales the bulb's
     /// intensity, never its hue, so a far lamp reads as a softer glow of the
     /// same colour rather than a washed-out one.
+    ///
+    /// A hue or white within noise of what the bulb shows is kept (see
+    /// [`hold`]), so movement inside an unchanged shot leaves the bulbs alone.
     pub fn process_outputs(&mut self, frame: &Frame, mappings: &[LightMapping]) -> Vec<BulbOutput> {
         let colors = self.process(frame, mappings);
         let brightness = self.settings.brightness;
         let kelvin = self.settings.white_kelvin;
+        let curve = self
+            .settings
+            .brightness_curve
+            .clamp(1.0, MAX_BRIGHTNESS_CURVE);
         let enter = self.settings.white_threshold.clamp(0.0, 1.0);
         let leave = (enter * WHITE_HYSTERESIS).min(1.0);
 
@@ -374,7 +478,11 @@ impl Ambilight {
                     return out;
                 }
                 let gain = mappings.get(i).map(|m| m.gain).unwrap_or(1.0);
-                let brightness = (brightness * gain).clamp(0.0, 1.0);
+                // The bulb's brightness is the intensity times `brightness`;
+                // the curve's extra power of the intensity scales the latter.
+                let intensity = f32::from(color.value()) / 255.0;
+                let steepen = intensity.powf(curve - 1.0);
+                let brightness = (brightness * gain * steepen).clamp(0.0, 1.0);
                 let sat = saturation(color);
                 // A latched decision with two thresholds: drop into white below
                 // `enter`, but only climb back out once clearly past `leave`.
@@ -386,7 +494,9 @@ impl Ambilight {
                     sat < enter
                 };
                 self.in_white[i] = white;
-                let out = BulbOutput::build(color, brightness, white, tinted_kelvin(color, kelvin));
+                let built =
+                    BulbOutput::build(color, brightness, white, tinted_kelvin(color, kelvin));
+                let out = hold(self.shown[i], built, color.value());
                 self.shown[i] = Some(out);
                 out
             })
@@ -400,6 +510,7 @@ impl Ambilight {
         }
         self.in_white.fill(false);
         self.shown.fill(None);
+        self.bars.reset();
     }
 }
 
@@ -469,6 +580,8 @@ mod tests {
             black_threshold: 0,
             white_threshold: 0.0,
             white_kelvin: 4000,
+            crop_bars: false,
+            brightness_curve: 1.0,
             legacy_wall: None,
         }
     }
@@ -622,6 +735,83 @@ mod tests {
         assert_eq!(amb.process(&cut, &full())[0].r, 150);
     }
 
+    /// The hue light 0 is given for a frame of one solid colour.
+    fn hue_of(amb: &mut Ambilight, rgb: (u8, u8, u8)) -> Rgb {
+        match amb.process_outputs(&split_frame(rgb, rgb), &full())[0] {
+            BulbOutput::Color { rgb, .. } => rgb,
+            other => panic!("expected Color, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn movement_inside_a_shot_keeps_the_hue() {
+        let mut amb = Ambilight::new(1, passthrough());
+        let shown = hue_of(&mut amb, (200, 100, 50));
+        // A few units of wobble, as a face turning in the same shot gives.
+        assert_eq!(hue_of(&mut amb, (200, 104, 50)), shown);
+        assert_eq!(hue_of(&mut amb, (198, 97, 51)), shown);
+        // A real change of colour goes through at once.
+        assert_ne!(hue_of(&mut amb, (200, 130, 50)), shown);
+    }
+
+    #[test]
+    fn a_dark_scene_holds_its_hue_through_more_noise() {
+        // One unit at a peak of 20 is twelve at full chroma: past the hold
+        // for a bright colour, noise for a dark one.
+        let mut dark = Ambilight::new(1, passthrough());
+        let shown = hue_of(&mut dark, (20, 10, 5));
+        assert_eq!(hue_of(&mut dark, (20, 11, 5)), shown);
+
+        let mut bright = Ambilight::new(1, passthrough());
+        let shown = hue_of(&mut bright, (200, 100, 50));
+        assert_ne!(hue_of(&mut bright, (200, 110, 50)), shown);
+    }
+
+    #[test]
+    fn a_slow_drift_of_hue_still_arrives() {
+        let mut amb = Ambilight::new(1, passthrough());
+        let mut last = hue_of(&mut amb, (200, 100, 50));
+        for g in 101..=160 {
+            last = hue_of(&mut amb, (200, g, 50));
+        }
+        // Where the drift ended, within one hold.
+        let target = crate::color::full_chroma(Rgb::new(200, 160, 50));
+        assert!(last.g.abs_diff(target.g) < HUE_HOLD as u8, "{last:?}");
+    }
+
+    #[test]
+    fn the_brightness_follows_while_the_hue_holds() {
+        let mut amb = Ambilight::new(1, passthrough());
+        let f = |rgb| split_frame(rgb, rgb);
+        let a = amb.process_outputs(&f((200, 100, 50)), &full())[0];
+        let b = amb.process_outputs(&f((100, 52, 25)), &full())[0];
+        match (a, b) {
+            (
+                BulbOutput::Color {
+                    rgb: ra,
+                    bright: ba,
+                },
+                BulbOutput::Color {
+                    rgb: rb,
+                    bright: bb,
+                },
+            ) => {
+                assert_eq!(ra, rb);
+                assert!(bb < ba, "{ba} -> {bb}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_white_on_a_rounding_boundary_holds() {
+        let white = |kelvin| BulbOutput::White { kelvin, bright: 50 };
+        // One mired step: the tint wobbled across a rounding boundary.
+        assert_eq!(hold(Some(white(4000)), white(3922), 200), white(4000));
+        // A clearly warmer white goes through.
+        assert_eq!(hold(Some(white(4000)), white(3500), 200), white(3500));
+    }
+
     #[test]
     fn smoothing_keeps_its_pace_across_frame_rates() {
         assert_eq!(per_frame(0.5, REFERENCE_FRAME), 0.5);
@@ -728,6 +918,61 @@ mod tests {
         assert_eq!(amb.process(&f, &zones).len(), 5);
         amb.resize(1);
         assert_eq!(amb.process(&f, &zones).len(), 1);
+    }
+
+    #[test]
+    fn a_light_at_the_top_follows_the_film_not_its_band() {
+        // A 2.39:1 film on a 16:9 screen: black bands above and below a red
+        // picture.
+        let (w, h) = (160u32, 90u32);
+        let mut data = vec![0u8; (w * h * 4) as usize];
+        for y in 12..78 {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                data[i..i + 4].copy_from_slice(&[200, 0, 0, 255]);
+            }
+        }
+        let film = Frame::new(w, h, PixelFormat::Rgba, data);
+        let top = [z(0.0, 0.0, 1.0, 0.12)];
+        let settings = EngineSettings {
+            crop_bars: true,
+            ..passthrough()
+        };
+        let mut amb = Ambilight::new(1, settings);
+        assert_eq!(amb.process(&film, &top)[0], Rgb::BLACK);
+        for _ in 0..(3.0 / REFERENCE_FRAME) as u32 {
+            amb.process(&film, &top);
+        }
+        assert_eq!(amb.process(&film, &top)[0], Rgb::new(200, 0, 0));
+
+        // Turned off, the band is read again.
+        amb.set_settings(passthrough());
+        assert_eq!(amb.process(&film, &top)[0], Rgb::BLACK);
+    }
+
+    #[test]
+    fn the_brightness_curve_darkens_dark_scenes_only() {
+        let bright_of = |curve: f32, v: u8| {
+            let settings = EngineSettings {
+                brightness_curve: curve,
+                ..passthrough()
+            };
+            let f = split_frame((v, v / 2, 0), (v, v / 2, 0));
+            Ambilight::new(1, settings).process_outputs(&f, &full())[0].bright()
+        };
+        // A full colour drives the bulb fully on any curve.
+        assert_eq!(bright_of(2.2, 255), 100);
+        // Half the encoded value is half the bulb at 1, a fifth of it at 2.2:
+        // about the light the screen gives there.
+        assert_eq!(bright_of(1.0, 128), 50);
+        assert!(
+            (20..=23).contains(&bright_of(2.2, 128)),
+            "{}",
+            bright_of(2.2, 128)
+        );
+        // Never below the bulb's floor, never steeper than the cap.
+        assert_eq!(bright_of(2.2, 10), MIN_BRIGHT);
+        assert_eq!(bright_of(9.0, 128), bright_of(MAX_BRIGHTNESS_CURVE, 128));
     }
 
     #[test]

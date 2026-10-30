@@ -140,6 +140,10 @@ export interface EngineSettings {
   black_threshold: number;
   white_threshold: number;
   white_kelvin: number;
+  /** Leave the black bars around a film out of what the lights follow. */
+  crop_bars: boolean;
+  /** How dark scenes light the room: 1 keeps them lit, 2.2 as on screen. */
+  brightness_curve: number;
 }
 
 export type Effect = "smooth" | "sudden";
@@ -365,6 +369,8 @@ export function defaultConfig(): AppConfig {
       black_threshold: 6,
       white_threshold: 0.18,
       white_kelvin: 4000,
+      crop_bars: true,
+      brightness_curve: 1.0,
     },
     transition: { effect: "smooth", duration_ms: 80 },
     behavior: {

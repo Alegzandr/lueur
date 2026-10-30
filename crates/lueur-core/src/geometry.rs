@@ -149,6 +149,17 @@ impl SampleZone {
         let h = h.clamp(0.0, 1.0 - y);
         SampleZone { x, y, w, h }
     }
+
+    /// This zone, given within the whole frame, moved into `picture`, the
+    /// part of the frame the picture fills (see [`crate::bars`]).
+    pub fn within(self, picture: SampleZone) -> SampleZone {
+        SampleZone::new(
+            picture.x + self.x * picture.w,
+            picture.y + self.y * picture.h,
+            self.w * picture.w,
+            self.h * picture.h,
+        )
+    }
 }
 
 /// A single light placed in the room.

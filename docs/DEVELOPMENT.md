@@ -10,6 +10,7 @@ lueur/
 ├─ crates/lueur-core/     Pure, GUI-free, fully unit-tested Rust
 │   ├─ color.rs           Colour types, linear-space averaging, smoothing
 │   ├─ geometry.rs        Room model + light→screen-zone mapping
+│   ├─ bars.rs            Black bars around a film, left out of the zones
 │   ├─ engine.rs          Frame → one colour per light
 │   ├─ scene.rs           Lights held steady: one light's white or colour, moods
 │   ├─ show/              Shows with no screen: Rainbow, Sunset, Ocean, Candle

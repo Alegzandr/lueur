@@ -4,8 +4,9 @@ use lueur_core::color::BulbOutput;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-/// What a driven light shows, one zone of it: the colour or the white sent to
-/// its bulb, before the walls' correction, for the window to draw.
+/// What a driven light shows, one zone of it, for the window to draw: the
+/// colour or the white asked of its bulb before the walls' correction, at the
+/// brightness the bulb was given.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 pub struct Glow {
     pub rgb: Option<[u8; 3]>,
@@ -43,21 +44,25 @@ pub fn glows() -> HashMap<String, Vec<Glow>> {
         .unwrap_or_default()
 }
 
-/// Remember the frame just sent to `id`. Reuses the light's entry, so a
-/// frame costs no allocation once the effect has started.
-pub(super) fn record_glow(id: &str, zones: &[BulbOutput]) {
+/// Remember the frame just sent to `id`: `asked`, zone by zone, before the
+/// walls' correction, and `sent`, what the bulb was given after it and the
+/// flash guard. Reuses the light's entry, so a frame costs no allocation once
+/// the effect has started.
+pub(super) fn record_glow(id: &str, asked: &[BulbOutput], sent: &[BulbOutput]) {
     let Ok(mut guard) = GLOWS.lock() else { return };
     let all = guard.get_or_insert_with(HashMap::new);
+    // The walls' correction never changes the brightness, the guard may.
+    let zones = asked.iter().zip(sent).map(|(&a, s)| Glow {
+        bright: s.bright(),
+        ..Glow::from(a)
+    });
     match all.get_mut(id) {
         Some(glow) => {
             glow.clear();
-            glow.extend(zones.iter().map(|&o| Glow::from(o)));
+            glow.extend(zones);
         }
         None => {
-            all.insert(
-                id.to_owned(),
-                zones.iter().map(|&o| Glow::from(o)).collect(),
-            );
+            all.insert(id.to_owned(), zones.collect());
         }
     }
 }

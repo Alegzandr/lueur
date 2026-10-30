@@ -82,6 +82,19 @@
       .map((n) => ({ value: String(n), label: String(n) })),
   );
 
+  // How dark scenes light the room: the engine's brightness curve, read as
+  // the nearest of three choices when the file holds another value.
+  const CURVES = [
+    { value: 1, key: "dark_lit" },
+    { value: 1.6, key: "dark_balanced" },
+    { value: 2.2, key: "dark_true" },
+  ] as const;
+  const curveOptions = $derived(CURVES.map((o) => ({ value: String(o.value), label: t(o.key) })));
+  const curveValue = $derived.by(() => {
+    const at = c.engine.brightness_curve;
+    return String(CURVES.reduce((a, b) => (Math.abs(b.value - at) < Math.abs(a.value - at) ? b : a)).value);
+  });
+
   // The sound source picker's values: one string per choice.
   function soundKey(s: AudioSource): string {
     return s.kind === "device" ? `device:${s.id}` : s.kind === "app" ? `app:${s.exe}` : "default";
@@ -175,6 +188,21 @@
           value={String(c.capture.target_fps)}
           options={fpsOptions}
           onchange={(v: string) => edit((x) => (x.capture.target_fps = +v))}
+        />
+      </Row>
+      <Row label={t("crop_bars")} tip={t("crop_bars_tip")}>
+        <Switch
+          checked={c.engine.crop_bars}
+          label={t("crop_bars")}
+          onchange={(v) => edit((x) => (x.engine.crop_bars = v))}
+        />
+      </Row>
+      <Row label={t("dark_scenes")} tip={t("dark_scenes_tip")}>
+        <Segmented
+          label={t("dark_scenes")}
+          value={curveValue}
+          options={curveOptions}
+          onchange={(v: string) => edit((x) => (x.engine.brightness_curve = +v))}
         />
       </Row>
     </div>

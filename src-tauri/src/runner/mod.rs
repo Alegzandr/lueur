@@ -470,30 +470,45 @@ fn rest(lights: &mut [ConnectedLight], own: Option<Own>) {
 #[derive(Clone, Copy)]
 struct Own(ShowKind, ShowSettings, Rgb);
 
+/// Correct a frame for the walls, in place, and return it as it was asked
+/// for, for the window to draw.
+///
+/// This comes before the flash guard: the guard must measure the light the
+/// bulbs give, and a wall's correction can change it. Against a green wall,
+/// an orange on screen becomes a saturated red on the bulb, which the guard
+/// counts on its own.
+fn on_walls(outputs: &mut [BulbOutput], wall: Rgb) -> Vec<BulbOutput> {
+    let asked = outputs.to_vec();
+    for o in outputs.iter_mut() {
+        *o = o.on_wall(wall);
+    }
+    asked
+}
+
 /// Push one frame, an output for each zone of each light (`spans` says
-/// which are whose), corrected for the walls. `pace` gives the
-/// transition of light `i`'s frame; `hold` says to keep its next command
-/// for something sharp due on it.
+/// which are whose), already corrected for the walls and guarded; `asked`
+/// is the same frame before the walls' correction (see [`on_walls`]).
+/// `pace` gives the transition of light `i`'s frame; `hold` says to keep
+/// its next command for something sharp due on it.
 fn push_zoned(
     lights: &mut [ConnectedLight],
     outputs: &[BulbOutput],
+    asked: &[BulbOutput],
     spans: &[Range<usize>],
-    wall: Rgb,
     pace: impl Fn(usize) -> (Effect, u32),
     hold: impl Fn(usize) -> bool,
 ) {
     for (i, (light, span)) in lights.iter_mut().zip(spans).enumerate() {
-        let Some(zones) = outputs.get(span.clone()) else {
+        let (Some(zones), Some(seen)) = (outputs.get(span.clone()), asked.get(span.clone())) else {
             continue;
         };
         if hold(i) {
             continue;
         }
-        record_glow(&light.id, zones);
+        record_glow(&light.id, seen, zones);
         // A bulb that drops is reconnected in the background, without
         // holding up the others, and picks up the frame of the moment.
-        let zones: Vec<BulbOutput> = zones.iter().map(|o| o.on_wall(wall)).collect();
         let (effect, duration_ms) = pace(i);
-        light.link.push_zones(&zones, effect, duration_ms);
+        light.link.push_zones(zones, effect, duration_ms);
     }
 }

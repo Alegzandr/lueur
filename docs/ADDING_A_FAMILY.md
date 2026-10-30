@@ -388,7 +388,8 @@ again on a thread of its own, half a second later, then doubling up to every
 Every mode's output goes through a `safety::FlashGuard` (in
 `runner/ambilight.rs` and `runner/show.rs` for the ambilight and the shows,
 in `manual.rs` for lights set by hand) before
-it reaches `push`, so the photosensitivity protection holds for any family
+it reaches `push`, after the walls' correction so it measures the light the
+bulb really gives, so the photosensitivity protection holds for any family
 without a line of family code. What a family must not do is undo it:
 no effect, blink or animation of the device's own while streaming, no
 transition longer than the one asked (beyond `glide`), and `Effect::Sudden`

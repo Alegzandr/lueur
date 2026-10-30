@@ -63,3 +63,22 @@ fn never_emits_a_smooth_below_the_protocol_floor() {
         );
     }
 }
+
+#[test]
+fn the_guard_is_handed_the_light_the_walls_will_get() {
+    use lueur_core::color::Rgb;
+    let orange = BulbOutput::Color {
+        rgb: Rgb::new(255, 150, 100),
+        bright: 80,
+    };
+    let mut outputs = vec![orange];
+    let asked = on_walls(&mut outputs, Rgb::new(120, 255, 200));
+    // The window draws what the screen asked for; the bulb, and so the
+    // guard before it, get the red that corrects for a green wall.
+    assert_eq!(asked, vec![orange]);
+    assert_eq!(outputs, vec![orange.on_wall(Rgb::new(120, 255, 200))]);
+    match outputs[0] {
+        BulbOutput::Color { rgb, bright } => assert!(rgb.r == 255 && rgb.g < 100 && bright == 80),
+        other => panic!("{other:?}"),
+    }
+}

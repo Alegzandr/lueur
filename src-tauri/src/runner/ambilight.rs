@@ -1,6 +1,6 @@
 //! The ambilight's loop: the screen, read and pushed to the lights.
 
-use super::{ConnectedLight, LiveSettings, push_zoned, spans, status_changed};
+use super::{ConnectedLight, LiveSettings, on_walls, push_zoned, spans, status_changed};
 use crate::capture::{FrameSource, ScreenSource};
 use lueur_core::engine::Ambilight;
 use lueur_core::geometry::LightMapping;
@@ -114,13 +114,13 @@ pub(super) fn run_ambilight(
                 engine.set_settings(tuned);
                 let outputs = engine.process_outputs(frame, &mappings);
                 let mut outputs = lag.run(dt, outputs, &mut unsharp, &waits);
+                let asked = on_walls(&mut outputs, settings.wall);
                 guard.apply(&mut outputs, dt, settings.safety.flash_guard);
-                let wall = settings.wall;
                 push_zoned(
                     lights,
                     &outputs,
+                    &asked,
                     &spans,
-                    wall,
                     |_| (effect, duration_ms),
                     |_| false,
                 );

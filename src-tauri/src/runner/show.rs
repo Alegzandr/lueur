@@ -1,7 +1,7 @@
 //! The light shows' loop, and the music show's ears.
 
 use super::ambilight::pace;
-use super::{ConnectedLight, LiveSettings, push_zoned, spans};
+use super::{ConnectedLight, LiveSettings, on_walls, push_zoned, spans};
 use crate::audio::AudioTap;
 use lueur_core::config::AudioSource;
 use lueur_core::safety::FlashGuard;
@@ -93,6 +93,7 @@ pub(super) fn run_show(
             None => Levels::default(),
         };
         let mut outputs = show.frame(&settings, dt, levels);
+        let asked = on_walls(&mut outputs, wall);
         guard.apply(&mut outputs, dt, safety.flash_guard);
         let sharp = show.sharp();
         // A light is struck when any of its zones is; a hit the guard held
@@ -120,7 +121,7 @@ pub(super) fn run_show(
                     .filter_map(|z| show.due(z))
                     .any(|due| due < gap)
         };
-        push_zoned(lights, &outputs, &spans, wall, pace, hold);
+        push_zoned(lights, &outputs, &asked, &spans, pace, hold);
     }
 }
 
