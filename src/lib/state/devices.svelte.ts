@@ -196,3 +196,9 @@ export function removeLight(id: string): void {
 export function markRoomArranged(): void {
   if (!app.config.interface.room_arranged) edit((c) => (c.interface.room_arranged = true));
 }
+
+/** Open the room plan with light `id` picked, to see or move it. */
+export function showOnPlan(id: string): void {
+  app.selectedLight = id;
+  app.view = "room";
+}

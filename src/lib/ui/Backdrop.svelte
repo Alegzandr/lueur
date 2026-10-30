@@ -120,6 +120,18 @@
 
   let canvas: HTMLCanvasElement;
 
+  /** Draws again until the pools settle; set while the canvas lives. */
+  let wake = () => {};
+
+  // Frames are drawn only while something moves: an effect playing, a light
+  // changing, the glow coming in. Once still, the backdrop stays as drawn and
+  // costs nothing until the lights or the theme change.
+  $effect(() => {
+    void app.status.running;
+    for (const spot of spots) target(spot.id);
+    wake();
+  });
+
   $effect(() => {
     const gl = canvas.getContext("webgl", { alpha: false, antialias: false, depth: false });
     if (!gl) return;
@@ -149,6 +161,27 @@
     let last = born;
     let raf = 0;
 
+    // The theme sets how strongly the glow shows, and how pure; read when it
+    // changes, not every frame, which would make the page work out its
+    // styles again each time.
+    const readTheme = () => {
+      const style = getComputedStyle(canvas);
+      return {
+        strength: parseFloat(style.getPropertyValue("--backdrop")) || 0.7,
+        saturation: parseFloat(style.getPropertyValue("--backdrop-saturation")) || 1,
+        background: rgbOf(style.getPropertyValue("--bg")),
+      };
+    };
+    let theme = readTheme();
+    const retheme = () => {
+      theme = readTheme();
+      wake();
+    };
+    const dark = matchMedia("(prefers-color-scheme: dark)");
+    dark.addEventListener("change", retheme);
+    const forced = new MutationObserver(retheme);
+    forced.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
     const resize = () => {
       // Drawn pixel for pixel: the dither only hides the bands at the size
       // the screen shows them.
@@ -168,6 +201,11 @@
       last = now;
       const { width: w, height: h } = canvas;
 
+      // The glow comes in gently when the view opens: faded here rather than
+      // by the canvas's opacity, which would blend the dither away again.
+      const arrival = 1 - Math.pow(1 - Math.min(1, (now - born) / 600), 3);
+      let moving = arrival < 1;
+
       const seen = new Set<string>();
       for (const spot of spots) {
         const driven = isDriven(spot.id);
@@ -186,6 +224,7 @@
           const k = 1 - Math.exp(-dt / tau);
           s.rgb = s.rgb.map((c, i) => c + (rgb[i] - c) * k) as RgbTuple;
           s.level += (level - s.level) * k;
+          if (Math.abs(level - s.level) > 0.002 || s.rgb.some((c, i) => Math.abs(rgb[i] - c) > 0.5)) moving = true;
           s.x = x;
           s.y = spot.y;
           shown.set(key, s);
@@ -200,6 +239,7 @@
             shown.delete(key);
             continue;
           }
+          moving = true;
         }
         if (n === MAX_POOLS) continue;
         // The eye reads a dim bulb as brighter than its share of full power.
@@ -208,29 +248,31 @@
         n++;
       }
 
-      // The theme sets how strongly the glow shows, and how pure.
-      const style = getComputedStyle(canvas);
-      const strength = parseFloat(style.getPropertyValue("--backdrop")) || 0.7;
-      const saturation = parseFloat(style.getPropertyValue("--backdrop-saturation")) || 1;
-      // The glow comes in gently when the view opens: faded here rather than
-      // by the canvas's opacity, which would blend the dither away again.
-      const arrival = 1 - Math.pow(1 - Math.min(1, (now - born) / 600), 3);
       gl.uniform4fv(where.pools, pools);
       gl.uniform3fv(where.colours, colours);
       gl.uniform1i(where.count, n);
-      gl.uniform1f(where.strength, strength * arrival);
-      gl.uniform3fv(where.background, rgbOf(style.getPropertyValue("--bg")));
-      gl.uniform1f(where.saturation, saturation);
+      gl.uniform1f(where.strength, theme.strength * arrival);
+      gl.uniform3fv(where.background, theme.background);
+      gl.uniform1f(where.saturation, theme.saturation);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       canvas.dataset.ready = "";
+      // An effect's frames arrive between two draws: keep drawing while one plays.
+      raf = moving || app.status.running ? requestAnimationFrame(draw) : 0;
+    };
+    wake = () => {
+      if (raf !== 0) return;
+      last = performance.now();
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
     return () => {
       cancelAnimationFrame(raf);
+      wake = () => {};
       observer.disconnect();
+      forced.disconnect();
+      dark.removeEventListener("change", retheme);
     };
   });
 

@@ -14,9 +14,7 @@ use lueur_core::color::{BulbOutput, Rgb};
 use lueur_core::device::common::{LastSent, Throttle, ipv4, lan_hosts};
 use lueur_core::device::tuya::{self as dps, ID_PREFIX, PORT, TuyaDps};
 use lueur_core::device::wire::Wire;
-use lueur_core::device::{
-    DeviceKind, DiscoveredDevice, Endpoint, LightStream, REST_BRIGHT, REST_KELVIN, TuyaDevice,
-};
+use lueur_core::device::{DeviceKind, DiscoveredDevice, Endpoint, LightStream, REST, TuyaDevice};
 use lueur_core::show::OwnLoop;
 use lueur_core::yeelight::Effect;
 use rustuya::tokio::{Device, Discovery, Event, Version};
@@ -275,13 +273,7 @@ impl LightStream for TuyaStream {
     }
 
     fn rest(&mut self) {
-        let rest = dps::steady_dps(
-            &self.layout,
-            BulbOutput::White {
-                kelvin: REST_KELVIN,
-                bright: REST_BRIGHT,
-            },
-        );
+        let rest = dps::steady_dps(&self.layout, REST);
         self.finish(rest);
     }
 

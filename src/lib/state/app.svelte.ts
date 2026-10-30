@@ -92,8 +92,6 @@ class AppState {
   powerBusy = $state<Record<string, boolean>>({});
   /** The mood or mode being switched to, while it starts. */
   pending = $state<string | null>(null);
-  /** Lights whose mode is being switched, while their effects restart. */
-  modeBusy = $state<Record<string, boolean>>({});
 
   /** The lights effects and moods go to; none picked means the whole room. */
   target = $state<string[]>([]);

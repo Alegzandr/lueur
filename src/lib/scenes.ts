@@ -110,11 +110,11 @@ export const SHOWS: { id: ShowKind; preview: string }[] = [
   { id: "candle", preview: "radial-gradient(circle at 50% 70%, #ffc46a, #ff982a 30%, #ff4e04 60%, #5a1c00)" },
 ];
 
-/** The shows whose pace can be chosen (`has_speed` in show.rs). */
+/** The shows whose pace can be chosen (`has_speed` in show/mod.rs). */
 export const PACED_SHOWS: ShowKind[] = ["rainbow", "sunset", "ocean"];
 
 /** How many times faster than its natural pace a show plays at `speed`
- *  (`ShowSettings::pace` in show.rs). */
+ *  (`ShowSettings::pace` in show/mod.rs). */
 export function showPace(speed: number): number {
   return Math.pow(4, (Math.min(100, Math.max(1, speed)) - 50) / 50);
 }

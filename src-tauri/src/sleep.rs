@@ -138,7 +138,9 @@ fn run(app: &AppHandle, generation: u64) {
     changed(app);
 
     if fade(&state, generation) {
-        let _ = lights::sleep_all(&state);
+        if let Err(e) = lights::sleep_all(&state) {
+            log::warn!("cannot put the lights out at the end of the sleep timer: {e}");
+        }
         let mut t = state.sleep.lock();
         if t.generation == generation {
             *t = Inner {
@@ -147,8 +149,7 @@ fn run(app: &AppHandle, generation: u64) {
             };
         }
     }
-    let _ = app.emit(tray::EFFECT_CHANGED, None::<AppError>);
-    let _ = app.emit(tray::LIGHTS_CHANGED, ());
+    tray::lights_changed(app, None);
     changed(app);
 }
 

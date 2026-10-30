@@ -10,6 +10,7 @@
     modeOf,
     moodTargets,
     setBrightness,
+    showOnPlan,
   } from "../../state.svelte";
   import { t, pct } from "../../i18n";
   import {
@@ -102,11 +103,6 @@
 
   function setColour([r, g, b]: RgbTuple) {
     for (const id of byHand) adjustLight(id, { tint: { mode: "color", r, g, b } });
-  }
-
-  function showOnPlan(id: string) {
-    app.selectedLight = id;
-    app.view = "room";
   }
 </script>
 

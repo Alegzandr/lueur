@@ -65,7 +65,7 @@ export function doingName(d: Doing): string {
 }
 
 /** The same thing done, so lights doing it read as one. */
-export const sameDoing = (a: Doing, b: Doing) =>
+const sameDoing = (a: Doing, b: Doing) =>
   a.kind === b.kind &&
   (a.kind === "mode"
     ? a.mode === (b as typeof a).mode

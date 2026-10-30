@@ -6,7 +6,7 @@
 
 use super::common::{LastSent, Throttle, broadcast_targets, scale_bright, udp_to};
 use super::wire::Wire;
-use super::{DeviceKind, DiscoveredDevice, LightStream, REST_BRIGHT, REST_KELVIN};
+use super::{DeviceKind, DiscoveredDevice, LightStream, REST};
 use crate::color::BulbOutput;
 use crate::show::{OwnLoop, ShowKind};
 use crate::yeelight::Effect;
@@ -134,10 +134,7 @@ impl LightStream for WizStream {
     }
 
     fn rest(&mut self) {
-        self.finish(&pilot(BulbOutput::White {
-            kelvin: REST_KELVIN,
-            bright: REST_BRIGHT,
-        }));
+        self.finish(&pilot(REST));
     }
 
     fn rest_looping(&mut self, own: &OwnLoop) {

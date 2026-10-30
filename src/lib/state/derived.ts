@@ -110,13 +110,3 @@ export function brightOf(lightId: string): number {
   if (mode) return app.config.show.bright;
   return lightState(lightId).bright;
 }
-
-/** True while some light plays `mode`. */
-export function isPlaying(mode: Mode): boolean {
-  return app.status.groups.some((g) => g.mode === mode);
-}
-
-/** Record a state the backend has already applied and persisted. */
-export function recorded(lightId: string, s: LightState): void {
-  app.config.states = { ...app.config.states, [lightId]: s };
-}

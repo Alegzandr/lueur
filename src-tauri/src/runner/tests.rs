@@ -9,9 +9,9 @@ fn fps(n: u64) -> Duration {
 fn the_frame_rate_follows_the_live_settings() {
     let mut config = AppConfig::default();
     config.capture.target_fps = 60;
-    assert_eq!(LiveSettings::of(&config).frame_budget(), fps(60));
+    assert_eq!(frame_budget(LiveSettings::of(&config).target_fps), fps(60));
     config.capture.target_fps = 30;
-    assert_eq!(LiveSettings::of(&config).frame_budget(), fps(30));
+    assert_eq!(frame_budget(LiveSettings::of(&config).target_fps), fps(30));
     // Out-of-range rates from a hand-edited config are kept sane.
     assert_eq!(frame_budget(0), fps(1));
     assert_eq!(frame_budget(1000), fps(120));

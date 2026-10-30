@@ -51,19 +51,6 @@ impl Vec2 {
     pub fn dot(self, o: Vec2) -> f32 {
         self.x * o.x + self.y * o.y
     }
-
-    pub fn len(self) -> f32 {
-        self.dot(self).sqrt()
-    }
-
-    pub fn normalized(self) -> Vec2 {
-        let l = self.len();
-        if l <= f32::EPSILON {
-            Vec2::new(0.0, 0.0)
-        } else {
-            Vec2::new(self.x / l, self.y / l)
-        }
-    }
 }
 
 /// The screen/monitor placed in the room, seen from above.

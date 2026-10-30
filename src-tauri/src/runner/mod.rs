@@ -77,11 +77,6 @@ impl LiveSettings {
             audio: config.audio.clone(),
         }
     }
-
-    /// The time between two ambilight updates.
-    pub fn frame_budget(&self) -> Duration {
-        frame_budget(self.target_fps)
-    }
 }
 
 /// The time between two updates at `fps`, kept within 1 to 120 a second.

@@ -5,7 +5,7 @@
 // The state and its actions live in `state/`, one concern per file; this is
 // the one place the rest of the app imports them from.
 
-export { app, type Pairing, type Toast, type TuyaFlow, type View } from "./state/app.svelte";
+export { app, type Pairing, type Toast, type View } from "./state/app.svelte";
 export {
   bindingFor,
   brightOf,
@@ -15,7 +15,6 @@ export {
   endpointOfDevice,
   isDriven,
   isOn,
-  isPlaying,
   isReconnecting,
   lightById,
   lightState,
@@ -25,12 +24,11 @@ export {
   pickedLights,
   toggleTarget,
 } from "./state/derived";
-export { bootstrap, edit, exportConfig, importConfig, persistNow, refreshStatus } from "./state/config.svelte";
+export { bootstrap, edit, exportConfig, importConfig, refreshStatus } from "./state/config.svelte";
 export {
   applyScene,
   chooseMode,
   restartEffect,
-  setLightMode,
   setSleepTimer,
   sleepChanged,
   takeLight,
@@ -69,6 +67,7 @@ export {
   renameLight,
   scan,
   setLightEnabled,
+  showOnPlan,
   unassign,
 } from "./state/devices.svelte";
 export { dismiss, fail, holdToast, notify, releaseToast } from "./state/toasts";

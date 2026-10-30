@@ -1,10 +1,13 @@
 //! The ambilight's loop: the screen, read and pushed to the lights.
 
-use super::{ConnectedLight, LiveSettings, on_walls, push_zoned, spans, status_changed};
+use super::{
+    ConnectedLight, LiveSettings, frame_budget, on_walls, push_zoned, spans, status_changed,
+};
 use crate::capture::{FrameSource, ScreenSource};
-use lueur_core::engine::Ambilight;
+use lueur_core::color::Rgb;
+use lueur_core::engine::{Ambilight, EngineSettings};
 use lueur_core::geometry::LightMapping;
-use lueur_core::safety::FlashGuard;
+use lueur_core::safety::{FlashGuard, SafetySettings};
 use lueur_core::stage::Fixture;
 use lueur_core::sync::{self, Lag};
 use lueur_core::yeelight::Effect;
@@ -90,11 +93,12 @@ pub(super) fn run_ambilight(
 
     while !stop.load(Ordering::SeqCst) {
         // Read first: the rate itself is live, a new one paces this frame.
+        // Only what the ambilight uses is copied, every frame: not the music's
+        // sound source, which holds names.
         let settings = live
             .lock()
-            .map(|g| g.clone())
-            .unwrap_or_else(|_| initial.clone());
-        let frame_budget = settings.frame_budget();
+            .map_or_else(|_| Frame::of(&initial), |g| Frame::of(&g));
+        let frame_budget = frame_budget(settings.target_fps);
 
         // Cap bulb updates at the target rate. Whatever the screen presents
         // meanwhile piles up in the capture source, so the grab below returns
@@ -175,6 +179,30 @@ pub(super) fn run_ambilight(
         let reads_hdr = source.hdr();
         if flags.hdr.swap(reads_hdr, Ordering::Relaxed) != reads_hdr {
             status_changed();
+        }
+    }
+}
+
+/// The live settings the ambilight reads each frame.
+#[derive(Clone, Copy)]
+struct Frame {
+    engine: EngineSettings,
+    effect: Effect,
+    duration_ms: u32,
+    wall: Rgb,
+    safety: SafetySettings,
+    target_fps: u32,
+}
+
+impl Frame {
+    fn of(s: &LiveSettings) -> Self {
+        Frame {
+            engine: s.engine,
+            effect: s.effect,
+            duration_ms: s.duration_ms,
+            wall: s.wall,
+            safety: s.safety,
+            target_fps: s.target_fps,
         }
     }
 }

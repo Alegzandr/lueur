@@ -434,6 +434,12 @@ pub fn group_zones(n: usize) -> Vec<usize> {
 pub const REST_KELVIN: u16 = 2700;
 pub const REST_BRIGHT: u8 = 40;
 
+/// The warm glow [`LightStream::rest`] settles on, as one output.
+pub const REST: BulbOutput = BulbOutput::White {
+    kelvin: REST_KELVIN,
+    bright: REST_BRIGHT,
+};
+
 impl Driver for MusicConnection {
     fn send(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
         MusicConnection::push(self, output, effect, duration_ms)

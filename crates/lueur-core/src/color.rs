@@ -35,13 +35,6 @@ impl Rgb {
     pub fn value(self) -> u8 {
         self.r.max(self.g).max(self.b)
     }
-
-    /// Perceived luminance in 0..=255 (Rec. 601 weights). Cheap and good enough
-    /// for deciding whether a frame is "dark".
-    pub fn luminance(self) -> u8 {
-        let y = 0.299 * self.r as f32 + 0.587 * self.g as f32 + 0.114 * self.b as f32;
-        y.round().clamp(0.0, 255.0) as u8
-    }
 }
 
 /// A colour accumulated in linear-ish floating point space.

@@ -7,7 +7,7 @@
 
 use super::common::{LastSent, REFRESH, Throttle, udp_to};
 use super::wire::Wire;
-use super::{DeviceKind, DiscoveredDevice, LightStream, REST_BRIGHT, REST_KELVIN};
+use super::{DeviceKind, DiscoveredDevice, LightStream, REST};
 use crate::color::BulbOutput;
 use crate::yeelight::Effect;
 use serde_json::{Value, json};
@@ -107,10 +107,7 @@ impl LightStream for GoveeStream {
     }
 
     fn rest(&mut self) {
-        for msg in commands(BulbOutput::White {
-            kelvin: REST_KELVIN,
-            bright: REST_BRIGHT,
-        }) {
+        for msg in commands(REST) {
             self.wire.text(&msg);
             let _ = self.socket.send(msg.as_bytes());
         }

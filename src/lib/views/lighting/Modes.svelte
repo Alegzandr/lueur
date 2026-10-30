@@ -8,6 +8,7 @@
     lightById,
     modeOf,
     moodTargets,
+    showOnPlan,
   } from "../../state.svelte";
   import { t, times } from "../../i18n";
   import { applyFeel, currentFeel, FEEL_ORDER, type Feel } from "../../presets";
@@ -87,11 +88,6 @@
     if (a.kind !== "default") return a.name;
     return t(HEARS_OUTPUTS ? "audio_default_output" : "audio_default_input");
   });
-
-  function showOnPlan(id: string) {
-    app.selectedLight = id;
-    app.view = "room";
-  }
 </script>
 
 <!-- The heading over the column names the lights; the two kinds of mode

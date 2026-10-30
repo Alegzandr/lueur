@@ -95,12 +95,11 @@ pub(crate) fn start(app: &AppHandle) {
     // Each light picks up the mode it was left playing.
     let handle = app.clone();
     std::thread::spawn(move || {
-        use tauri::Emitter;
-        let _ = lights::resume(&handle.state::<AppState>());
+        if let Err(e) = lights::resume(&handle.state::<AppState>()) {
+            log::warn!("cannot resume the modes the lights were left playing: {e}");
+        }
         // The window may have read the state before the bulbs answered.
-        let _ = handle.emit(tray::EFFECT_CHANGED, None::<error::AppError>);
-        let _ = handle.emit(tray::LIGHTS_CHANGED, ());
-        tray::refresh(&handle);
+        tray::lights_changed(&handle, None);
     });
 }
 

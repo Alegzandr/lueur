@@ -32,7 +32,7 @@ export function inTauri(): boolean {
  *  update waiting for a restart, `?unverified` a paired bridge heard at a new
  *  address, `?unsealed` credentials kept unencrypted for want of a keyring,
  *  `?shared` lights another computer or app plays on, `?hdr` an ambilight
- *  reading an HDR screen. */
+ *  reading an HDR screen, `?lost` an ambilight that cannot read the screen. */
 function preview(
   flag: "demo" | "fresh" | "update" | "unverified" | "unsealed" | "shared" | "hdr" | "lost",
 ): boolean {

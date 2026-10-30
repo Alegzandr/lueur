@@ -4,11 +4,16 @@
 import * as ipc from "../ipc";
 import { t } from "../i18n";
 import { dimmedOnly, type RgbTuple } from "../scenes";
-import type { Endpoint, LightState } from "../types";
+import type { Endpoint, LightState, PowerResult } from "../types";
 import { app } from "./app.svelte";
 import { edit, persistNow, refreshStatus } from "./config.svelte";
-import { bindingFor, endpointOf, isDriven, isOn, lightState, modeOf, recorded } from "./derived";
+import { bindingFor, endpointOf, isDriven, isOn, lightState, modeOf } from "./derived";
 import { fail, notify } from "./toasts";
+
+/** Record a state the backend has already applied and persisted. */
+function recorded(lightId: string, s: LightState): void {
+  app.config.states = { ...app.config.states, [lightId]: s };
+}
 
 // --- Power ---
 
@@ -47,7 +52,7 @@ export async function setAllPower(on: boolean): Promise<void> {
   }
 }
 
-export function reportPartial(res: { total: number; succeeded: number; failures: string[] }): void {
+export function reportPartial(res: PowerResult): void {
   if (res.failures.length > 0) {
     notify("error", t("partial_power", { ok: res.succeeded, total: res.total, names: res.failures.join(", ") }));
   }

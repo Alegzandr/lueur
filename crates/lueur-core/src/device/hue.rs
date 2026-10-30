@@ -21,9 +21,7 @@ use super::common::{Driver, LastSent, Mailbox, Throttle};
 use super::entertainment::{self, Access, Seat};
 use super::http::{self, Response, Trust};
 use super::wire::Wire;
-use super::{
-    Approach, DeviceKind, DiscoveredDevice, HueBridge, LightStream, REST_BRIGHT, REST_KELVIN, mdns,
-};
+use super::{Approach, DeviceKind, DiscoveredDevice, HueBridge, LightStream, REST, mdns};
 use crate::color::{BulbOutput, Rgb};
 use crate::show::{OwnLoop, ShowKind};
 use crate::yeelight::Effect;
@@ -666,11 +664,7 @@ impl Driver for HueDriver {
     }
 
     fn rest(&mut self) {
-        let rest = BulbOutput::White {
-            kelvin: REST_KELVIN,
-            bright: REST_BRIGHT,
-        };
-        let _ = self.put(&self.body(rest, 400, true));
+        let _ = self.put(&self.body(REST, 400, true));
     }
 
     /// A Hue lamp's own loop goes round the colour wheel and nothing else:

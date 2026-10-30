@@ -170,7 +170,7 @@ fn watch(app: &AppHandle) {
                     // the next fullscreen session.
                     if !before.is_empty() {
                         let before = std::mem::take(&mut before);
-                        let _ = lights::give_back(&state, &before, || owns(&state));
+                        give_back(&state, &before);
                     }
                     set_owner(&state, Owner::User);
                 }
@@ -180,7 +180,7 @@ fn watch(app: &AppHandle) {
             // what they chose is never undone here. Asked again under the
             // change lock, so a choice made just now wins too.
             Step::GiveBack => {
-                let _ = lights::give_back(&state, &before, || owns(&state));
+                give_back(&state, &before);
                 changed(app);
             }
         }
@@ -210,9 +210,14 @@ pub fn user_took_over(state: &AppState) {
 }
 
 fn changed(app: &AppHandle) {
-    let _ = app.emit(tray::EFFECT_CHANGED, None::<crate::error::AppError>);
-    let _ = app.emit(tray::LIGHTS_CHANGED, ());
-    tray::refresh(app);
+    tray::lights_changed(app, None);
+}
+
+/// Put back what played before a fullscreen session, saying so if it fails.
+fn give_back(state: &AppState, before: &[(Mode, Vec<String>)]) {
+    if let Err(e) = lights::give_back(state, before, || owns(state)) {
+        log::warn!("cannot give the lights back after fullscreen: {e}");
+    }
 }
 
 #[cfg(test)]

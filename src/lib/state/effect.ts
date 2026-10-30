@@ -133,21 +133,3 @@ export async function moveLights(ids: string[], mode: Mode | null): Promise<void
   if (!app.status.running) app.startedWith = null;
   else if (!wasRunning || app.startedWith === null) app.startedWith = topology();
 }
-
-/** Play `mode` on one light, or give it back to the hand with null. */
-export async function setLightMode(lightId: string, mode: Mode | null): Promise<void> {
-  if (app.busy || app.modeBusy[lightId] || modeOf(lightId) === mode) return;
-  app.modeBusy[lightId] = true;
-  app.busy = true;
-  try {
-    await persistNow();
-    await moveLights([lightId], mode);
-    if (mode === null) await reloadStates();
-  } catch (e) {
-    await refreshStatus();
-    fail(e);
-  } finally {
-    app.busy = false;
-    delete app.modeBusy[lightId];
-  }
-}

@@ -27,9 +27,6 @@
   /** The list of corners stays unfolded while one of them is selected, so
    *  going back lands on its row. */
   let cornersOpen = $state(false);
-  $effect(() => {
-    if (other?.kind === "corner") cornersOpen = true;
-  });
 
   // --- Focus ---
   // Picking from the list, or adding, moves the focus to the inspector; going
@@ -80,6 +77,7 @@
   function selectOther(o: Other, focus = false) {
     app.selectedLight = null;
     other = o;
+    if (o?.kind === "corner") cornersOpen = true;
     if (focus) focusInspector();
   }
   /** A pick from the list or an add button: the focus follows it. */

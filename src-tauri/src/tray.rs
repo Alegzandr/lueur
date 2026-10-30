@@ -8,7 +8,7 @@
 //! room shows are ticked. Its labels follow the interface language the
 //! frontend reports, in the interface's words.
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::lights;
 use crate::runner::Mode;
 use crate::state::AppState;
@@ -375,7 +375,9 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             "all_on" => in_background(app, |state| lights::set_all_power(state, true).map(drop)),
             "all_off" => in_background(app, |state| lights::set_all_power(state, false).map(drop)),
             "sleep_cancel" => {
-                let _ = crate::sleep::set(app, None);
+                if let Err(e) = crate::sleep::set(app, None) {
+                    log::warn!("cannot cancel the sleep timer: {e}");
+                }
             }
             "open" => focus_main(app),
             "update" => crate::updater::restart_app(app.clone()),
@@ -394,7 +396,9 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 } else if let Some(m) = id.strip_prefix(SLEEP_PREFIX).and_then(|m| m.parse().ok()) {
                     // Picking the timer that runs cancels it, like its tick.
                     let again = crate::sleep::minutes(&app.state::<AppState>()) == Some(m);
-                    let _ = crate::sleep::set(app, (!again).then_some(m));
+                    if let Err(e) = crate::sleep::set(app, (!again).then_some(m)) {
+                        log::warn!("cannot set the sleep timer: {e}");
+                    }
                 } else if let Some(kind) = id.strip_prefix(SHOW_PREFIX).and_then(ShowKind::from_id)
                 {
                     in_background(app, move |state| {
@@ -463,10 +467,16 @@ fn in_background(app: &AppHandle, job: impl FnOnce(&AppState) -> AppResult<()> +
         if result.is_err() {
             focus_main(&app);
         }
-        let _ = app.emit(EFFECT_CHANGED, result.err());
-        let _ = app.emit(LIGHTS_CHANGED, ());
-        refresh(&app);
+        lights_changed(&app, result.err());
     });
+}
+
+/// Tell the window that the effects and the lights changed, with the error
+/// the change ran into if any, and bring the tray menu up to date.
+pub fn lights_changed(app: &AppHandle, error: Option<AppError>) {
+    let _ = app.emit(EFFECT_CHANGED, error);
+    let _ = app.emit(LIGHTS_CHANGED, ());
+    refresh(app);
 }
 
 /// Show and focus the main window.

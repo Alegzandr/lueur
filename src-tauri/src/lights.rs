@@ -135,7 +135,9 @@ fn start_room(state: &AppState, mode: Mode) -> AppResult<usize> {
 /// took over.
 pub fn stop_effect(state: &AppState, restore: bool) {
     suspend(state, restore);
-    let _ = record_modes(state, |modes, _| modes.clear());
+    if let Err(e) = record_modes(state, |modes, _| modes.clear()) {
+        log::warn!("cannot save that no light plays an effect: {e}");
+    }
 }
 
 /// Stop every effect for the app itself (quitting, updating, a fullscreen
@@ -166,7 +168,9 @@ pub fn stop_mode(state: &AppState, mode: Mode, restore: bool) {
         let _change = state.effects.change();
         stop_taken(state, state.effects.take(|h| h.mode == mode), restore);
     }
-    let _ = record_modes(state, |modes, _| modes.retain(|_, m| m != mode.id()));
+    if let Err(e) = record_modes(state, |modes, _| modes.retain(|_, m| m != mode.id())) {
+        log::warn!("cannot save that no light plays {}: {e}", mode.id());
+    }
 }
 
 /// Change what is recorded of each light's mode, and persist it.

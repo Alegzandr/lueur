@@ -172,7 +172,7 @@ export interface LightState {
   tint: Tint;
 }
 
-/** The light shows (see lueur-core show.rs). */
+/** The light shows (see lueur-core show/mod.rs). */
 export type ShowKind = "music" | "rainbow" | "sunset" | "ocean" | "candle";
 
 export interface ShowSettings {
@@ -184,7 +184,7 @@ export interface ShowSettings {
   /** The music may flash white on its drops, at most three a second. */
   flashes: boolean;
   /** How late the sound reaches the ear, ms, for the music to wait on
-   *  (`DELAY_MS` in show.rs: -150..=500). */
+   *  (`DELAY_MS` in show/mod.rs: -150..=500). */
   delay_ms: number;
 }
 
@@ -246,6 +246,10 @@ export interface AppConfig {
    *  switches them (moods, lights set by hand other than dimmed) and ignores
    *  the copy the interface saves. */
   natural?: string[];
+  /** How much brighter or dimmer than the natural light's curve each of its
+   *  lights was set by hand, as a factor, by room light id; the backend owns
+   *  it. */
+  natural_scale?: Record<string, number>;
   /** What each light plays, by room light id, as last chosen; the backend
    *  owns it. */
   modes?: Record<string, Mode>;
@@ -317,7 +321,7 @@ export interface EffectGroup {
 }
 
 /** What a driven light shows, one zone of it: a colour or a white, as sent
- *  to its bulb (`Glow` in runner.rs). */
+ *  to its bulb (`Glow` in runner/glow.rs). */
 export interface Glow {
   rgb: [number, number, number] | null;
   kelvin: number | null;
