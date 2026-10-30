@@ -30,8 +30,10 @@ export function inTauri(): boolean {
 /** Browser preview: `?demo` gives a furnished room to design against, `?fresh`
  *  a first launch with bulbs waiting on the network, `?update` an installed
  *  update waiting for a restart, `?unverified` a paired bridge heard at a new
- *  address, `?unsealed` credentials kept unencrypted for want of a keyring. */
-function preview(flag: "demo" | "fresh" | "update" | "unverified" | "unsealed" | "shared"): boolean {
+ *  address, `?unsealed` credentials kept unencrypted for want of a keyring,
+ *  `?shared` lights another computer or app plays on, `?hdr` an ambilight
+ *  reading an HDR screen. */
+function preview(flag: "demo" | "fresh" | "update" | "unverified" | "unsealed" | "shared" | "hdr"): boolean {
   return typeof location !== "undefined" && new URLSearchParams(location.search).has(flag);
 }
 const demo = () => preview("demo");
@@ -290,6 +292,8 @@ const previewStatus = (): EffectStatus => {
         ]
       : [],
     music_waiting: false,
+    // `?hdr`: the ambilight reads an HDR screen.
+    hdr: preview("hdr") && groups.some((g) => g.mode === "ambilight"),
   };
 };
 

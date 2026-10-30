@@ -135,6 +135,8 @@ pub struct Handle {
     /// The music show's: whether it hears its source right now, rather than
     /// waits for it (an application closed, a device unplugged).
     hearing: Option<Arc<AtomicBool>>,
+    /// The ambilight's: whether it reads the screen in HDR right now.
+    hdr: Option<Arc<AtomicBool>>,
 }
 
 impl Handle {
@@ -179,6 +181,11 @@ impl Handle {
         self.hearing
             .as_ref()
             .is_some_and(|h| !h.load(Ordering::Relaxed))
+    }
+
+    /// An ambilight reading an HDR screen, its colours brought back to SDR.
+    pub fn hdr(&self) -> bool {
+        self.hdr.as_ref().is_some_and(|h| h.load(Ordering::Relaxed))
     }
 
     /// The lights it drives whose bulb is not taking frames, and why: it
@@ -245,18 +252,19 @@ pub fn on_end(f: impl Fn() + Send + Sync + 'static) {
     let _ = ON_END.set(Box::new(f));
 }
 
-/// Called when a light's bulb drops or comes back, set once at launch.
-static ON_LINKS: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+/// Called when what a running loop shows changes, set once at launch.
+static ON_STATUS: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
 
 /// What to do when a driven light's bulb drops or comes back (see
-/// [`Handle::reconnecting`]). It runs on the frame loop, so it must return
-/// at once: anything slower belongs on another thread.
-pub fn on_links(f: impl Fn() + Send + Sync + 'static) {
-    let _ = ON_LINKS.set(Box::new(f));
+/// [`Handle::away`]), or the ambilight starts or stops reading an HDR
+/// screen (see [`Handle::hdr`]). It runs on the frame loop, so it must
+/// return at once: anything slower belongs on another thread.
+pub fn on_status(f: impl Fn() + Send + Sync + 'static) {
+    let _ = ON_STATUS.set(Box::new(f));
 }
 
-fn links_changed() {
-    if let Some(changed) = ON_LINKS.get() {
+fn status_changed() {
+    if let Some(changed) = ON_STATUS.get() {
         changed();
     }
 }
@@ -327,6 +335,7 @@ fn spawn(
         links,
         mode,
         hearing: None,
+        hdr: None,
     })
 }
 
@@ -361,7 +370,9 @@ fn start_ambilight(
     let monitor_index = config.capture.monitor_index;
     check_monitor_index(monitor_index)?;
     let (lights, ids) = connect(config, ids, hosts, leases)?;
-    spawn(
+    let hdr = Arc::new(AtomicBool::new(false));
+    let seen = Arc::clone(&hdr);
+    let mut handle = spawn(
         config,
         Mode::Ambilight,
         lights,
@@ -371,11 +382,13 @@ fn start_ambilight(
             // thread for its whole life. A stop asked meanwhile (the user
             // still looking at Wayland's screen sharing dialog) cancels it.
             match ScreenSource::for_index(monitor_index, stop) {
-                Ok(source) => run_ambilight(source, lights, live, stop),
+                Ok(source) => run_ambilight(source, lights, live, stop, &seen),
                 Err(e) => log::error!("capture unavailable: {e}"),
             }
         },
-    )
+    )?;
+    handle.hdr = Some(hdr);
+    Ok(handle)
 }
 
 fn start_show(

@@ -69,7 +69,11 @@
         <span class="monitor"></span>
       </span>
       <span class="tile-text">
-        <span class="tile-name">{t("mode_ambilight")}</span>
+        <span class="tile-name"
+          >{t("mode_ambilight")}{#if app.status.hdr && shareOf("ambilight") > 0}{" "}<span class="hdr"
+              >{t("hdr")}</span
+            ><span class="sr-only">{t("hdr_tip")}</span>{/if}</span
+        >
         <span class="tile-sub">
           {DETECTS_FULLSCREEN && app.config.behavior.auto_fullscreen ? t("mode_ambilight_auto") : t("mode_ambilight_sub")}
         </span>
@@ -305,6 +309,21 @@
   }
   .screen .tile-name {
     font-size: var(--t-lg);
+  }
+  /* The screen is read in HDR: a plain outlined tag, not amber, since it
+     says how the picture is read, not that a light is on. */
+  .hdr {
+    display: inline-block;
+    margin-left: var(--s-1);
+    padding: 0 5px;
+    border-radius: var(--r-sm);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    color: var(--text-2);
+    font-size: var(--t-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    line-height: 16px;
+    vertical-align: 0.2em;
   }
   .tile-sub {
     font-size: var(--t-sm);

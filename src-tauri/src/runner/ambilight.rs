@@ -1,6 +1,6 @@
 //! The ambilight's loop: the screen, read and pushed to the lights.
 
-use super::{ConnectedLight, LiveSettings, push_zoned, spans};
+use super::{ConnectedLight, LiveSettings, push_zoned, spans, status_changed};
 use crate::capture::{FrameSource, ScreenSource};
 use lueur_core::engine::Ambilight;
 use lueur_core::geometry::LightMapping;
@@ -47,6 +47,7 @@ pub(super) fn run_ambilight(
     lights: &mut [ConnectedLight],
     live: &Mutex<LiveSettings>,
     stop: &AtomicBool,
+    hdr: &AtomicBool,
 ) {
     let Ok(initial) = live.lock().map(|g| g.clone()) else {
         return;
@@ -129,6 +130,12 @@ pub(super) fn run_ambilight(
                 // briefly and try again rather than tearing everything down.
                 std::thread::sleep(Duration::from_millis(50));
             }
+        }
+        // HDR turned on or off in Windows reopens the capture in its new
+        // format; the window says which one the colours come from.
+        let reads_hdr = source.hdr();
+        if hdr.swap(reads_hdr, Ordering::Relaxed) != reads_hdr {
+            status_changed();
         }
     }
 }

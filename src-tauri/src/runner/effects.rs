@@ -65,6 +65,11 @@ impl Effects {
         self.lock().iter().any(Handle::waiting_for_sound)
     }
 
+    /// Whether the ambilight reads an HDR screen.
+    pub fn hdr(&self) -> bool {
+        self.lock().iter().any(Handle::hdr)
+    }
+
     /// Every driven light whose bulb is not taking frames, and why.
     pub fn away(&self) -> Vec<(String, Link)> {
         self.lock()

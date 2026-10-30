@@ -7,7 +7,14 @@
 //! does not take that white into account, which is why an HDR desktop looks
 //! washed out in screen sharing. [`ToSdr`] reads the floats instead, divides
 //! by the SDR white so a white page is white again, and encodes the result as
-//! sRGB, the same bytes an SDR desktop would have given.
+//! sRGB: for SDR content, the same bytes an SDR desktop would have given.
+//!
+//! The capture shrinks the desktop on the GPU before this runs. A shader
+//! does the same work on every pixel before the shrink (see
+//! [`clip`](super::clip)), so an HDR highlight is brought down to the white
+//! before it is averaged with its surroundings; this then only encodes. Where
+//! the shader cannot be built, this divides the shrunk image instead, and a
+//! highlight weighs in its average at its full brightness.
 
 /// The SDR white, in scRGB units, when Windows does not say: 200 nits, a
 /// common setting of the slider.
@@ -54,8 +61,13 @@ impl ToSdr {
         for px in row.chunks_exact(8) {
             let channel = |i: usize| {
                 let v = half(u16::from_le_bytes([px[i], px[i + 1]])) * self.scale;
-                // `max` also turns a NaN into zero.
-                v.max(0.0)
+                // A NaN reads as black and an infinity as the largest float,
+                // so neither turns the whole pixel into NaN below.
+                if v.is_nan() {
+                    0.0
+                } else {
+                    v.clamp(0.0, f32::MAX)
+                }
             };
             let (r, g, b) = (channel(0), channel(2), channel(4));
             let peak = r.max(g).max(b);
@@ -173,6 +185,18 @@ mod tests {
     fn colours_outside_srgb_are_cut_to_the_gamut() {
         let to_sdr = ToSdr::new(1.0);
         assert_eq!(convert(&to_sdr, -0.25, 1.0, 0.0), [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn an_infinite_channel_reads_as_the_brightest() {
+        let to_sdr = ToSdr::new(1.0);
+        let mut out = Vec::new();
+        let px: Vec<u8> = [0x7c00u16, 0, 0, 0x3c00]
+            .iter()
+            .flat_map(|b| b.to_le_bytes())
+            .collect();
+        to_sdr.convert_row(&px, &mut out);
+        assert_eq!(out, [0, 0, 255, 255]);
     }
 
     #[test]

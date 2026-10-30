@@ -145,7 +145,8 @@ film. On Windows you can skip this step: with *Ambilight in fullscreen* on
 
 With HDR on in Windows, the Ambilight reads the colours as they are composed
 and matches them to your *SDR content brightness* setting, so they don't come
-out washed out the way an HDR screen often looks in screen sharing.
+out washed out the way an HDR screen often looks in screen sharing. There is
+nothing to set: an *HDR* tag beside the Ambilight's name shows when it is so.
 
 ## Supported bulbs
 

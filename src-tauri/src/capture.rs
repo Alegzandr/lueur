@@ -30,6 +30,8 @@
 
 pub mod bench;
 #[cfg(windows)]
+mod clip;
+#[cfg(windows)]
 mod dxgi;
 #[cfg(windows)]
 mod gdi;
@@ -100,10 +102,14 @@ fn all_monitors() -> AppResult<Vec<Monitor>> {
     Monitor::all().map_err(|e| AppError::new("monitors_unavailable").detail(e))
 }
 
-/// Desktop duplication failing this many grabs in a row (a display rotated
-/// or unplugged mid-session) hands over to GDI rather than retrying forever.
+/// How long desktop duplication may keep failing before GDI takes over. A
+/// display mode change (HDR turned on or off, a new resolution or refresh
+/// rate) blanks the screen and refuses duplication for a few seconds, and
+/// GDI would only show those seconds washed out on an HDR display; a display
+/// rotated or unplugged mid-session fails for good and is handed over after
+/// that. The bulbs hold their colour meanwhile.
 #[cfg(windows)]
-const DUPLICATION_FAILURES: u32 = 40;
+const DUPLICATION_PATIENCE: Duration = Duration::from_secs(8);
 /// How often GDI tries desktop duplication again, which comes back after a
 /// UAC prompt or the lock screen and is what sees exclusive fullscreen.
 #[cfg(windows)]
@@ -143,9 +149,9 @@ impl FrameSource for gdi::GdiSource {
 pub struct ScreenSource {
     #[cfg(windows)]
     duplication: Option<dxgi::DxgiSource>,
-    /// Grabs in a row duplication has failed.
+    /// Since when duplication has failed, every grab.
     #[cfg(windows)]
-    failures: u32,
+    failing_since: Option<Instant>,
     /// When GDI next tries duplication again.
     #[cfg(windows)]
     retry_at: Instant,
@@ -169,7 +175,7 @@ impl ScreenSource {
             #[cfg(windows)]
             duplication: duplicate(&monitor, false),
             #[cfg(windows)]
-            failures: 0,
+            failing_since: None,
             #[cfg(windows)]
             retry_at: Instant::now() + DUPLICATION_RETRY,
             #[cfg(target_os = "linux")]
@@ -225,6 +231,17 @@ fn duplicate(monitor: &Monitor, retry: bool) -> Option<dxgi::DxgiSource> {
         .ok()
 }
 
+impl ScreenSource {
+    /// Whether the monitor is read in HDR, and its colours brought back to
+    /// SDR (see [`hdr`]). Only Desktop Duplication can.
+    pub fn hdr(&self) -> bool {
+        #[cfg(windows)]
+        return self.duplication.as_ref().is_some_and(|d| d.hdr());
+        #[cfg(not(windows))]
+        false
+    }
+}
+
 impl FrameSource for ScreenSource {
     fn grab(&mut self, timeout: Duration) -> Result<&Frame, String> {
         #[cfg(windows)]
@@ -232,14 +249,14 @@ impl FrameSource for ScreenSource {
             if self.duplication.is_none() && Instant::now() >= self.retry_at {
                 self.retry_at = Instant::now() + DUPLICATION_RETRY;
                 self.duplication = duplicate(self.fallback.monitor(), true);
-                self.failures = 0;
+                self.failing_since = None;
             }
             if let Some(d) = self.duplication.as_mut() {
                 match d.grab(timeout) {
-                    Ok(_) => self.failures = 0,
+                    Ok(_) => self.failing_since = None,
                     Err(e) => {
-                        self.failures += 1;
-                        if self.failures < DUPLICATION_FAILURES {
+                        let since = *self.failing_since.get_or_insert_with(Instant::now);
+                        if since.elapsed() < DUPLICATION_PATIENCE {
                             return Err(e);
                         }
                         log::warn!("desktop duplication lost, using GDI: {e}");

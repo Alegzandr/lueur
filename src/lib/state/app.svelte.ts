@@ -65,6 +65,7 @@ export const idle = (): EffectStatus => ({
   reconnecting: [],
   elsewhere: [],
   music_waiting: false,
+  hdr: false,
 });
 
 class AppState {

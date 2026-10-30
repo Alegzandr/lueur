@@ -193,10 +193,11 @@ pub fn run() {
                     tray::refresh(&handle);
                 });
             });
-            // A bulb that dropped or came back: the window shows which
-            // lights are being reconnected.
+            // A bulb that dropped or came back, or the ambilight's screen
+            // going in or out of HDR: the window shows which lights are
+            // being reconnected, and whether the colours come from HDR.
             let handle = app.handle().clone();
-            runner::on_links(move || {
+            runner::on_status(move || {
                 let handle = handle.clone();
                 std::thread::spawn(move || {
                     use tauri::Emitter;

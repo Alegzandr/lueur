@@ -29,6 +29,7 @@ lueur/
 │   ├─ capture.rs         Screen capture behind a FrameSource trait
 │   │  ├─ dxgi.rs        Windows: Desktop Duplication, GPU-downscaled
 │   │  ├─ gdi.rs         Windows fallback: GDI, shrunk while it copies
+│   │  ├─ clip.rs        Windows: HDR highlights down to the SDR white, on the GPU
 │   │  ├─ hdr.rs         Windows: an HDR desktop back to SDR colours
 │   │  ├─ screencast.rs  Wayland: ScreenCast portal + PipeWire stream
 │   │  ├─ scale.rs       CPU shrink of a full-size frame (PipeWire)
@@ -93,13 +94,28 @@ games are captured. Where duplication refuses (a rotated display, a remote
 session), GDI takes over, sampling the desktop straight into a small bitmap.
 
 On a display with HDR on, duplication is asked for the 16-bit float scRGB
-desktop Windows composes (`IDXGIOutput5::DuplicateOutput1`). It is shrunk in
-floats, which are already linear, then divided by the display's SDR white
+desktop Windows composes (`IDXGIOutput5::DuplicateOutput1`, which refuses a
+thread that is not per-monitor DPI aware: the call sets that on its thread).
+A pixel shader (`capture/clip.rs`, compiled at run time with `D3DCompile`)
+draws it into the top of the mip chain divided by the display's SDR white
 (`DisplayConfigGetDeviceInfo`, read again every two seconds so the
-brightness slider is followed) and encoded as sRGB on the CPU
-(`capture/hdr.rs`). The 8-bit image the older call returns ignores that white,
-which is what makes HDR captures look washed out. GDI only ever sees that
-8-bit image.
+brightness slider is followed), with negative channels cut and anything
+brighter brought down by its brightest channel. The floats are then shrunk,
+which averages them in linear light, and encoded as sRGB on the CPU
+(`capture/hdr.rs`). Bringing highlights down before the shrink keeps a dark
+scene with a few bright lights as dark as it looks in SDR. The 8-bit image
+the older call returns ignores the SDR white, which is what makes HDR
+captures look washed out; GDI only ever sees that image. The tests in
+`clip.rs` run the shader on WARP and check it gives the bytes the CPU
+conversion does.
+
+Turning HDR on or off, like any display mode change, interrupts duplication
+and refuses it for a few seconds. The capture tries again every quarter of
+a second for eight seconds before GDI takes over (`DUPLICATION_PATIENCE` in
+`capture.rs`), the bulbs holding their colour meanwhile. Every two seconds a session also asks its
+DXGI factory whether its view of the displays is still current, and opens
+again if not: one opened while Windows was still switching would otherwise
+keep reading the old format.
 
 On a Linux Wayland session the ambilight opens one xdg-desktop-portal
 ScreenCast session and reads its PipeWire stream, shrunk on arrival. The

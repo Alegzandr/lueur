@@ -13,9 +13,11 @@
 //! squared-value accumulation would.
 //!
 //! On a display with HDR on, the desktop is read in the 16-bit floats Windows
-//! composes it in, which are already linear, and brought back to sRGB after
-//! the shrink (see [`hdr`](super::hdr)).
+//! composes it in, which are already linear. A first pass brings each pixel
+//! down to the SDR white (see [`clip`](super::clip)), the floats are shrunk,
+//! and the small image is encoded as sRGB (see [`hdr`](super::hdr)).
 
+use super::clip::Clip;
 use super::hdr::{self, ToSdr};
 use lueur_core::engine::{Frame, PixelFormat};
 use std::time::{Duration, Instant};
@@ -33,7 +35,7 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_FORMAT_SUPPORT_MIP_AUTOGEN, D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE,
     D3D11_RESOURCE_MISC_GENERATE_MIPS, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
     D3D11_USAGE_DEFAULT, D3D11_USAGE_STAGING, D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
-    ID3D11Resource, ID3D11ShaderResourceView, ID3D11Texture2D,
+    ID3D11RenderTargetView, ID3D11Resource, ID3D11ShaderResourceView, ID3D11Texture2D,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020, DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -44,16 +46,24 @@ use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO, IDXGIAdapter1,
     IDXGIFactory1, IDXGIOutput1, IDXGIOutput5, IDXGIOutput6, IDXGIOutputDuplication, IDXGIResource,
 };
+use windows::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext,
+};
 use windows::core::Interface;
+
+/// How long a lost session waits between attempts to open again. A display
+/// mode change refuses duplication for a few seconds, and each attempt
+/// creates a D3D11 device while the driver is busy switching.
+const REOPEN_EVERY: Duration = Duration::from_millis(250);
 
 /// The readback is the smallest mip level at least this wide: plenty for zone
 /// averages, and small enough that copying it out is negligible.
 const MIN_READBACK_WIDTH: u32 = 256;
 
-/// How often an HDR session asks Windows for the SDR white again: moving the
-/// brightness slider does not always interrupt the duplication, so nothing
-/// else would tell.
-const WHITE_REFRESH: Duration = Duration::from_secs(2);
+/// How often a session makes sure it still matches the display, and an HDR
+/// one asks Windows for the SDR white again: moving the brightness slider
+/// does not always interrupt the duplication, so nothing else would tell.
+const CHECK_EVERY: Duration = Duration::from_secs(2);
 
 /// The mip level whose width is the smallest one still `>= MIN_READBACK_WIDTH`.
 fn readback_level(width: u32) -> u32 {
@@ -76,17 +86,66 @@ pub struct DxgiSource {
     monitor: u32,
     session: Option<Session>,
     frame: Option<Frame>,
+    /// When a lost session may next try to open again.
+    reopen_at: Instant,
+    /// Whether the display is in HDR and read in its floats. Set when a
+    /// session opens and kept while it is lost, so a lock screen or a mode
+    /// change does not make the window say otherwise for a moment.
+    hdr: bool,
+    /// How the display was read when the logs last said so: whether it was
+    /// in HDR, and whether its floats were read.
+    told: Option<(bool, bool)>,
 }
 
 impl DxgiSource {
     /// Open a duplication session for the monitor `xcap` calls `monitor`.
     pub fn open(monitor: u32) -> Result<Self, String> {
         let session = Session::open(monitor)?;
-        Ok(Self {
+        let mut source = Self {
             monitor,
             session: Some(session),
             frame: None,
-        })
+            reopen_at: Instant::now(),
+            hdr: false,
+            told: None,
+        };
+        source.opened();
+        Ok(source)
+    }
+
+    /// Take in a session that just opened: what the window shows, and what
+    /// the logs say when it differs from the last session.
+    fn opened(&mut self) {
+        let Some(s) = self.session.as_ref() else {
+            return;
+        };
+        let read = (s.hdr, s.refused.is_none());
+        self.hdr = read == (true, true);
+        if self.told == Some(read) {
+            return;
+        }
+        match (read, s.refused.as_deref()) {
+            ((true, true), _) => log::info!(
+                "HDR display, read in 16-bit floats, SDR white at {:.0} nits{}; highlights \
+                 brought down {}",
+                s.white * 80.0,
+                if s.white_known { "" } else { " (assumed)" },
+                if s.clip.is_some() {
+                    "before the shrink"
+                } else {
+                    "after the shrink"
+                }
+            ),
+            ((true, false), refused) => log::warn!(
+                "HDR display read in 8 bits, colours may look washed out: {}",
+                refused.unwrap_or_default()
+            ),
+            ((false, _), _) if self.told.is_some_and(|(hdr, _)| hdr) => {
+                log::info!("display back in SDR");
+            }
+            _ => {}
+        }
+        self.told = Some(read);
     }
 
     /// Return the newest desktop image, waiting up to `timeout` for one. When
@@ -95,10 +154,22 @@ impl DxgiSource {
     pub fn grab(&mut self, timeout: Duration) -> Result<&Frame, String> {
         let session = match self.session.as_mut() {
             Some(s) => s,
-            None => self.session.insert(Session::open(self.monitor)?),
+            None if Instant::now() < self.reopen_at => {
+                return Err("desktop duplication lost, waiting to open it again".into());
+            }
+            None => {
+                self.reopen_at = Instant::now() + REOPEN_EVERY;
+                self.session = Some(Session::open(self.monitor)?);
+                self.opened();
+                match self.session.as_mut() {
+                    Some(s) => s,
+                    None => return Err("no capture session".into()),
+                }
+            }
         };
         if let Err(e) = session.next(timeout, &mut self.frame) {
             self.session = None;
+            self.reopen_at = Instant::now() + REOPEN_EVERY;
             return Err(e);
         }
         self.frame
@@ -110,6 +181,12 @@ impl DxgiSource {
     pub fn frame(&self) -> Option<&Frame> {
         self.frame.as_ref()
     }
+
+    /// Whether the display is in HDR, read in its floats and brought back to
+    /// SDR colours.
+    pub fn hdr(&self) -> bool {
+        self.hdr
+    }
 }
 
 /// GPU objects sized for one desktop resolution and format.
@@ -120,6 +197,9 @@ struct Target {
     format: DXGI_FORMAT,
     mips: ID3D11Resource,
     view: ID3D11ShaderResourceView,
+    /// The top of the mip chain as a render target, for the clip pass: only
+    /// on an HDR desktop whose session has one.
+    top: Option<ID3D11RenderTargetView>,
     staging: ID3D11Resource,
     level: u32,
     width: u32,
@@ -127,6 +207,22 @@ struct Target {
 }
 
 struct Session {
+    /// The factory the output was found through, which says when its view of
+    /// the displays is out of date.
+    factory: IDXGIFactory1,
+    /// Whether the display was in HDR when the session opened.
+    hdr: bool,
+    /// Why an HDR display is read in 8 bits rather than its floats.
+    refused: Option<String>,
+    /// The SDR white, in scRGB units, and whether Windows said it or it is
+    /// assumed.
+    white: f32,
+    white_known: bool,
+    /// The pass that brings an HDR desktop down to the SDR white before the
+    /// shrink. Without it (no shader compiler), the shrunk image is.
+    clip: Option<Clip>,
+    /// Whether the image being shrunk went through `clip`.
+    clipped: bool,
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     duplication: IDXGIOutputDuplication,
@@ -137,8 +233,8 @@ struct Session {
     /// SDR white.
     display: [u16; 32],
     to_sdr: ToSdr,
-    /// When an HDR session next asks for the SDR white.
-    white_at: Instant,
+    /// When the session next checks it still matches the display.
+    check_at: Instant,
 }
 
 impl Session {
@@ -157,14 +253,18 @@ impl Session {
                 let desc = unsafe { output.GetDesc() }.map_err(err("output description"))?;
                 if desc.Monitor.0 as usize as u32 == monitor {
                     let output: IDXGIOutput1 = output.cast().map_err(err("IDXGIOutput1"))?;
-                    return Self::on_output(&adapter, &output);
+                    return Self::on_output(&factory, &adapter, output);
                 }
             }
         }
         Err("monitor not found on any graphics adapter".into())
     }
 
-    fn on_output(adapter: &IDXGIAdapter1, output: &IDXGIOutput1) -> Result<Self, String> {
+    fn on_output(
+        factory: &IDXGIFactory1,
+        adapter: &IDXGIAdapter1,
+        output: IDXGIOutput1,
+    ) -> Result<Self, String> {
         let mut device = None;
         let mut context = None;
         unsafe {
@@ -187,17 +287,26 @@ impl Session {
         let name = unsafe { output.GetDesc() }
             .map_err(err("output description"))?
             .DeviceName;
-        let hdr_on = is_hdr(output);
+        let hdr_on = is_hdr(&output);
         let white = if hdr_on { sdr_white(&name) } else { None };
-        let duplication = if hdr_on {
-            log::info!(
-                "HDR display, SDR white at {:.0} nits{}",
-                white.unwrap_or(hdr::DEFAULT_WHITE) * 80.0,
-                if white.is_some() { "" } else { " (assumed)" }
-            );
-            duplicate_hdr(output, &device)?
+        // Any card that drives an HDR display builds float mips; asked all
+        // the same, since the shrink relies on it.
+        let (duplication, refused) = if hdr_on
+            && can_shrink(&device, DXGI_FORMAT_R16G16B16A16_FLOAT)
+        {
+            duplicate_hdr(&output, &device)?
         } else {
-            unsafe { output.DuplicateOutput(&device) }.map_err(err("desktop duplication"))?
+            let duplication =
+                unsafe { output.DuplicateOutput(&device) }.map_err(err("desktop duplication"))?;
+            let refused = hdr_on.then(|| "the graphics card cannot shrink 16-bit floats".into());
+            (duplication, refused)
+        };
+        let clip = if hdr_on && refused.is_none() {
+            Clip::new(&device)
+                .inspect_err(|e| log::warn!("HDR highlights brought down after the shrink: {e}"))
+                .ok()
+        } else {
+            None
         };
 
         // A rotated desktop arrives in panel orientation. GDI hands it back the
@@ -208,16 +317,20 @@ impl Session {
         }
 
         // Average in linear light where the hardware can build sRGB mips.
-        let srgb = unsafe { device.CheckFormatSupport(DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) }
-            .map(|bits| bits & D3D11_FORMAT_SUPPORT_MIP_AUTOGEN.0 as u32 != 0)
-            .unwrap_or(false);
-        let format = if srgb {
+        let format = if can_shrink(&device, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) {
             DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
         } else {
             DXGI_FORMAT_B8G8R8A8_UNORM
         };
 
         Ok(Self {
+            factory: factory.clone(),
+            hdr: hdr_on,
+            refused,
+            white: white.unwrap_or(hdr::DEFAULT_WHITE),
+            white_known: white.is_some(),
+            clip,
+            clipped: false,
             device,
             context,
             duplication,
@@ -225,13 +338,37 @@ impl Session {
             target: None,
             display: name,
             to_sdr: ToSdr::new(white.unwrap_or(hdr::DEFAULT_WHITE)),
-            white_at: Instant::now() + WHITE_REFRESH,
+            check_at: Instant::now() + CHECK_EVERY,
         })
+    }
+
+    /// Make sure the session still reads the display as it is set up now.
+    /// Turning HDR on or off normally interrupts the duplication, but a
+    /// session opened while Windows was still switching can be left reading
+    /// the desktop the way it was, washed out. The factory then says its
+    /// view of the displays is out of date (an output found through it keeps
+    /// the colour space it had), and the session is opened again through a
+    /// new one.
+    fn check(&mut self) -> Result<(), String> {
+        if !unsafe { self.factory.IsCurrent() }.as_bool() {
+            return Err("display settings changed".into());
+        }
+        if self.hdr
+            && let Some(white) = sdr_white(&self.display)
+        {
+            self.white = white;
+            self.white_known = true;
+        }
+        Ok(())
     }
 
     /// Wait for a presented frame (up to `timeout`) and shrink it into `frame`.
     /// Leaves `frame` untouched when the desktop did not change.
     fn next(&mut self, timeout: Duration, frame: &mut Option<Frame>) -> Result<(), String> {
+        if Instant::now() >= self.check_at {
+            self.check_at = Instant::now() + CHECK_EVERY;
+            self.check()?;
+        }
         let deadline = Instant::now() + timeout;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -267,7 +404,7 @@ impl Session {
     }
 
     /// Queue a copy of the acquired desktop image into the mip chain's top
-    /// level.
+    /// level: through the clip pass on an HDR desktop, as it is otherwise.
     fn copy(&mut self, resource: &IDXGIResource) -> Result<(), String> {
         let texture: ID3D11Texture2D = resource.cast().map_err(err("desktop texture"))?;
         let mut desc = D3D11_TEXTURE2D_DESC::default();
@@ -289,11 +426,31 @@ impl Session {
         let Some(t) = self.target.as_ref() else {
             return Err("no capture target".into());
         };
-        let source: ID3D11Resource = texture.cast().map_err(err("desktop resource"))?;
-        unsafe {
-            self.context
-                .CopySubresourceRegion(Some(&t.mips), 0, 0, 0, 0, Some(&source), 0, None);
-        }
+        // The pass reads the desktop image as a shader resource, which
+        // duplication allows; checked all the same, the copy works without.
+        let readable = desc.BindFlags & D3D11_BIND_SHADER_RESOURCE.0 as u32 != 0;
+        self.clipped = match (self.clip.as_mut(), t.top.as_ref()) {
+            (Some(clip), Some(top)) if readable => {
+                clip.draw(&self.device, &self.context, &texture, top, self.white)?;
+                true
+            }
+            _ => {
+                let source: ID3D11Resource = texture.cast().map_err(err("desktop resource"))?;
+                unsafe {
+                    self.context.CopySubresourceRegion(
+                        Some(&t.mips),
+                        0,
+                        0,
+                        0,
+                        0,
+                        Some(&source),
+                        0,
+                        None,
+                    );
+                }
+                false
+            }
+        };
         Ok(())
     }
 
@@ -304,12 +461,10 @@ impl Session {
             return Err("no capture target".into());
         };
         let floats = t.format == DXGI_FORMAT_R16G16B16A16_FLOAT;
-        if floats && Instant::now() >= self.white_at {
-            self.white_at = Instant::now() + WHITE_REFRESH;
-            if let Some(white) = sdr_white(&self.display) {
-                self.to_sdr.set_white(white);
-            }
-        }
+        // A clipped image is already at the SDR white; one that was copied
+        // as it is still has to be divided by it.
+        self.to_sdr
+            .set_white(if self.clipped { 1.0 } else { self.white });
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         unsafe {
             self.context.GenerateMips(Some(&t.view));
@@ -404,6 +559,15 @@ impl Session {
                 .CreateShaderResourceView(&mips, None, Some(&mut view))
                 .map_err(err("mip view"))?;
         }
+        // A render target view with no description is the top mip level.
+        let mut top = None;
+        if format == DXGI_FORMAT_R16G16B16A16_FLOAT && self.clip.is_some() {
+            unsafe {
+                self.device
+                    .CreateRenderTargetView(&mips, None, Some(&mut top))
+                    .map_err(err("mip render target"))?;
+            }
+        }
 
         Ok(Target {
             source_width: width,
@@ -411,12 +575,19 @@ impl Session {
             format,
             mips: mips.cast().map_err(err("mip resource"))?,
             view: view.ok_or("no mip view")?,
+            top,
             staging: staging.cast().map_err(err("readback resource"))?,
             level,
             width: small_width,
             height: small_height,
         })
     }
+}
+
+/// Whether `device` can build the mip chain in `format`.
+fn can_shrink(device: &ID3D11Device, format: DXGI_FORMAT) -> bool {
+    unsafe { device.CheckFormatSupport(format) }
+        .is_ok_and(|bits| bits & D3D11_FORMAT_SUPPORT_MIP_AUTOGEN.0 as u32 != 0)
 }
 
 /// Whether HDR is on for this output: Windows then drives it in the BT.2100
@@ -430,22 +601,33 @@ fn is_hdr(output: &IDXGIOutput1) -> bool {
 }
 
 /// Duplicate an HDR output in the 16-bit floats it is composed in. Where
-/// Windows refuses, the 8-bit image still works, only washed out.
+/// Windows refuses, the 8-bit image still works, only washed out, and the
+/// reason comes with it.
 fn duplicate_hdr(
     output: &IDXGIOutput1,
     device: &ID3D11Device,
-) -> Result<IDXGIOutputDuplication, String> {
+) -> Result<(IDXGIOutputDuplication, Option<String>), String> {
     // The 8-bit format stays on the list, as the documentation asks: DXGI
     // falls back to it when the floats are not available.
     let formats = [DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_B8G8R8A8_UNORM];
-    match output
+    // `DuplicateOutput1` refuses a thread that does not follow each
+    // monitor's own DPI (DXGI_ERROR_UNSUPPORTED). The window makes the
+    // whole process do so, the capture benchmark and the tests do not: the
+    // thread is made to for the call, and put back as it was.
+    let previous =
+        unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    let duplicated = output
         .cast::<IDXGIOutput5>()
-        .and_then(|o| unsafe { o.DuplicateOutput1(device, 0, &formats) })
-    {
-        Ok(duplication) => Ok(duplication),
+        .and_then(|o| unsafe { o.DuplicateOutput1(device, 0, &formats) });
+    if !previous.0.is_null() {
+        unsafe { SetThreadDpiAwarenessContext(previous) };
+    }
+    match duplicated {
+        Ok(duplication) => Ok((duplication, None)),
         Err(e) => {
-            log::warn!("HDR desktop duplication unavailable, colours may look washed out: {e}");
-            unsafe { output.DuplicateOutput(device) }.map_err(err("desktop duplication"))
+            let duplication =
+                unsafe { output.DuplicateOutput(device) }.map_err(err("desktop duplication"))?;
+            Ok((duplication, Some(e.to_string())))
         }
     }
 }
@@ -480,7 +662,9 @@ fn sdr_white(device: &[u16; 32]) -> Option<f32> {
     paths.truncate(path_count as usize);
 
     // A path joins the source DXGI names to the target, the panel, whose
-    // white it is.
+    // white it is. A cloned display has one source and several panels,
+    // each with its own white; the image is one, so the first panel Windows
+    // lists sets it.
     paths.iter().find_map(|path| {
         let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
             header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
@@ -561,7 +745,7 @@ mod tests {
         let whole = lueur_core::geometry::SampleZone::new(0.0, 0.0, 1.0, 1.0);
         println!("dxgi: screen average {:?}", f.average_zone(&whole, 1));
         println!(
-            "dxgi: {}x{} readback, {:.3} ms per frame over {reads} frames (srgb mips: {}, hdr: {})",
+            "dxgi: {}x{} readback, {:.3} ms per frame over {reads} frames (srgb mips: {}, hdr: {}, sdr white: {:?})",
             f.width,
             f.height,
             spent.as_secs_f64() * 1000.0 / reads.max(1) as f64,
@@ -569,7 +753,8 @@ mod tests {
             session
                 .target
                 .as_ref()
-                .is_some_and(|t| t.format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+                .is_some_and(|t| t.format == DXGI_FORMAT_R16G16B16A16_FLOAT),
+            sdr_white(&session.display).map(|w| w * 80.0)
         );
     }
 

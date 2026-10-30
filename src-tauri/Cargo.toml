@@ -76,6 +76,7 @@ windows = { version = "0.62", features = [
     "Win32_Devices_Display",
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D_Fxc",
     "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
@@ -91,6 +92,7 @@ windows = { version = "0.62", features = [
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_System_Variant",
+    "Win32_UI_HiDpi",
     "Win32_UI_Shell",
 ] }
 # The `#[implement]` of src/audio/apps.rs names it; the version `windows`

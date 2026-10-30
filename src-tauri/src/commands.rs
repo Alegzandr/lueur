@@ -65,6 +65,8 @@ pub struct EffectStatus {
     pub elsewhere: Vec<Elsewhere>,
     /// The music plays but its sound source is away, and it waits for it.
     pub music_waiting: bool,
+    /// The ambilight reads an HDR screen, its colours brought back to SDR.
+    pub hdr: bool,
 }
 
 /// A room light whose bulb something else drives.
@@ -119,6 +121,7 @@ fn status(state: &AppState) -> EffectStatus {
         reconnecting,
         elsewhere,
         music_waiting: state.effects.waiting_for_sound(),
+        hdr: state.effects.hdr(),
         running: !groups.is_empty(),
         connected_lights: groups.iter().map(|g| g.2).sum(),
         mode: match groups.as_slice() {

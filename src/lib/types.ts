@@ -328,6 +328,8 @@ export interface EffectStatus {
   elsewhere: Elsewhere[];
   /** The music plays but its sound source is away, and it waits for it. */
   music_waiting: boolean;
+  /** The ambilight reads an HDR screen, its colours brought back to SDR. */
+  hdr: boolean;
 }
 
 export interface PowerResult {

@@ -1,6 +1,6 @@
 //! Opening a stream to every light an effect drives, all at once.
 
-use super::{ConnectedLight, links_changed};
+use super::{ConnectedLight, status_changed};
 use crate::devices;
 use crate::error::{AppError, AppResult};
 use lueur_core::config::AppConfig;
@@ -96,7 +96,7 @@ pub(super) fn connect(
     let mut light_ids = Vec::new();
     let mut failed = Vec::new();
     let mut details = Vec::new();
-    let changed: OnChange = Arc::new(links_changed);
+    let changed: OnChange = Arc::new(status_changed);
     for ((((mapping, binding, light, siblings), result), open), gate) in
         targets.into_iter().zip(opened).zip(openers).zip(gates)
     {
