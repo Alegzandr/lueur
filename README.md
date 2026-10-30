@@ -35,6 +35,10 @@ one across the room glows softly with the whole scene. On Windows the
 Ambilight turns on by itself when a game or a video goes fullscreen, and
 gives every light back what it was showing when it ends.
 
+HDR screens are supported on Windows. The Ambilight reads the colours as
+Windows composes them, so they don't come out washed out and a dark scene
+stays dark, with nothing to set ([details below](#4-start)).
+
 When you aren't playing, the same window runs effects (Music, which plays
 the track on your lights like a stage, Rainbow, Sunset, Ocean and Candle)
 and moods (Natural light, Daylight, Reading, Relax and Night light), on the
