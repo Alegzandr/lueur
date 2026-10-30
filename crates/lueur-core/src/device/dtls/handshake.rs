@@ -373,7 +373,9 @@ impl<'a> Handshake<'a> {
         let mut out = handshake_header(msg_type, self.message_seq, body.len()).to_vec();
         out.extend_from_slice(body);
         self.transcript.update(&out);
-        self.message_seq += 1;
+        // Wraps rather than panics: only a peer resending its cookie request
+        // tens of thousands of times gets it this far.
+        self.message_seq = self.message_seq.wrapping_add(1);
         out
     }
 

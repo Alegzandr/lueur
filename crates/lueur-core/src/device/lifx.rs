@@ -4,7 +4,7 @@
 //! brightness, kelvin), with a transition time per command, so the bulb does
 //! its own interpolation between frames.
 
-use super::common::{LastSent, REFRESH, Throttle, broadcast_targets, rgb_to_hsv, udp_to};
+use super::common::{LastSent, REFRESH, Throttle, broadcast_targets, is_lan, rgb_to_hsv, udp_to};
 use super::wire::Wire;
 use super::{
     DeviceKind, DiscoveredDevice, LightStream, REST_BRIGHT, REST_KELVIN, group_zones, zone_output,
@@ -399,7 +399,9 @@ pub fn discover(timeout: Duration) -> io::Result<Vec<DiscoveredDevice>> {
     let mut buf = [0u8; 1024];
     while Instant::now() < deadline {
         match socket.recv_from(&mut buf) {
-            Ok((n, SocketAddr::V4(from))) => {
+            // Nothing is sent back to an address outside the home, whatever
+            // a datagram claims to come from.
+            Ok((n, SocketAddr::V4(from))) if is_lan(*from.ip()) => {
                 let Some((msg_type, mac, payload)) = parse_frame(&buf[..n]) else {
                     continue;
                 };

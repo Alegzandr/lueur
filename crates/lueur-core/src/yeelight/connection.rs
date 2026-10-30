@@ -24,6 +24,10 @@ use std::time::Duration;
 
 static COMMAND_ID: AtomicU32 = AtomicU32::new(1);
 
+/// How long a bulb has to say whether it is in music mode. A bulb answers
+/// in a few milliseconds; past this, it is taken as not saying.
+const MUSIC_ON_WAIT: Duration = Duration::from_millis(1500);
+
 fn next_id() -> u32 {
     COMMAND_ID.fetch_add(1, Ordering::Relaxed)
 }
@@ -69,10 +73,13 @@ impl YeelightControl {
     pub fn music_on(&mut self) -> io::Result<bool> {
         let id = next_id();
         self.send_line(&protocol::get_prop(id, &["music_on"]))?;
-        // Notifications may come first; the reply is a line of its own.
+        // Notifications may come first; the reply is a line of its own. One
+        // deadline for the whole answer: a bulb, or something posing as one,
+        // that trickles a byte at a time must not hold every light's start.
+        let deadline = std::time::Instant::now() + MUSIC_ON_WAIT;
         let mut seen = Vec::new();
         let mut buf = [0u8; 512];
-        while seen.len() < 4096 {
+        while seen.len() < 4096 && std::time::Instant::now() < deadline {
             let n = self.stream.read(&mut buf)?;
             if n == 0 {
                 break;
@@ -201,17 +208,19 @@ impl MusicConnection {
                 // Only the bulb itself may take the music channel; anyone
                 // else on the LAN who connects first is turned away.
                 Ok((s, peer)) if peer.ip() == IpAddr::V4(bulb) => break s,
-                Ok(_) => continue,
+                Ok(_) => {}
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    if std::time::Instant::now() >= deadline {
-                        return Err(io::Error::new(
-                            io::ErrorKind::TimedOut,
-                            "bulb did not open music connection in time",
-                        ));
-                    }
                     std::thread::sleep(Duration::from_millis(10));
                 }
                 Err(e) => return Err(e),
+            }
+            // Checked after every connection too: a stream of strangers
+            // connecting must not keep the wait from ending.
+            if std::time::Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "bulb did not open music connection in time",
+                ));
             }
         };
 

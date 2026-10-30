@@ -30,6 +30,9 @@ const POLL: Duration = Duration::from_millis(100);
 /// How often the broadcast addresses are worked out again (the PC may
 /// change networks).
 const RETARGET: Duration = Duration::from_secs(30);
+/// The interface hears that another computer took or let go of a bulb at
+/// most this often, however many announcements arrive.
+const NOTIFY_GAP: Duration = Duration::from_millis(250);
 
 /// Talk with the other instances for as long as the app runs.
 pub fn spawn(app: &AppHandle) {
@@ -73,6 +76,7 @@ fn run(app: &AppHandle) {
     let mut targets: Vec<Ipv4Addr> = Vec::new();
     let mut targeted: Option<Instant> = None;
     let mut seen = leases.version();
+    let mut notified: Option<Instant> = None;
     loop {
         match socket.recv_from(&mut buf) {
             Ok((n, SocketAddr::V4(from))) if n <= lease::MAX_DATAGRAM && is_lan(*from.ip()) => {
@@ -102,8 +106,10 @@ fn run(app: &AppHandle) {
             send(&socket, &targets, &a);
         }
         let version = leases.version();
-        if version != seen {
+        // A change held back by the gap goes out on a later pass.
+        if version != seen && notified.is_none_or(|t| t.elapsed() >= NOTIFY_GAP) {
             seen = version;
+            notified = Some(Instant::now());
             let _ = app.emit(tray::EFFECT_CHANGED, None::<AppError>);
         }
     }

@@ -310,7 +310,13 @@ pub fn pair(ip: &str, known: &[HueBridge]) -> io::Result<HueBridge> {
         .iter()
         .find(|b| b.id == id && !b.cert.is_empty())
         .map(|b| b.cert.as_str());
-    let cert = pairing_cert(learn_cert(ip, &id), pinned, model)
+    let learned = learn_cert(ip, &id);
+    // The model came over HTTP, which anyone in the path can rewrite: it
+    // counts only if the bridge truly has no HTTPS, its port closed at
+    // once. A port that times out or a TLS that fails may be someone
+    // blocking it to get the username sent in the clear.
+    let model = model.filter(|_| learned.is_none() && tls_refused(ip));
+    let cert = pairing_cert(learned, pinned, model)
         .map_err(|r| io::Error::new(io::ErrorKind::PermissionDenied, r))?;
     // The streaming key comes with the username or never: only HTTPS
     // bridges stream, and over TLS it is as safe as the username.
@@ -376,6 +382,19 @@ fn public_config(ip: &str) -> io::Result<Value> {
         })
 }
 
+/// Whether the host at `ip` closes its HTTPS port outright, as a bridge
+/// without HTTPS does.
+fn tls_refused(ip: &str) -> bool {
+    let Ok(addr) = super::common::ipv4(ip) else {
+        return false;
+    };
+    let addr = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(addr, TLS_PORT));
+    matches!(
+        std::net::TcpStream::connect_timeout(&addr, TIMEOUT),
+        Err(e) if e.kind() == io::ErrorKind::ConnectionRefused
+    )
+}
+
 /// The bridge's id from its public config.
 fn bridge_id(ip: &str) -> io::Result<String> {
     config_id(&public_config(ip)?)
@@ -415,17 +434,31 @@ pub fn discover(timeout: Duration, known: &[HueBridge]) -> io::Result<Vec<Discov
     for b in known {
         bridges.entry(b.ip.clone()).or_insert(None);
     }
-    // Every address that answered, with the id it claims.
-    let heard: Vec<(String, String)> = bridges
-        .into_iter()
-        .filter_map(|(ip, id)| {
-            let id = match id {
-                Some(id) => id,
-                None => bridge_id(&ip).ok()?,
-            };
-            Some((ip, id))
-        })
-        .collect();
+    // Every address that answered, with the id it claims. Those that did
+    // not say are asked all at once, so a few silent hosts cost one wait,
+    // not one each.
+    let heard: Vec<(String, String)> = std::thread::scope(|scope| {
+        let asks: Vec<_> = bridges
+            .into_iter()
+            .map(|(ip, id)| {
+                let ask = id.is_none().then(|| {
+                    let ip = ip.clone();
+                    scope.spawn(move || bridge_id(&ip).ok())
+                });
+                (ip, id, ask)
+            })
+            .collect();
+        asks.into_iter()
+            .filter_map(|(ip, id, ask)| {
+                let id = match (id, ask) {
+                    (Some(id), _) => id,
+                    (None, Some(ask)) => ask.join().ok()??,
+                    (None, None) => return None,
+                };
+                Some((ip, id))
+            })
+            .collect()
+    });
 
     let mut out = Vec::new();
     for (ip, id) in &heard {

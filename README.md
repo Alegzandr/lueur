@@ -306,7 +306,9 @@ others in coarser steps.
 - **Backup.** **Settings → Configuration** exports your setup to a file and
   imports it back, to keep a copy or move to another computer. The file holds
   no password or key, so it is safe to share; on another computer, pair the
-  bridges and import Smart Life again.
+  bridges and import Smart Life again. An import keeps the pairings already
+  made on this computer, and if the photosensitivity protection is on here,
+  it stays on.
 
 ## How the room mapping works
 

@@ -284,7 +284,8 @@ pub async fn export_config(app: AppHandle) -> AppResult<bool> {
 ///
 /// Whether Lueur opens at login stays this computer's: it mirrors the OS
 /// login item, which an import does not touch. So do its pairings; those an
-/// older export carries are added to them.
+/// older export carries are added to them. The photosensitivity protection
+/// stays on if it was.
 #[tauri::command]
 pub async fn import_config(app: AppHandle) -> AppResult<Option<AppConfig>> {
     let handle = app.clone();
@@ -313,6 +314,9 @@ pub async fn import_config(app: AppHandle) -> AppResult<Option<AppConfig>> {
     {
         let mut guard = state.lock_config()?;
         config.behavior.run_on_startup = guard.behavior.run_on_startup;
+        // A file may turn the photosensitivity protection on, never off:
+        // someone else's setup must not take it away without a word.
+        config.safety.flash_guard |= guard.safety.flash_guard;
         let mut pairings = guard.pairings.clone();
         secrets::merge_pairings(&mut pairings, std::mem::take(&mut config.pairings));
         config.pairings = pairings;

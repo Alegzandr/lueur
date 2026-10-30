@@ -245,23 +245,28 @@ fn move_pairings(pairings: &mut Pairings, found: &[DiscoveredDevice]) -> bool {
 
 /// Add what `imported` was granted to `pairings`, for exports made before
 /// credentials were left out of them. Entries without a credential are
-/// skipped; an imported one replaces this computer's for the same device.
+/// skipped, and so is any device this computer is already paired with: a
+/// file, which anyone can write, never replaces a pairing made here, nor the
+/// certificate pinned with it.
 pub fn merge_pairings(pairings: &mut Pairings, imported: Pairings) {
     for h in imported.hue.into_iter().filter(|h| !h.username.is_empty()) {
-        pairings.hue.retain(|x| x.id != h.id);
-        pairings.hue.push(h);
+        if !pairings.hue.iter().any(|x| x.id == h.id) {
+            pairings.hue.push(h);
+        }
     }
     for n in imported
         .nanoleaf
         .into_iter()
         .filter(|n| !n.token.is_empty())
     {
-        pairings.nanoleaf.retain(|x| x.id != n.id);
-        pairings.nanoleaf.push(n);
+        if !pairings.nanoleaf.iter().any(|x| x.id == n.id) {
+            pairings.nanoleaf.push(n);
+        }
     }
     for t in imported.tuya.into_iter().filter(|t| !t.key.is_empty()) {
-        pairings.tuya.retain(|x| x.id != t.id);
-        pairings.tuya.push(t);
+        if !pairings.tuya.iter().any(|x| x.id == t.id) {
+            pairings.tuya.push(t);
+        }
     }
 }
 
@@ -395,6 +400,18 @@ mod tests {
             cert: String::new(),
             clientkey: String::new(),
         });
+        merge_pairings(&mut here, imported);
+        assert_eq!(here, pairings());
+    }
+
+    #[test]
+    fn an_import_never_replaces_a_pairing_made_here() {
+        let mut here = pairings();
+        let mut imported = pairings();
+        imported.hue[0].username = "forged".into();
+        imported.hue[0].cert = String::new();
+        imported.nanoleaf[0].token = "forged".into();
+        imported.tuya[0].key = "forged".into();
         merge_pairings(&mut here, imported);
         assert_eq!(here, pairings());
     }

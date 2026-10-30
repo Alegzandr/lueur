@@ -57,6 +57,10 @@ const MAX_CLAIMS: usize = 128;
 const MAX_PEERS: usize = 32;
 /// The longest computer name shown, in characters.
 const MAX_HOST: usize = 48;
+/// The highest `round` a claim may carry. Each *Take over* adds one, so no
+/// house gets near it; a claim above it is forged, sent to sit where no
+/// other computer's next round could ever outrank it.
+const MAX_ROUND: u32 = 1 << 20;
 
 /// One bulb an instance drives.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,7 +105,11 @@ impl Announce {
         if a.lueur != PROTOCOL || !fits(&a.id, 64) || a.claims.len() > MAX_CLAIMS {
             return None;
         }
-        if !a.claims.iter().all(|c| fits(&c.device, 128)) {
+        if !a
+            .claims
+            .iter()
+            .all(|c| fits(&c.device, 128) && c.round <= MAX_ROUND)
+        {
             return None;
         }
         a.host = clean_host(&a.host);
@@ -110,14 +118,30 @@ impl Announce {
 }
 
 /// A computer name fit to show: printable characters only, trimmed, cut
-/// to [`MAX_HOST`].
+/// to [`MAX_HOST`]. Invisible formatting characters go too, so a name cannot
+/// turn the text around it backwards.
 pub fn clean_host(name: &str) -> String {
     name.chars()
-        .filter(|c| !c.is_control())
+        .filter(|c| !c.is_control() && !is_format(*c))
         .take(MAX_HOST)
         .collect::<String>()
         .trim()
         .to_string()
+}
+
+/// Whether `c` is one of the invisible formatting characters that matter in
+/// a name: direction marks and overrides, zero-width characters, the byte
+/// order mark.
+fn is_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{061C}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{FEFF}'
+    )
 }
 
 /// Something else drives the bulb, so a stream that asked politely was not
@@ -299,16 +323,19 @@ impl Table {
         if a.id == self.me {
             return;
         }
-        if !self.peers.contains_key(&a.id)
-            && self.peers.len() >= MAX_PEERS
-            && let Some(oldest) = self
-                .peers
-                .iter()
-                .min_by_key(|(_, p)| p.heard)
-                .map(|(id, _)| id.clone())
-        {
-            self.peers.remove(&oldest);
-            self.version += 1;
+        // A full table makes room only by forgetting who fell silent: a flood
+        // of new names must not push out a computer still driving a bulb,
+        // which would then share it with us.
+        if !self.peers.contains_key(&a.id) && self.peers.len() >= MAX_PEERS {
+            let before = self.peers.len();
+            self.peers
+                .retain(|_, p| now.saturating_duration_since(p.heard) <= EXPIRY);
+            if self.peers.len() != before {
+                self.version += 1;
+            }
+            if self.peers.len() >= MAX_PEERS {
+                return;
+            }
         }
         let same = self
             .peers
@@ -553,6 +580,13 @@ mod tests {
         assert!(Announce::decode(&flood.encode()).is_none());
         assert!(Announce::decode(&vec![b' '; MAX_DATAGRAM + 1]).is_none());
         assert_eq!(clean_host(&"x".repeat(200)).chars().count(), MAX_HOST);
+        assert_eq!(clean_host("Salon\u{202E}gnp.exe\u{200B}"), "Salongnp.exe");
+        // A round no take-over reaches sits out of everyone's reach: forged.
+        let mut stuck = a.clone();
+        stuck.claims[0].round = MAX_ROUND + 1;
+        assert!(Announce::decode(&stuck.encode()).is_none());
+        stuck.claims[0].round = MAX_ROUND;
+        assert!(Announce::decode(&stuck.encode()).is_some());
     }
 
     #[test]
@@ -742,6 +776,22 @@ mod tests {
             );
         }
         assert_eq!(a.peers.len(), MAX_PEERS);
+        // The first ones heard are still there: newcomers did not push them out.
+        assert!(a.peers.contains_key("p0"));
+        assert!(!a.peers.contains_key(&format!("p{MAX_PEERS}")));
+        // Once they fall silent, their places go to whoever speaks next.
+        let later = t0 + EXPIRY + ms(100);
+        a.hear(
+            Announce {
+                lueur: PROTOCOL,
+                id: "late".into(),
+                host: String::new(),
+                claims: Vec::new(),
+            },
+            later,
+        );
+        assert_eq!(a.peers.len(), 1);
+        assert!(a.peers.contains_key("late"));
     }
 
     #[test]

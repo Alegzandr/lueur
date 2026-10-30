@@ -60,7 +60,9 @@ pub fn browse(service: &str, timeout: Duration) -> io::Result<Vec<Instance>> {
             Ok((n, from)) => {
                 let IpAddr::V4(src) = from.ip() else { continue };
                 for inst in parse_response(&buf[..n], service, src) {
-                    found.insert(inst.ip.clone(), inst);
+                    if found.len() < MAX_INSTANCES || found.contains_key(&inst.ip) {
+                        found.insert(inst.ip.clone(), inst);
+                    }
                 }
             }
             Err(e)
@@ -76,6 +78,9 @@ pub fn browse(service: &str, timeout: Duration) -> io::Result<Vec<Instance>> {
 const ASK_AGAIN: Duration = Duration::from_secs(1);
 /// The least time left for an answer to be worth asking again.
 const HEAR_BACK: Duration = Duration::from_millis(300);
+/// The most devices one search keeps. A home has far fewer of one kind; a
+/// flood of forged answers stops here, before each is probed in turn.
+const MAX_INSTANCES: usize = 32;
 
 /// Send `query` twice on every interface in `interfaces`, or on the default
 /// route's when none would take it.

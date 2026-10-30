@@ -1,12 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for Lueur's main window. Kept minimal: window control (the title bar is drawn by the page on Windows), tray and autostart only. All device/network work goes through the app's own vetted commands, which need no extra permission.",
+  "description": "Capabilities for Lueur's main window. Kept minimal: events from the shell, window control (the title bar is drawn by the page on Windows) and the app's version. Opening at login goes through the app's own command, so the page holds no autostart, tray or menu permission. All device/network work goes through the app's own vetted commands, which need no extra permission.",
   "windows": [
     "main"
   ],
   "permissions": [
-    "core:default",
+    "core:event:default",
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-focus",
@@ -17,7 +17,6 @@
     "core:window:allow-internal-toggle-maximize",
     "core:window:allow-is-maximized",
     "core:window:allow-start-dragging",
-    "core:app:allow-version",
-    "autostart:default"
+    "core:app:allow-version"
   ]
 }
