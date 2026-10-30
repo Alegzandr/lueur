@@ -33,11 +33,14 @@ it, with no cloud once a bulb is set up. Each light has its power,
 brightness, white and colour, here or in the tray menu, and is called by
 its name, never by its address.
 
-Moods (Natural light, which follows the time of day, Daylight, Reading,
-Relax and Night light) and effects (Music, which plays the track on your
-lights like a stage, Rainbow, Sunset, Ocean and Candle) go to the whole room
-or to the lights you pick. A sleep timer fades everything off at night,
-after a preset or any number of minutes.
+Pick lights on the Lighting page, and what you choose next goes to them: a
+mode, still (Natural light, which follows the time of day, Daylight,
+Reading, Relax and Night light) or animated (Screen, Music, which plays the
+track on your lights like a stage, Rainbow, Sunset, Ocean and Candle), a
+brightness, a white or a colour. Save the whole room as a scene, say Film
+with the TV light on Screen, the kitchen off and the desk on Night light,
+and bring it back in one click. A sleep timer, behind the clock, fades
+everything off at night after a preset or any number of minutes.
 
 The small things are taken care of. Lueur corrects every light for the
 colour of your walls. Quit it, and on most bulbs a light playing Rainbow or
@@ -68,10 +71,10 @@ to date.
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/lighting-light.png">
-        <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: who effects and moods go to, Screen, five effects, five moods with Relax on, a sleep timer and every light with its mood and brightness.">
+        <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: saved scenes and every light as a card with what it does, beside the modes, still and animated, and the brightness of the lights picked.">
       </picture>
-      <p><b>Lighting</b>: adjust each light, pick a mood or an effect,
-      or let the lights follow the screen.</p>
+      <p><b>Lighting</b>: pick lights, give them a mode and a
+      brightness, or bring back a scene you saved.</p>
     </td>
     <td width="50%">
       <picture>

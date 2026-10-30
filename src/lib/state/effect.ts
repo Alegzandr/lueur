@@ -127,7 +127,7 @@ export async function chooseMode(mode: Mode): Promise<void> {
 
 /** Play `mode` on `ids`, in step with every other light playing it, or give
  *  them back to the hand with null. */
-async function moveLights(ids: string[], mode: Mode | null): Promise<void> {
+export async function moveLights(ids: string[], mode: Mode | null): Promise<void> {
   const wasRunning = app.status.running;
   app.status = await ipc.setLightsMode(ids, mode);
   if (!app.status.running) app.startedWith = null;

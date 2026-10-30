@@ -1,12 +1,16 @@
 <script lang="ts">
-  import { app, bindingFor, chooseMode, setAllPower, toggleTarget } from "../state.svelte";
+  import { app, bindingFor, chooseMode, isOn, moodTargets, pickedLights, setAllPower } from "../state.svelte";
   import { t, tn } from "../i18n";
   import Icon from "../ui/Icon.svelte";
   import RestartBanner from "../ui/RestartBanner.svelte";
-  import Effects from "./lighting/Effects.svelte";
+  import Switch from "../ui/Switch.svelte";
+  import LightDot from "./lighting/LightDot.svelte";
   import Lights from "./lighting/Lights.svelte";
-  import Moods from "./lighting/Moods.svelte";
-  import Sleep from "./lighting/Sleep.svelte";
+  import Modes from "./lighting/Modes.svelte";
+  import Scenes from "./lighting/Scenes.svelte";
+  import SleepButton from "./lighting/SleepButton.svelte";
+  import Tune from "./lighting/Tune.svelte";
+  import { summaryOf } from "./lighting/modes";
 
   const lights = $derived(app.config.room.lights);
   const bound = $derived(app.config.bindings.length);
@@ -22,28 +26,47 @@
   ]);
   const next = $derived(steps.findIndex((s) => !s.done));
 
-  // --- Where effects and moods go ---
+  /** One switch for the whole room: on while any light gives light. */
+  const anyOn = $derived(app.config.bindings.some((b) => isOn(b.light_id)));
+
+  // --- Where the settings go ---
 
   /** The lights that can be picked: those with a bulb. */
   const pickable = $derived(lights.filter((l) => bindingFor(l.id)));
   const wholeRoom = $derived(!app.target.some((id) => bindingFor(id)));
-  /** What the lights picked are called, shown by the effects and moods. */
+  /** What the lights picked are called, over the settings. */
   const targetName = $derived.by(() => {
-    if (wholeRoom) return null;
+    if (wholeRoom) return pickable.length === 1 ? pickable[0].name : t("whole_room");
     const picked = pickable.filter((l) => app.target.includes(l.id));
     return picked.length === 1 ? picked[0].name : tn("n_lights", picked.length);
   });
+  /** The lights the settings go to, and what they do now. */
+  const targetIds = $derived(moodTargets());
+  const summary = $derived(summaryOf(targetIds));
+  /** The one light the settings go to, if there is one. */
+  const single = $derived.by(() => {
+    const picked = pickedLights();
+    if (picked) return picked.length === 1 ? picked[0] : null;
+    return pickable.length === 1 ? pickable[0].id : null;
+  });
 </script>
 
-<div class="page">
+<div class="page lighting">
   <header class="page-head">
     <h1 class="page-title">{t("nav_lighting")}</h1>
     {#if bound > 0}
-      <div class="btn-group">
-        <button class="btn" disabled={app.busy} onclick={() => setAllPower(true)}>{t("all_on")}</button>
-        <button class="btn" disabled={app.busy} title={t("all_off_tip")} onclick={() => setAllPower(false)}>
-          {t("all_off")}
-        </button>
+      <div class="head-tools">
+        <SleepButton />
+        <!-- svelte-ignore a11y_label_has_associated_control: the switch is a button labelled by its own aria-label -->
+        <label class="master" title={anyOn ? t("all_off_tip") : undefined}>
+          <span aria-hidden="true">{t("all_lights")}</span>
+          <Switch
+            checked={anyOn}
+            label={t("all_lights")}
+            disabled={app.busy}
+            onchange={(on) => setAllPower(on)}
+          />
+        </label>
       </div>
     {/if}
   </header>
@@ -71,34 +94,36 @@
     </section>
   {/if}
 
-  {#if pickable.length > 1}
-    <section class="group">
-      <div class="group-head"><h2 class="group-title" title={t("apply_to_tip")}>{t("apply_to")}</h2></div>
-      <!-- Who the effects and moods go to, not what plays: a neutral edge and
-           a tick, never the amber of something running. -->
-      <div class="targets" role="group" aria-label={t("apply_to")}>
-        <button class="chip target" class:picked={wholeRoom} aria-pressed={wholeRoom} onclick={() => (app.target = [])}>
-          <span class="tick" aria-hidden="true">{#if wholeRoom}<Icon name="check" size={10} />{/if}</span>
-          {t("whole_room")}
-        </button>
-        {#each pickable as l (l.id)}
-          {@const picked = !wholeRoom && app.target.includes(l.id)}
-          <button class="chip target" class:picked aria-pressed={picked} onclick={() => toggleTarget(l.id)}>
-            <span class="tick" aria-hidden="true">{#if picked}<Icon name="check" size={10} />{/if}</span>
-            {l.name}
-          </button>
-        {/each}
-      </div>
-    </section>
-  {/if}
-
-  {#if bound > 0}
-    <Effects {targetName} />
-    <Moods {targetName} />
-    <Sleep />
-  {/if}
-
-  <Lights {pickable} {wholeRoom} />
+  <!-- Lights and scenes on one side, what to do with the lights picked on
+       the other, side by side when the window is wide enough. -->
+  <div class="layout">
+    <div class="col">
+      {#if bound > 0}<Scenes />{/if}
+      <Lights {pickable} {wholeRoom} />
+    </div>
+    {#if bound > 0}
+      <!-- One heading says who the settings go to; the sections under it
+           need not say it again. -->
+      <section class="col side" aria-labelledby="selection-name">
+        <header class="selection">
+          <span class="dots" aria-hidden="true">
+            {#each targetIds.slice(0, 5) as id (id)}<LightDot {id} size={22} edge />{/each}
+          </span>
+          <div class="selection-text">
+            <h2 class="selection-name" id="selection-name">{targetName}</h2>
+            {#if summary}
+              <p class="selection-now" class:live={summary.live}>
+                {#if summary.live}<span class="lamp" aria-hidden="true"></span>{/if}
+                <span class="sr-only">{t("mode_now")}</span>{summary.text}
+              </p>
+            {/if}
+          </div>
+        </header>
+        <Modes />
+        <Tune {single} />
+      </section>
+    {/if}
+  </div>
 </div>
 
 <style>
@@ -168,46 +193,95 @@
     font-weight: 500;
   }
 
-  /* --- Where effects and moods go --- */
-  .chip {
-    display: inline-flex;
+  .head-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+  }
+  .master {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    font-weight: 500;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+
+  /* --- Who the settings go to --- */
+  .selection {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    min-height: 44px;
+    margin-bottom: var(--s-5);
+  }
+  .dots {
+    display: flex;
+    flex: none;
+  }
+  .dots > :global(* + *) {
+    margin-left: -7px;
+  }
+  .selection-text {
+    min-width: 0;
+  }
+  /* On the lights' glow, like the section titles: a halo of the page's
+     ground under the letters keeps them readable. */
+  .selection-name {
+    font-size: var(--t-lg);
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-shadow:
+      0 0 2px var(--bg),
+      0 0 6px var(--bg),
+      0 0 14px var(--bg);
+  }
+  .selection-now {
+    display: flex;
     align-items: center;
     gap: 6px;
-    height: 28px;
-    padding: 0 var(--s-3) 0 var(--s-2);
-    border-radius: 999px;
-    background: var(--surface);
-    box-shadow: var(--card-edge);
+    margin: 0;
     font-size: var(--t-sm);
+    color: var(--text-2);
+    text-shadow:
+      0 0 2px var(--bg),
+      0 0 6px var(--bg);
+  }
+  .selection-now.live {
+    color: var(--glow-text);
     font-weight: 500;
-    white-space: nowrap;
-    transition: box-shadow 200ms var(--ease);
   }
-  .chip:hover {
-    background: var(--surface-hover);
+  .selection-now .lamp {
+    --lamp: 6px;
   }
-  /* Picked: a neutral edge and a tick, like a checkbox. */
-  .chip.picked {
-    background: var(--select-soft);
-    box-shadow: inset 0 0 0 1.5px var(--select);
+
+  /* Wider than the other pages: two columns once the window has the room. */
+  .page.lighting {
+    max-width: 1240px;
   }
-  .tick {
-    width: 14px;
-    height: 14px;
-    flex: none;
-    display: grid;
-    place-items: center;
-    border-radius: 50%;
-    box-shadow: inset 0 0 0 1.5px var(--control-line);
+  .col {
+    min-width: 0;
   }
-  .picked .tick {
-    background: var(--select);
-    box-shadow: none;
-    color: var(--on-ink);
+  .group + .layout,
+  .layout > .col + .col {
+    margin-top: var(--s-6);
   }
-  .targets {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s-1);
+  .layout .col > :global(.group + .group) {
+    margin-top: var(--s-6);
+  }
+  @media (min-width: 1200px) {
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(340px, 5fr) minmax(0, 7fr);
+      align-items: start;
+      gap: var(--s-7);
+    }
+    .layout > .col + .col {
+      margin-top: 0;
+    }
   }
 </style>

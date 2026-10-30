@@ -102,6 +102,15 @@ export function toggleTarget(lightId: string): void {
   app.target = app.config.bindings.every((b) => ids.includes(b.light_id)) ? [] : ids;
 }
 
+/** How bright a light is, 1..=100: as set by hand, or the brightness of the
+ *  effect it plays, which every light playing it shares. */
+export function brightOf(lightId: string): number {
+  const mode = modeOf(lightId);
+  if (mode === "ambilight") return Math.round(app.config.engine.brightness * 100);
+  if (mode) return app.config.show.bright;
+  return lightState(lightId).bright;
+}
+
 /** True while some light plays `mode`. */
 export function isPlaying(mode: Mode): boolean {
   return app.status.groups.some((g) => g.mode === mode);

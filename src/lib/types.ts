@@ -250,6 +250,22 @@ export interface AppConfig {
    *  owns it. */
   modes?: Record<string, Mode>;
   safety: SafetySettings;
+  /** The whole room as the user saved it, to bring back in one click. */
+  scenes: SavedScene[];
+}
+
+/** What one light did in a saved scene (see lueur-core config.rs). */
+export type SceneLight =
+  | { kind: "mode"; mode: Mode }
+  | { kind: "natural" }
+  | { kind: "hand"; state: LightState };
+
+/** The whole room as the user saved it: what each light did then. */
+export interface SavedScene {
+  id: string;
+  name: string;
+  /** By room light id. A light added since has no entry and is left alone. */
+  lights: Record<string, SceneLight>;
 }
 
 /** A running sleep timer. */
@@ -387,5 +403,6 @@ export function defaultConfig(): AppConfig {
     audio: { kind: "default" },
     natural: [],
     safety: { flash_guard: true },
+    scenes: [],
   };
 }

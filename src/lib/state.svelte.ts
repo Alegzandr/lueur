@@ -8,6 +8,7 @@
 export { app, type Pairing, type Toast, type TuyaFlow, type View } from "./state/app.svelte";
 export {
   bindingFor,
+  brightOf,
   drivenElsewhere,
   effectTargets,
   endpointOf,
@@ -41,9 +42,11 @@ export {
   identifyLight,
   reloadStates,
   setAllPower,
+  setBrightness,
   setLightPower,
   toggleLightPower,
 } from "./state/lights";
+export { deleteScene, recallScene, saveScene, sceneNamed, showsScene } from "./state/scenes.svelte";
 export {
   PAIR_WINDOW_MS,
   addReadyTuya,

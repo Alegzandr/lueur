@@ -45,6 +45,7 @@ function normalized(cfg: AppConfig): AppConfig {
   const def = defaultConfig();
   cfg.interface = { ...def.interface, ...cfg.interface };
   cfg.states ??= {};
+  cfg.scenes ??= [];
   cfg.show = { ...def.show, ...cfg.show };
   return cfg;
 }

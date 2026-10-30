@@ -1,7 +1,6 @@
 <script lang="ts">
   import { app, setSleepTimer } from "../../state.svelte";
   import { t } from "../../i18n";
-  import Row from "../../ui/Row.svelte";
   import Icon from "../../ui/Icon.svelte";
 
   /** The durations offered at a click, in minutes. Any other is typed. */
@@ -61,6 +60,34 @@
   // `awake.rs` and `lib.rs`). Shutting the computer down still stops it.
   const staysOpen = $derived(!app.config.behavior.minimize_to_tray);
 
+  let open = $state(false);
+  let root = $state<HTMLElement>();
+  let trigger = $state<HTMLButtonElement>();
+  const panelId = $props.id();
+
+  /** Close the panel and give the keyboard back to the clock. */
+  function close() {
+    open = false;
+    typing = false;
+    trigger?.focus();
+  }
+
+  // The panel's first control takes the keyboard as it opens, and only
+  // then: a timer set from the tray while it is open steals nothing.
+  let opening = false;
+
+  function toggle() {
+    opening = !open;
+    open = !open;
+  }
+
+  function focusOnOpen(node: HTMLElement, first = true) {
+    if (first && opening) {
+      opening = false;
+      node.focus();
+    }
+  }
+
   function focusOnMount(node: HTMLInputElement) {
     node.focus();
     node.select();
@@ -74,18 +101,45 @@
   }
 </script>
 
-<!-- The timer is for bedtime: it puts the whole room out, whatever
-     "Apply to" picks (the tray sets it too, with no pick to follow). -->
-<section class="group">
-  <div class="group-head">
-    <h2 class="group-title">
-      {t("sleep_timer")}<span class="for">{` · ${t("whole_room")}`}</span>
-    </h2>
-  </div>
-  <div class="card rows">
-    <Row label={sleepLabel} tip={t("sleep_timer_tip")}>
+<!-- The timer is for bedtime: it puts the whole room out, whatever is
+     picked (the tray sets it too, with no pick to follow). An occasional
+     tool, so it waits behind a clock in the page's head. -->
+<div class="sleep" bind:this={root}>
+  <button
+    type="button"
+    class="btn plain sm trigger"
+    aria-expanded={open}
+    aria-controls={panelId}
+    title={t("sleep_timer")}
+    aria-label={sleepLeft === null ? t("sleep_timer") : `${t("sleep_timer")}: ${sleepLabel}`}
+    bind:this={trigger}
+    onclick={toggle}
+  >
+    <Icon name="clock" size={15} />
+    {#if sleepLeft !== null}
+      <span class="num left" aria-hidden="true">{sleepLeft <= 60 ? "<1" : Math.ceil(sleepLeft / 60)} min</span>
+    {/if}
+  </button>
+
+  {#if open}
+    <div
+      class="panel"
+      id={panelId}
+      role="dialog"
+      aria-label={t("sleep_timer")}
+      tabindex="-1"
+      onkeydown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          close();
+        }
+      }}
+    >
+      <p class="title">{sleepLabel}</p>
       {#if app.sleep}
-        <button type="button" class="btn sm" use:focusIfFollowing={"cancel"} onclick={cancel}>{t("sleep_cancel")}</button>
+        <button type="button" class="btn sm" use:focusIfFollowing={"cancel"} use:focusOnOpen onclick={cancel}
+          >{t("sleep_cancel")}</button
+        >
       {:else if typing}
         <form
           class="custom"
@@ -125,8 +179,12 @@
       {:else}
         <div class="btn-group" role="group" aria-label={t("sleep_timer")}>
           {#each SLEEP_PRESETS as m, i (m)}
-            <button type="button" class="btn sm num" use:focusIfFollowing={i === 0 ? "presets" : null} onclick={() => start(m)}
-              >{m} min</button
+            <button
+              type="button"
+              class="btn sm num"
+              use:focusIfFollowing={i === 0 ? "presets" : null}
+              use:focusOnOpen={i === 0}
+              onclick={() => start(m)}>{m} min</button
             >
           {/each}
           <button type="button" class="btn sm" use:focusIfFollowing={"other"} onclick={() => (typing = true)}
@@ -134,16 +192,71 @@
           >
         </div>
       {/if}
-    </Row>
-    {#if app.sleep}
-      <p class="note-line" role="status">
-        {t("sleep_keep_on")}{#if staysOpen}{` ${t("sleep_stays_open")}`}{/if}
+      <p class="note" role={app.sleep ? "status" : undefined}>
+        {#if app.sleep}
+          {t("sleep_keep_on")}{#if staysOpen}{` ${t("sleep_stays_open")}`}{/if}
+        {:else}
+          {t("sleep_timer_tip")}
+        {/if}
       </p>
-    {/if}
-  </div>
-</section>
+    </div>
+  {/if}
+</div>
+
+<svelte:window
+  onpointerdown={(e) => {
+    if (open && root && !root.contains(e.target as Node)) open = false;
+  }}
+/>
 
 <style>
+  .sleep {
+    position: relative;
+  }
+  .trigger {
+    gap: 5px;
+    color: var(--text-2);
+  }
+  .left {
+    font-size: var(--t-sm);
+    color: var(--text);
+  }
+  .panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 20;
+    width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-4) var(--s-4);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: var(--float);
+    animation: unfold 140ms var(--ease);
+  }
+  @keyframes unfold {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .panel {
+      animation: none;
+    }
+  }
+  .title {
+    margin: 0;
+    font-weight: 600;
+  }
+  /* The panel stacks its parts; a button or a group of them keeps its own
+     width rather than stretching its edge across the panel. */
+  .panel > .btn,
+  .panel > .btn-group {
+    align-self: flex-start;
+  }
   .custom {
     display: flex;
     align-items: center;
@@ -157,10 +270,10 @@
     color: var(--text-2);
     font-size: var(--t-sm);
   }
-  .note-line {
-    padding: var(--s-2) var(--s-4);
+  .note {
+    margin: 0;
     font-size: var(--t-sm);
-    color: var(--text-2);
+    color: var(--text-3);
     line-height: 1.4;
   }
 </style>

@@ -7,7 +7,7 @@ import { dimmedOnly, type RgbTuple } from "../scenes";
 import type { Endpoint, LightState } from "../types";
 import { app } from "./app.svelte";
 import { edit, persistNow, refreshStatus } from "./config.svelte";
-import { bindingFor, endpointOf, isDriven, isOn, lightState, recorded } from "./derived";
+import { bindingFor, endpointOf, isDriven, isOn, lightState, modeOf, recorded } from "./derived";
 import { fail, notify } from "./toasts";
 
 // --- Power ---
@@ -105,6 +105,16 @@ export function adjustLight(lightId: string, patch: Partial<LightState>): void {
     if (!dimmedOnly(now, next)) c.natural = (c.natural ?? []).filter((id) => id !== lightId);
   });
   void send(lightId, next);
+}
+
+/** Set the brightness of `lightIds`, 1..=100: of each light set by hand,
+ *  and of each effect one of them plays (an effect has one brightness, for
+ *  every light playing it). Lights off are turned on. */
+export function setBrightness(lightIds: string[], bright: number): void {
+  const modes = new Set(lightIds.map(modeOf));
+  if (modes.has("ambilight")) edit((c) => (c.engine.brightness = Math.max(0.05, bright / 100)));
+  if ([...modes].some((m) => m !== null && m !== "ambilight")) edit((c) => (c.show.bright = Math.max(5, bright)));
+  for (const id of lightIds) if (modeOf(id) === null) adjustLight(id, { bright });
 }
 
 /** Show what the backend recorded for a light the bulb refused, rather than

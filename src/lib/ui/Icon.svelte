@@ -24,7 +24,8 @@
     | "link"
     | "unlink"
     | "undo"
-    | "redo";
+    | "redo"
+    | "clock";
 </script>
 
 <script lang="ts">
@@ -114,6 +115,9 @@
   {:else if name === "redo"}
     <path d="M12.5 4.5 16 8l-3.5 3.5" />
     <path d="M16 8H8.5a4.5 4.5 0 0 0 0 9H11" />
+  {:else if name === "clock"}
+    <circle cx="10" cy="10" r="7" />
+    <path d="M10 6v4l2.5 2" />
   {/if}
 </svg>
 

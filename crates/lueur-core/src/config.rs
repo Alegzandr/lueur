@@ -223,6 +223,33 @@ pub struct AppConfig {
     /// The photosensitivity protection, which every mode goes through.
     #[serde(default)]
     pub safety: SafetySettings,
+    /// What the user saved of the whole room to bring back in one click,
+    /// in the order they are shown. The interface records and recalls them.
+    #[serde(default)]
+    pub scenes: Vec<SavedScene>,
+}
+
+/// The whole room as the user saved it: what each light did then.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedScene {
+    pub id: String,
+    pub name: String,
+    /// What each light did, by room light id. A light added since has no
+    /// entry, and is left as it is when the scene comes back.
+    #[serde(default)]
+    pub lights: BTreeMap<String, SceneLight>,
+}
+
+/// What one light did in a saved scene.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SceneLight {
+    /// Played the ambilight or a show (its id, as in [`AppConfig::modes`]).
+    Mode { mode: String },
+    /// Followed the time of day.
+    Natural,
+    /// Was set by hand, or switched off.
+    Hand { state: LightState },
 }
 
 /// Stands, while a config is read, for "every light" in an older config's
@@ -267,6 +294,7 @@ impl Default for AppConfig {
             natural_scale: BTreeMap::new(),
             modes: BTreeMap::new(),
             safety: SafetySettings::default(),
+            scenes: Vec::new(),
         }
     }
 }
@@ -384,6 +412,28 @@ mod tests {
     }
 
     #[test]
+    fn saved_scenes_round_trip() {
+        let json = r#"{ "scenes": [{ "id": "s1", "name": "Film", "lights": {
+            "tv": { "kind": "mode", "mode": "ambilight" },
+            "desk": { "kind": "hand", "state": { "on": true, "bright": 20,
+                "tint": { "mode": "white", "kelvin": 2200 } } },
+            "hall": { "kind": "natural" } } }] }"#;
+        let cfg = AppConfig::from_json(json).unwrap();
+        let scene = &cfg.scenes[0];
+        assert_eq!(scene.name, "Film");
+        assert_eq!(
+            scene.lights["tv"],
+            SceneLight::Mode {
+                mode: "ambilight".into()
+            }
+        );
+        assert_eq!(scene.lights["hall"], SceneLight::Natural);
+        assert!(matches!(scene.lights["desk"], SceneLight::Hand { state } if state.bright == 20));
+        let back = AppConfig::from_json(&cfg.to_json().unwrap()).unwrap();
+        assert_eq!(cfg, back);
+    }
+
+    #[test]
     fn missing_fields_take_defaults() {
         // Only a room is provided; everything else should default.
         let json = r#"{ "version": 1 }"#;
@@ -392,6 +442,7 @@ mod tests {
         assert_eq!(cfg.behavior, BehaviorSettings::default());
         assert_eq!(cfg.transition, TransitionSettings::default());
         assert_eq!(cfg.interface.appearance, Appearance::System);
+        assert!(cfg.scenes.is_empty());
     }
 
     #[test]

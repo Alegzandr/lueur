@@ -265,8 +265,11 @@ column sits on the right.
 Pages stack **groups**: a small `text-3` group title, then a card. Groups are
 28px apart. Inside a card, rows are 44px minimum, padded 16px, split by 1px
 hairlines; the control sits on the right in a column of at most 320px or half
-the row. Grids of tiles (effects, moods) use 5 equal columns at 8px gaps, with
-the flagship Screen tile spanning the whole first row.
+the row. The Lighting page is the one exception to the 820px column: up to
+1240px wide, its lights and scenes sit on the left and the settings of the
+lights picked on the right once the window is 1200px wide, one column below
+that. Its mode grids count their columns from the room they have: still
+modes in 3 or 5, animated ones in 3 or 6, at 8px gaps.
 
 Spacing comes from an 8-step scale (4, 8, 12, 16, 20, 28, 40, 56). The window
 is never narrower than 960 × 640, so there are no mobile breakpoints.
@@ -351,11 +354,26 @@ Sidebar items 36px high, 7px radius, icon plus label. Hover fills
 with its icon in Filament Amber. Count badges are grey pills.
 
 ### Effect tile (signature)
-A card holding a colour preview well (`--p` gradient, min 54px) and a name.
-Playing draws a 2px inset ring of Active Amber plus a lamp and the word; a
-partial selection draws a dashed ring. A running preview drifts slowly (6s);
-a pending one breathes. The Screen tile spans the row and shows a small
-monitor whose glow spills onto the wall behind it, desaturated when off.
+A card holding a colour preview well (`--p` gradient, 38px) and a name, and
+nothing else. Playing on every light picked draws a 2px inset ring of Active
+Amber and a lamp before the name; on some of them, a dashed ring, with their
+names on hover. A running
+preview drifts slowly (6s); a pending one breathes. The Screen tile shows a
+small monitor whose glow spills onto the wall behind it, desaturated when off.
+
+Still modes (the moods) take the same tile: their well is the pool of their
+white on a dark wall (`well-night`), as strong as the mood is bright; the
+natural light's is its day, and it spans two columns.
+
+### Light card
+Each light on the Lighting page: a disc of the light it gives (its white or
+colour, fainter as it dims, the gradient of its effect, a hollow ring while
+off, dashed with no bulb), its name, a line saying what it does and how
+bright, and a quiet power button (the disc already says whether it is on).
+Picked, the card takes a neutral ink edge and
+a tick on the disc, never amber. A click anywhere on the card picks it. Over
+the settings beside them, the lights picked are named once, with their discs;
+the sections under that heading carry no title of their own.
 
 ### Lamp dot (signature)
 A 7px Filament Amber dot with a glow of its own size: something giving
