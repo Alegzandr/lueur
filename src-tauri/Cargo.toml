@@ -98,7 +98,7 @@ windows = { version = "0.62", features = [
 ] }
 # The `#[implement]` of src/audio/apps.rs names it; the version `windows`
 # itself uses.
-windows-core = "0.62"
+windows-core = "0.100"
 self-replace = "1.5"
 winreg = "0.56"
 
@@ -111,7 +111,7 @@ libc = "0.2"
 # the portal over D-Bus, its video over PipeWire. The versions xcap already
 # pulls in on Linux, so neither adds a second copy.
 [target.'cfg(target_os = "linux")'.dependencies]
-zbus = "5.17"
+zbus = "6.1"
 pipewire = "0.10"
 
 [dev-dependencies]
