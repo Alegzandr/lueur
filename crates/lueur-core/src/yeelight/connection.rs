@@ -124,6 +124,8 @@ impl YeelightControl {
 pub struct MusicConnection {
     stream: TcpStream,
     sent: Sent,
+    /// Whether the first frame went out, switching the bulb on with it.
+    lit: bool,
     /// Where the trace log says the commands went, once known.
     wire: Option<Wire>,
 }
@@ -165,6 +167,42 @@ impl Sent {
         };
         (bright, mode, next)
     }
+}
+
+/// The commands that take the bulb from `sent` to `output`, as one write,
+/// and the state they leave it in. Until the channel is `lit`, the write
+/// starts by switching the bulb on: a bulb that is off ignores every other
+/// command, so an effect started on a light switched off would play on in
+/// the dark. Opening the channel switches nothing on, so a stream opened
+/// too late, after its effect stopped, leaves the bulb as it was.
+fn batch(
+    sent: Sent,
+    lit: bool,
+    output: BulbOutput,
+    effect: Effect,
+    duration_ms: u32,
+) -> (String, Sent) {
+    let (bright, mode, next) = sent.plan(output);
+    let mut batch = String::new();
+    if !lit {
+        batch.push_str(&protocol::set_power(next_id(), true, effect, duration_ms));
+    }
+    if let Some(b) = bright {
+        batch.push_str(&protocol::set_bright(next_id(), b, effect, duration_ms));
+    }
+    match mode {
+        Some(BulbOutput::Color { rgb, .. }) => {
+            batch.push_str(&protocol::set_rgb(next_id(), rgb, effect, duration_ms))
+        }
+        Some(BulbOutput::White { kelvin, .. }) => batch.push_str(&protocol::set_ct_abx(
+            next_id(),
+            kelvin,
+            effect,
+            duration_ms,
+        )),
+        None => {}
+    }
+    (batch, next)
 }
 
 impl MusicConnection {
@@ -231,6 +269,7 @@ impl MusicConnection {
         Ok(Self {
             stream,
             sent: Sent::default(),
+            lit: false,
             wire: None,
         })
     }
@@ -284,28 +323,13 @@ impl MusicConnection {
     /// command queued here is one the bulb has to work through before it gets
     /// to the next frame, so silence is the lowest-latency command there is.
     pub fn push(&mut self, output: BulbOutput, effect: Effect, duration_ms: u32) -> io::Result<()> {
-        let (bright, mode, next) = self.sent.plan(output);
-        let mut batch = String::new();
-        if let Some(b) = bright {
-            batch.push_str(&protocol::set_bright(next_id(), b, effect, duration_ms));
-        }
-        match mode {
-            Some(BulbOutput::Color { rgb, .. }) => {
-                batch.push_str(&protocol::set_rgb(next_id(), rgb, effect, duration_ms))
-            }
-            Some(BulbOutput::White { kelvin, .. }) => batch.push_str(&protocol::set_ct_abx(
-                next_id(),
-                kelvin,
-                effect,
-                duration_ms,
-            )),
-            None => {}
-        }
+        let (batch, next) = batch(self.sent, self.lit, output, effect, duration_ms);
         if batch.is_empty() {
             return Ok(());
         }
         self.write(&batch)?;
         self.sent = next;
+        self.lit = true;
         Ok(())
     }
 }
@@ -325,6 +349,21 @@ mod tests {
         let (bright, mode, _) = Sent::default().plan(color(RED, 50));
         assert_eq!(bright, Some(50));
         assert_eq!(mode, Some(color(RED, 50)));
+    }
+
+    #[test]
+    fn the_first_frame_switches_the_bulb_on() {
+        let red = color(RED, 50);
+        let (first, sent) = batch(Sent::default(), false, red, Effect::Smooth, 150);
+        // On first: an off bulb would ignore the brightness and the colour.
+        let power = first.find("set_power").expect("no power command");
+        assert!(first.contains("\"on\""));
+        assert!(power < first.find("set_bright").unwrap());
+        assert!(first.contains("set_rgb"));
+        // Once lit, a frame carries only what moved.
+        let (next, _) = batch(sent, true, color(RED, 80), Effect::Smooth, 150);
+        assert!(!next.contains("set_power"));
+        assert!(next.contains("set_bright"));
     }
 
     #[test]
