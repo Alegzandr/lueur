@@ -1,5 +1,5 @@
-//! The column beside the plan, after `src/lib/views/room/Objects.svelte`,
-//! `Inspector.svelte`, `Position.svelte` and `src/lib/ui/ZoneBadge.svelte`.
+//! The column beside the plan: the list of what the room holds, the
+//! inspector of what is selected, its exact position, and the zone badges.
 //!
 //! With nothing selected it lists what the room holds, in the order it is
 //! set up: the lights first, each saying which part of the picture it
@@ -16,15 +16,15 @@ use crate::i18n::{Lang, fill, pct, t};
 use crate::state::View;
 use crate::theme::{Theme, size};
 use crate::ui;
+use crate::views::bulbs::brands::bulb_label;
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, ElementId, FontWeight, Hsla, IntoElement,
     KeyDownEvent, Rgba, Role, SharedString, Stateful, Window, div, prelude::*, px,
 };
 use lueur_core::color::Rgb;
-use lueur_core::config::DeviceBinding;
 use lueur_core::geometry::{Light, LightMapping, ScreenEdge, map_light};
 
-/// The wall paints offered, as `src/lib/scenes.ts` has them.
+/// The wall paints offered.
 const WALLS: [(&str, Rgb); 6] = [
     ("white", Rgb::new(255, 255, 255)),
     ("cream", Rgb::new(250, 240, 215)),
@@ -42,33 +42,6 @@ fn rgb(c: Rgb) -> Hsla {
         a: 1.0,
     }
     .into()
-}
-
-/// The brand names, the same in every language (`src/lib/brands.ts`).
-fn brand(family: &str) -> &'static str {
-    match family {
-        "wiz" => "WiZ",
-        "lifx" => "LIFX",
-        "govee" => "Govee",
-        "hue" => "Philips Hue",
-        "nanoleaf" => "Nanoleaf",
-        "tuya" => "Smart Life",
-        _ => "Yeelight",
-    }
-}
-
-/// A bound bulb as its light describes it: its own name when it says more
-/// than the light's, then its brand and model. Never its address.
-fn bulb_label(b: &DeviceBinding, light_name: &str) -> String {
-    let mut brand = brand(b.kind.family()).to_string();
-    if !b.model.is_empty() {
-        brand = format!("{brand} {}", b.model);
-    }
-    if !b.name.is_empty() && b.name != light_name {
-        format!("{} · {brand}", b.name)
-    } else {
-        brand
-    }
 }
 
 /// The mark of a screen zone: its colour with its letter on it, so the zone
@@ -221,7 +194,7 @@ fn two_lines(name: SharedString, meta: SharedString, name_ink: Hsla, theme: &The
         )
 }
 
-/// A quiet button with an icon, as the Svelte `btn plain sm`.
+/// A quiet, small button with an icon.
 fn plain_button(
     id: impl Into<ElementId>,
     icon: &'static str,
@@ -1016,7 +989,7 @@ impl RoomPage {
                             .text_size(px(size::T_SM))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(theme.text)
-                            .child(bulb_label(b, &light.name)),
+                            .child(bulb_label(b, Some(&light.name))),
                     )
                     .child(
                         ui::button(
@@ -1294,6 +1267,8 @@ fn preview(m: &LightMapping, on: bool, theme: &Theme, colors: &PlanColors, cx: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::views::bulbs::brands::bulb_label;
+    use lueur_core::config::DeviceBinding;
 
     #[test]
     fn a_bulb_is_named_by_its_name_and_brand_never_its_address() {
@@ -1306,12 +1281,12 @@ mod tests {
             name: String::new(),
             kind: Default::default(),
         };
-        assert_eq!(bulb_label(&b, "Desk"), "Yeelight color4");
+        assert_eq!(bulb_label(&b, Some("Desk")), "Yeelight color4");
         b.name = "Desk".into();
-        assert_eq!(bulb_label(&b, "Desk"), "Yeelight color4");
+        assert_eq!(bulb_label(&b, Some("Desk")), "Yeelight color4");
         b.name = "Lamp".into();
-        assert_eq!(bulb_label(&b, "Desk"), "Lamp · Yeelight color4");
-        assert!(!bulb_label(&b, "Desk").contains("192"));
+        assert_eq!(bulb_label(&b, Some("Desk")), "Lamp · Yeelight color4");
+        assert!(!bulb_label(&b, Some("Desk")).contains("192"));
     }
 
     #[test]

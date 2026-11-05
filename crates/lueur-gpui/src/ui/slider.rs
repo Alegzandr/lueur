@@ -1,5 +1,4 @@
-//! A slider that knows its factory default, after `src/lib/ui/Slider.svelte`:
-//! a double-click, or the reset mark that appears once the value drifts,
+//! A slider that knows its factory default: a double-click, or the reset mark that appears once the value drifts,
 //! snaps it back. Dragging, a click on the track, the arrow keys (Shift for
 //! bigger steps), Home and End all move it; screen readers can step it.
 

@@ -1,5 +1,4 @@
-//! The check of devices nothing vouches for, after
-//! `src/lib/ui/DeviceCheck.svelte`: a paired Hue bridge or Nanoleaf
+//! The check of devices nothing vouches for: a paired Hue bridge or Nanoleaf
 //! controller the last search heard where nothing proves it is the one
 //! paired (a new address, or another certificate). Lueur sends it nothing
 //! until the user says it is theirs; see `crates/lueur-shell/src/identity.rs`.

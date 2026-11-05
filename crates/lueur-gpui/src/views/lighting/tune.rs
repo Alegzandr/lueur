@@ -1,4 +1,4 @@
-//! The light the lights picked give, after `lighting/Tune.svelte`: one
+//! The light the lights picked give: one
 //! brightness for all of them, the white or colour of those set by hand,
 //! and for a single light, its identify flash and its place on the plan.
 
@@ -397,8 +397,8 @@ impl LightingPage {
     }
 }
 
-/// A control in a row takes up to half the card, as the Svelte `Row` gives
-/// it.
+/// A control in a row takes up to half the card, so a slider has room to
+/// be dragged with care.
 pub(super) fn row_control(card: f32, control: impl IntoElement) -> gpui::Div {
     div().w(px((card * 0.5).min(320.0))).child(control)
 }

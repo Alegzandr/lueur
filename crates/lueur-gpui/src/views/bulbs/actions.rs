@@ -1,5 +1,4 @@
-//! What the Bulbs page changes in the room, after
-//! `src/lib/state/devices.svelte.ts`: adding lights for bulbs, giving a
+//! What the Bulbs page changes in the room: adding lights for bulbs, giving a
 //! light a bulb or taking it back, renaming and removing lights, and the
 //! identify flash.
 //!
@@ -14,10 +13,7 @@ use lueur_core::config::{AppConfig, DeviceBinding};
 use lueur_core::device::{DiscoveredDevice, Endpoint};
 use lueur_core::geometry::{Light, Vec2};
 use lueur_shell::service;
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
 use std::rc::Rc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The longest name a light can have, as the fields that rename it allow.
 pub const MAX_LIGHT_NAME: usize = 60;
@@ -26,89 +22,22 @@ pub const MAX_LIGHT_NAME: usize = 60;
 /// colour the effect could have picked.
 const IDENTIFY_RGB: Rgb = Rgb::new(255, 190, 120);
 
-/// A fresh id for a light, in the shape of a random UUID as the Svelte
-/// interface makes them. Each `RandomState` is seeded anew, so two calls
-/// never give the same one.
-fn new_id() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    let word = || {
-        let mut h = RandomState::new().build_hasher();
-        h.write_u128(nanos);
-        h.finish()
-    };
-    let (a, b) = (word(), word());
-    format!(
-        "{:08x}-{:04x}-4{:03x}-{:x}{:03x}-{:012x}",
-        a >> 32,
-        (a >> 16) & 0xffff,
-        a & 0xfff,
-        8 + (b >> 62),
-        (b >> 48) & 0xfff,
-        b & 0xffff_ffff_ffff
-    )
-}
-
-/// "Light n" for the smallest n no light of the room is called yet, so a
-/// light added after a removal never takes a name already in use.
+/// "Light n" for the smallest n no light of the room is called yet.
 pub fn fresh_name(lang: Lang, config: &AppConfig) -> String {
     let template = i18n::text(lang, "light_n");
-    let name = |n: usize| fill(&template, &[("n", &n.to_string())]);
-    let lights = &config.room.lights;
-    (1..=lights.len() + 1)
-        .map(name)
-        .find(|candidate| lights.iter().all(|l| &l.name != candidate))
-        .unwrap_or_else(|| name(lights.len() + 1))
+    crate::views::room::plan::fresh_name(&config.room.lights, |n| {
+        fill(&template, &[("n", &n.to_string())])
+    })
 }
 
-/// Where new lights go: in a row just behind the screen, the usual
-/// ambilight setup, spread evenly across its width. A spot already taken is
-/// skipped, so lights never land on top of each other; the user drags them
-/// to their real places afterwards.
+/// Where new lights go: see the Room page's `fresh_positions`.
 pub fn fresh_positions(config: &AppConfig, count: usize) -> Vec<Vec2> {
-    let s = config.room.screen;
-    let (f, r) = (s.facing(), s.right_axis());
-    let at = |u: f32, depth: f32| {
-        Vec2::new(
-            (s.center.x + r.x * u * s.width + f.x * depth)
-                .clamp(20.0, 980.0)
-                .round(),
-            (s.center.y + r.y * u * s.width + f.y * depth)
-                .clamp(20.0, 730.0)
-                .round(),
-        )
-    };
-    let mut taken: Vec<Vec2> = config.room.lights.iter().map(|l| l.pos).collect();
-    let mut out = Vec::with_capacity(count);
-    for i in 0..count {
-        let free =
-            |p: Vec2, taken: &[Vec2]| taken.iter().all(|q| (p.x - q.x).hypot(p.y - q.y) > 45.0);
-        // Even spread across 120% of the screen width, one row behind it.
-        let u = if count == 1 {
-            0.0
-        } else {
-            -0.6 + 1.2 * i as f32 / (count - 1) as f32
-        };
-        let mut p = at(u, -45.0);
-        // Taken: walk outwards along further rows until a free spot turns up.
-        let mut k = 0;
-        while !free(p, &taken) && k < 40 {
-            let u = ((k % 7) as f32 - 3.0) * 0.3;
-            let back = if k >= 7 { 140.0 } else { 0.0 };
-            p = at(u, -45.0 - (k / 7) as f32 * 55.0 + back);
-            k += 1;
-        }
-        taken.push(p);
-        out.push(p);
-    }
-    out
+    crate::views::room::plan::fresh_positions(&config.room, count)
 }
 
 fn new_light(name: String, pos: Vec2) -> Light {
     Light {
-        id: new_id(),
+        id: crate::views::room::plan::new_light_id(),
         name,
         pos,
         height: 0.5,
@@ -270,7 +199,10 @@ mod tests {
 
     #[test]
     fn ids_are_fresh_and_shaped_like_uuids() {
-        let (a, b) = (new_id(), new_id());
+        let (a, b) = (
+            crate::views::room::plan::new_light_id(),
+            crate::views::room::plan::new_light_id(),
+        );
         assert_ne!(a, b);
         assert_eq!(a.len(), 36);
         assert_eq!(a.as_bytes()[14], b'4');

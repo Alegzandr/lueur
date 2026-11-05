@@ -1,4 +1,4 @@
-//! The Settings page, after `src/lib/views/Settings.svelte`: how the
+//! The Settings page: how the
 //! ambilight reads the screen, what the music show listens to, the
 //! photosensitivity protection, and the app's own preferences.
 
@@ -329,8 +329,8 @@ impl SettingsPage {
     ) -> Vec<AnyElement> {
         let lueur = self.lueur.clone();
         let on = c.safety.flash_guard;
-        // The person at the computer may turn the protection off here, as
-        // the Svelte page lets them; only an imported file may not (see
+        // The person at the computer may turn the protection off here; only
+        // an imported file may not (see
         // `service::import_config`).
         rows_of(
             vec![(
@@ -514,7 +514,7 @@ fn rows_of(
         .collect()
 }
 
-/// A titled group of rows, after the `.group` of the Svelte pages.
+/// A titled group of rows.
 fn group(title: SharedString, rows: Vec<AnyElement>, theme: &Theme) -> gpui::Div {
     div()
         .flex()
@@ -579,8 +579,7 @@ impl Render for SettingsPage {
     }
 }
 
-/// A control as wide as the Svelte rows make the ones that fill their
-/// column (`.control` in `src/lib/ui/Row.svelte`): sliders and pickers.
+/// A control that fills its column, as sliders and pickers do.
 fn wide(control: impl IntoElement) -> AnyElement {
     div()
         .w(px(320.0))

@@ -1,6 +1,4 @@
-//! What the Lighting page knows about the lights, after
-//! `src/lib/state/derived.ts`, `src/lib/scenes.ts` and `lighting/modes.ts`:
-//! what each light does, which lights the settings go to, the moods, the
+//! What the Lighting page knows about the lights: what each light does, which lights the settings go to, the moods, the
 //! shows and the room's photographs. Plain functions over the config and
 //! what plays, so they can be tested without a window.
 
@@ -35,7 +33,7 @@ pub const PALETTE: [([u8; 3], &str); 9] = [
     ([255, 45, 146], "colour_pink"),
 ];
 
-/// The three feels of the ambilight, by their smoothing (`presets.ts`).
+/// The three feels of the ambilight, by their smoothing.
 pub const FEELS: [(&str, f32); 3] = [("instant", 0.9), ("balanced", 0.55), ("calm", 0.22)];
 
 /// The feel the current settings match, if they were not tuned by hand.

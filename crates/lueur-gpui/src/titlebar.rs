@@ -1,5 +1,5 @@
-//! The title bar on Windows, drawn by the app as the Tauri version drew it
-//! (`src/lib/ui/TitleBar.svelte`): the sidebar runs to the top edge and the
+//! The title bar on Windows, drawn by the app: the sidebar runs to the top
+//! edge and the
 //! caption buttons sit on the page, in its colours. The empty strip drags
 //! the window and a double-click maximises it, through the system; the
 //! buttons are the system's own glyphs and sizes, and the system handles

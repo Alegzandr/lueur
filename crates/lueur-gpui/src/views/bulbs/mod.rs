@@ -1,15 +1,14 @@
-//! The Bulbs page, after `src/lib/views/Bulbs.svelte`: what the network
+//! The Bulbs page: what the network
 //! offers on one side, the room's lights on the other, and above them the
 //! pairing of a bridge, the Smart Life sign-in and the check of devices
 //! nothing vouches for.
 //!
-//! What only this page needs lives here, after `src/lib/state/
-//! devices.svelte.ts` and `pairing.svelte.ts`: the bulbs last found, the
+//! What only this page needs lives here: the bulbs last found, the
 //! search running, the pairing and the sign-in under way. What it changes in
 //! the room goes through [`actions`] to the app's [`Lueur`].
 
 mod actions;
-mod brands;
+pub(crate) mod brands;
 mod check;
 mod controls;
 mod lights;

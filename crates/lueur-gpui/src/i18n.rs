@@ -1,5 +1,4 @@
-//! Interface strings in English and French, from `locales/*.json`, the
-//! catalogs the Tauri interface reads too.
+//! Interface strings in English and French, from `locales/*.json`.
 //!
 //! `t(key)` returns the string for the current language; `{name}`
 //! placeholders are filled by `fill`. Counted strings are [one, other] pairs

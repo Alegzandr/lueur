@@ -1,4 +1,4 @@
-//! The Room page, after `src/lib/views/Room.svelte` and `room/`: the plan of
+//! The Room page: the plan of
 //! the room on the left, and beside it the list of what it holds or, once
 //! something is picked, that thing's inspector.
 //!
@@ -71,8 +71,7 @@ enum PendingFocus {
 
 /// What the running effect reads only when it starts: the room as drawn
 /// (not its paint), which bulb drives which light, and the capture (not its
-/// frame rate). Everything else is pushed live, after `topology()` in
-/// `src/lib/state/derived.ts`.
+/// frame rate). Everything else is pushed live.
 #[derive(PartialEq)]
 struct Topology {
     room: Room,
@@ -1032,7 +1031,7 @@ impl Render for RoomPage {
         let now = self.now(cx);
 
         // The plan takes the height the window gives the page, less its
-        // title and margins, so it fills the window as the Svelte one does.
+        // title and margins, so it fills the window.
         let body_h = (f32::from(window.viewport_size().height) - 132.0).max(440.0);
         let coach = (!now.config.interface.room_arranged && !now.config.room.lights.is_empty())
             .then(|| {

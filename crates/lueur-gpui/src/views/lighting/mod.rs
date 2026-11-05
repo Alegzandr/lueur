@@ -1,5 +1,4 @@
-//! The Lighting page, after `src/lib/views/Lighting.svelte` and `lighting/`:
-//! the room's lights as cards, the scenes saved, and beside them what to do
+//! The Lighting page: the room's lights as cards, the scenes saved, and beside them what to do
 //! with the lights picked (the modes, their settings, brightness, white and
 //! colour), with the sleep timer and one switch for the whole room in the
 //! page's head, and a getting-started card until the room is set up.

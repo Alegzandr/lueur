@@ -1,5 +1,5 @@
-//! The Bulbs page's own controls: buttons in the sizes and looks of
-//! `app.css` (`.btn`, `.sm`, `.plain`, `.icon`, `.danger`, disabled), the
+//! The Bulbs page's own controls: buttons in the sizes and looks DESIGN.md
+//! gives them (default, small, plain, icon, danger, disabled), the
 //! spinner, a light's disc, a disclosure, and a group's heading.
 
 use crate::state::Lueur;
@@ -210,8 +210,8 @@ fn hex(v: u32) -> Hsla {
     rgb((v >> 16) as u8, (v >> 8) as u8, v as u8, 1.0)
 }
 
-/// The two ends of the swatch a mode is drawn with, as
-/// `src/lib/views/lighting/modes.ts` has them.
+/// The two ends of the swatch a mode is drawn with, as the Lighting page
+/// draws them.
 fn mode_swatch(mode: &str) -> (Hsla, Hsla) {
     match mode {
         // Amber to blue: a picture's colours, without the red of an error.
@@ -228,7 +228,7 @@ fn mode_swatch(mode: &str) -> (Hsla, Hsla) {
     }
 }
 
-/// A light as it glows now, drawn round, after `LightDot.svelte`: its white
+/// A light as it glows now, drawn round: its white
 /// or colour, fainter as it dims, the gradient of the effect it plays, a
 /// hollow ring while off, a dashed outline with no bulb. What a bulb gives
 /// is content, so its real colour belongs here.

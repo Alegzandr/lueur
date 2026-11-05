@@ -1,5 +1,4 @@
-//! What a bulb is called where its light is shown, after `src/lib/brands.ts`:
-//! never its address, which only appears to tell two alike apart.
+//! What a bulb is called where its light is shown: never its address, which only appears to tell two alike apart.
 
 use lueur_core::config::DeviceBinding;
 use lueur_core::device::DiscoveredDevice;

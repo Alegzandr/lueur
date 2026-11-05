@@ -1,4 +1,4 @@
-//! The sleep timer, after `lighting/SleepButton.svelte`. It is for bedtime:
+//! The sleep timer. It is for bedtime:
 //! it puts the whole room out, whatever is picked (the tray sets it too,
 //! with no pick to follow). An occasional tool, so it waits behind a clock
 //! in the page's head and opens a small panel.

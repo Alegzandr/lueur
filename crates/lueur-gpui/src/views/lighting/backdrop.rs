@@ -1,5 +1,4 @@
-//! The two backdrops under the window, after `src/lib/ui/Backdrop.svelte`
-//! and `src/lib/views/RoomBackdrop.svelte`: behind Lighting, a pool of light
+//! The two backdrops under the window: behind Lighting, a pool of light
 //! per light where it stands, in the colour it was last sent; behind the
 //! other pages, the room's photograph as its lights make it now.
 //!

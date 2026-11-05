@@ -8,8 +8,7 @@
 //! installed right away, and the window and the tray offer a restart.
 //! Development builds never replace themselves and start right away.
 //!
-//! What the splash shows matches `splash.html` and `src/splash/main.ts`, the
-//! Tauri version's splash.
+//! What the splash shows is what the Tauri versions' splash showed.
 
 use crate::app::{self, FONT, Started};
 use crate::i18n::{Lang, text};

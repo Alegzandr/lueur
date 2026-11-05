@@ -1,5 +1,4 @@
-//! What the window shows, and the actions every page shares, after
-//! `src/lib/state/`.
+//! What the window shows, and the actions every page shares.
 //!
 //! One entity, [`Lueur`], holds the window's copy of the config and of what
 //! plays; the pages read it and call its actions. An action runs the shell's

@@ -1,6 +1,5 @@
-//! Choosing one value among a few: the segmented control (a radio group,
-//! after `src/lib/ui/Segmented.svelte`) and the select (a raised button that
-//! opens its list).
+//! Choosing one value among a few: the segmented control (a radio group)
+//! and the select (a raised button that opens its list).
 
 use crate::theme::{Theme, size};
 use crate::ui::{icon, pressable};

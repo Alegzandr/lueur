@@ -1,9 +1,9 @@
-//! The design tokens of `src/styles/app.css`, for GPUI.
+//! The design tokens (see DESIGN.md), for the light and the dark theme.
 //!
-//! The values are the stylesheet's, written in OKLCH as it writes them and
-//! turned into sRGB the way a browser does, so both interfaces show the same
-//! colours. Keep the two in step until the Tauri interface is gone. Amber
-//! only ever means light; what a choice applies to is neutral ink (`select`).
+//! The values are written in OKLCH, as the stylesheet of the Tauri versions
+//! wrote them, and turned into sRGB the way a browser does, so the colours
+//! did not change with the move to GPUI. Amber only ever means light; what a
+//! choice applies to is neutral ink (`select`).
 
 use gpui::{App, Global, Hsla, Rgba, WindowAppearance};
 use lueur_core::config::Appearance;

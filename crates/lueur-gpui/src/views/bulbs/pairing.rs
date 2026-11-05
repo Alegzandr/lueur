@@ -1,6 +1,5 @@
 //! Pairing Hue bridges and Nanoleaf controllers, and the Smart Life sign-in
-//! that imports Tuya bulbs, after `src/lib/state/pairing.svelte.ts` and the
-//! panels `Bulbs.svelte` shows for them.
+//! that imports Tuya bulbs, and the panels the page shows for them.
 
 use super::controls::{Look, btn, disclosure, group_head, note, spinner};
 use super::{BulbsPage, SEARCH_MS, actions};

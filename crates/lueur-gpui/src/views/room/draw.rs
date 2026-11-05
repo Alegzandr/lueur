@@ -1,4 +1,4 @@
-//! The plan, after `src/lib/views/room/Plan.svelte`: the room drawn from
+//! The plan: the room drawn from
 //! above (walls, screen, seat and lights), each dragged into place.
 //!
 //! It is painted on a `canvas` in the stage's pixels: positions go through

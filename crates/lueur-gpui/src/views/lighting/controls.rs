@@ -85,8 +85,7 @@ pub fn btn(
         .whitespace_nowrap()
 }
 
-/// A section's heading on the page, bold in the text's own ink, as the
-/// Svelte page's `.group-title`.
+/// A section's heading on the page, bold in the text's own ink.
 pub fn group_title(text: SharedString, theme: &Theme) -> Div {
     div()
         .text_size(px(size::T_LG))

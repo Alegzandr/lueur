@@ -1,5 +1,4 @@
-//! What the Room page's pieces share, after `src/lib/views/room/plan.ts` and
-//! the drawing half of `src/lib/geometry.ts`: the plan's extent, where
+//! What the Room page's pieces share: the plan's extent, where
 //! things are drawn, what a press lands on, and the names of corners.
 //!
 //! The mapping of a light to the picture is the engine's own
@@ -256,7 +255,7 @@ pub fn fresh_name(lights: &[Light], name: impl Fn(usize) -> String) -> String {
         .unwrap_or_else(|| name(n))
 }
 
-/// A fresh light id: a random UUID, as the Tauri interface makes them.
+/// A fresh light id: a random UUID, as the Tauri versions made them.
 pub fn new_light_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }

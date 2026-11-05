@@ -24,9 +24,9 @@
 //! * [`config`]: persisted settings, read from and written to the data
 //!   directory the shell picks.
 //!
-//! The desktop shell (`src-tauri`) supplies real screen capture and the webview;
-//! everything colour- and protocol-critical lives here so it can be unit-tested
-//! without a display server.
+//! The desktop crates (`lueur-shell`, `lueur-gpui`) supply real screen capture
+//! and the window; everything colour- and protocol-critical lives here so it
+//! can be unit-tested without a display server.
 
 pub mod bars;
 pub mod color;

@@ -45,11 +45,12 @@ const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstal
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const STARTUP_APPROVED_KEY: &str =
     r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
-/// WebView2 data folder, named after the app identifier.
+/// The WebView2 data folder the Tauri versions left, named after the app
+/// identifier: uninstalling removes it too.
 const WEBVIEW_DIR: &str = "com.lueur.app";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// Runs before Tauri starts. Returns false when this process must exit
+/// Runs before the app starts. Returns false when this process must exit
 /// (the installed copy was launched, or the app was uninstalled).
 pub fn prepare() -> bool {
     restrict_dll_search();
@@ -228,7 +229,8 @@ fn create_shortcut(target: &Path, link: &Path) -> windows::core::Result<()> {
 }
 
 fn uninstall(dir: &Path) -> io::Result<()> {
-    // Other copies of Lueur keep their executable and WebView2 files locked.
+    // Other copies of Lueur keep their executable (and, for a Tauri version,
+    // its WebView2 files) locked.
     // The filter is on our own image name: no other program is ever touched.
     // Full path: a bare name is also looked up next to this executable.
     let _ = Command::new(system32().join("taskkill.exe"))

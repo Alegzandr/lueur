@@ -1,4 +1,4 @@
-//! The four pages of the sidebar, one module each, after `src/lib/views/`.
+//! The four pages of the sidebar, one module each.
 //!
 //! Each page is an entity of its own: it keeps what only it needs (a search
 //! running, a field being typed in, a drag on the plan) and reads the rest

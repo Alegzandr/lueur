@@ -1,5 +1,5 @@
-//! The scenes the user saved, first on the page, after
-//! `lighting/Scenes.svelte`: the whole room as it was, back in one click.
+//! The scenes the user saved, first on the page: the whole room as it was,
+//! back in one click.
 //! Saving asks for a name in place; deleting asks first, in the scene's own
 //! place, with an undo after.
 

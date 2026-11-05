@@ -1,4 +1,4 @@
-//! Shared controls, after `src/lib/ui/`. Each is reachable with Tab, works
+//! Shared controls. Each is reachable with Tab, works
 //! with Enter or Space, draws an amber focus ring only for the keyboard, and
 //! tells assistive technology what it is and what state it is in.
 
@@ -166,8 +166,7 @@ impl Render for Tip {
     }
 }
 
-/// One line of a preferences group, after `src/lib/ui/Row.svelte`: the
-/// label on the left, an info mark with its tip if it needs one, the control
+/// One line of a preferences group: the label on the left, an info mark with its tip if it needs one, the control
 /// on the right.
 pub fn row(
     index: usize,

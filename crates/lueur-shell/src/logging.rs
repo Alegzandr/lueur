@@ -1,6 +1,6 @@
 //! Logs, for whoever needs to see what Lueur did on real hardware.
 //!
-//! Everything logs through the `log` facade, which most of the tree (Tauri,
+//! Everything logs through the `log` facade, which most of the tree (GPUI,
 //! rustls, the Tuya driver…) already speaks, into the small logger here:
 //! each line goes to stderr and to `logs/lueur.log` in the data folder. The
 //! file is capped: past [`MAX_FILE`] it becomes `lueur.old.log`, replacing

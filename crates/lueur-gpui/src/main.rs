@@ -1,8 +1,8 @@
 //! Lueur, drawn with GPUI.
 //!
 //! The app itself lives in `lueur_shell`: capture, the bulbs, the live loops,
-//! the workers and the commands. This crate draws its window and its tray,
-//! and is replacing the Tauri interface (`src-tauri`, `src/`).
+//! the workers, the updates and the commands. This crate draws its window,
+//! its splash and its tray.
 
 // Prevent an extra console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]

@@ -1,5 +1,5 @@
 //! The main window: the sidebar, the title bar and the page it shows, and
-//! the toasts over them, after `src/App.svelte`.
+//! the toasts over them.
 
 use crate::app::{
     GoBulbs, GoLighting, GoRoom, GoSettings, NextControl, PreviousControl, ToggleEffect,

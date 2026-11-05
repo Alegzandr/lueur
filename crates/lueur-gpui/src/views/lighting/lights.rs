@@ -1,6 +1,5 @@
 //! Every light in the room as a card that shows its light and says what it
-//! does, and picks the lights the settings beside it go to, after
-//! `lighting/Lights.svelte`.
+//! does, and picks the lights the settings beside it go to.
 
 use super::LightingPage;
 use super::controls::{Kind, btn, group_title, light_dot};

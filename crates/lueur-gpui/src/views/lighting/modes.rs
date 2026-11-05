@@ -1,4 +1,4 @@
-//! What the lights picked do, after `lighting/Modes.svelte`: one grid of
+//! What the lights picked do: one grid of
 //! fixed modes (the moods), one of animated ones (the screen and the shows),
 //! each a framed photograph of the room under it, and under them the
 //! settings of the animated ones playing there.

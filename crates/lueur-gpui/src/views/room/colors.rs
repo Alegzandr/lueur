@@ -1,5 +1,5 @@
-//! The plan's own colours, from `src/styles/app.css` (`--zone-*`, `--plan-*`,
-//! `--pin-shadow`, `--bezel`), for both themes. They live here rather than
+//! The plan's own colours (the zones, the plan's well, grid, floor and
+//! walls, the pins' shadow, the bezel), for both themes. They live here rather than
 //! in `theme.rs` because only the Room page uses them; the values are the
 //! stylesheet's, and must follow it while both interfaces exist.
 

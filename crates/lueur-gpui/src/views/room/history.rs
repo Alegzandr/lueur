@@ -1,4 +1,4 @@
-//! Undo and redo for the room plan, after `src/lib/history.svelte.ts`.
+//! Undo and redo for the room plan.
 //!
 //! A step is a snapshot of the room and of which bulb drives which light
 //! (removing a light drops its bulb too). Changes made in one go (a drag, a

@@ -1,5 +1,4 @@
-//! What the Lighting page does to the lights, after `src/lib/state/effect.ts`,
-//! `lights.ts` and `scenes.svelte.ts`: moods, modes, power, brightness,
+//! What the Lighting page does to the lights: moods, modes, power, brightness,
 //! white and colour, saved scenes, the sleep timer and the restart banner.
 //!
 //! Each action runs the shell's commands in one job off the window's thread,
