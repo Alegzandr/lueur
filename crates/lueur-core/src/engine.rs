@@ -153,10 +153,13 @@ pub struct EngineSettings {
     /// Colour temperature used by the white path, in Kelvin (1700..6500).
     #[serde(default = "default_white_kelvin")]
     pub white_kelvin: u16,
-    /// Leave black bars around the picture out of every zone (see
-    /// [`crate::bars`]), so a film narrower or wider than the screen does
-    /// not darken the lights at its edges.
-    #[serde(default = "crate::default_true")]
+    /// Older versions' switch for leaving black bars out of the zones. The
+    /// bars are now always left out (see [`crate::bars`]), so a film
+    /// narrower or wider than the screen never darkens the lights at its
+    /// edges. Always true and read by nothing: a file that says otherwise is
+    /// read as on, and it is written as on so an older version that reads
+    /// this file keeps leaving them out too.
+    #[serde(default = "crate::default_true", with = "crate::always_on")]
     pub crop_bars: bool,
     /// How a colour's intensity becomes the bulb's brightness: the bulb
     /// follows the intensity raised to this power (1..=3). At 1 it follows
@@ -418,12 +421,8 @@ impl Ambilight {
     /// it down further (see [`steadiness`]), so noise never reaches the bulb.
     pub fn process(&mut self, frame: &Frame, mappings: &[LightMapping]) -> Vec<Rgb> {
         let n = mappings.len().min(self.smoothers.len());
-        let picture = if self.settings.crop_bars {
-            self.bars.see(frame, self.frame_time)
-        } else {
-            self.bars.reset();
-            self.bars.picture()
-        };
+        // Black bars are always left out: there is no setting for it.
+        let picture = self.bars.see(frame, self.frame_time);
         let mut out = Vec::with_capacity(n);
         for (i, m) in mappings.iter().take(n).enumerate() {
             let zone = m.zone.within(picture);
@@ -974,8 +973,10 @@ mod tests {
         }
         let film = Frame::new(w, h, PixelFormat::Rgba, data);
         let top = [z(0.0, 0.0, 1.0, 0.12)];
+        // The old switch says off, and changes nothing: the bars are always
+        // left out.
         let settings = EngineSettings {
-            crop_bars: true,
+            crop_bars: false,
             ..passthrough()
         };
         let mut amb = Ambilight::new(1, settings);
@@ -984,10 +985,20 @@ mod tests {
             amb.process(&film, &top);
         }
         assert_eq!(amb.process(&film, &top)[0], Rgb::new(200, 0, 0));
+    }
 
-        // Turned off, the band is read again.
-        amb.set_settings(passthrough());
-        assert_eq!(amb.process(&film, &top)[0], Rgb::BLACK);
+    #[test]
+    fn the_black_bars_are_left_out_whatever_the_file_says() {
+        // An older version could turn it off: the file is read as on, and
+        // written as on, so that version leaves the bars out too.
+        let mut engine = serde_json::to_value(EngineSettings::default()).unwrap();
+        engine["crop_bars"] = false.into();
+        let json = serde_json::json!({ "engine": engine }).to_string();
+        let cfg = crate::config::AppConfig::from_json(&json).unwrap();
+        assert!(cfg.engine.crop_bars);
+        let mut cfg = cfg;
+        cfg.engine.crop_bars = false;
+        assert!(cfg.to_json().unwrap().contains("\"crop_bars\": true"));
     }
 
     #[test]

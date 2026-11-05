@@ -20,7 +20,6 @@ use lueur_core::safety::FlashGuard;
 use lueur_core::yeelight::Effect;
 use std::collections::HashMap;
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -54,12 +53,12 @@ impl Guarded {
         }
     }
 
-    /// What to send at `now` for `target`; `on` is the user's setting.
-    fn next(&mut self, target: BulbOutput, now: Instant, on: bool) -> BulbOutput {
+    /// What to send at `now` for `target`.
+    fn next(&mut self, target: BulbOutput, now: Instant) -> BulbOutput {
         let dt = self.last.map_or(0.0, |t| (now - t).as_secs_f32());
         self.last = Some(now);
         let mut out = [target];
-        self.guard.apply(&mut out, dt, on);
+        self.guard.apply(&mut out, dt);
         out[0]
     }
 }
@@ -71,30 +70,14 @@ enum Slot {
 }
 
 /// Every light currently held by hand, keyed by room light id.
+#[derive(Default)]
 pub struct Manual {
     slots: Arc<Mutex<HashMap<String, Slot>>>,
     /// Whether the worker is running. It ends once no light is held.
     worker: Arc<Mutex<bool>>,
-    /// The photosensitivity protection, as the user last set it.
-    protect: Arc<AtomicBool>,
-}
-
-impl Default for Manual {
-    fn default() -> Self {
-        Manual {
-            slots: Arc::default(),
-            worker: Arc::default(),
-            protect: Arc::new(AtomicBool::new(true)),
-        }
-    }
 }
 
 impl Manual {
-    /// Follow the photosensitivity protection setting, live.
-    pub fn protect(&self, on: bool) {
-        self.protect.store(on, Ordering::SeqCst);
-    }
-
     /// Show `output` on the light, opening its stream if needed. Blocks while
     /// the bulb is reached (up to a few seconds for one that is unplugged).
     pub fn set(&self, light_id: &str, ep: &Endpoint, output: BulbOutput) -> io::Result<()> {
@@ -170,25 +153,23 @@ impl Manual {
         }
         let slots = Arc::clone(&self.slots);
         let worker = Arc::clone(&self.worker);
-        let protect = Arc::clone(&self.protect);
         let spawned = std::thread::Builder::new()
             .name("lueur-manual".into())
-            .spawn(move || run(&slots, &worker, &protect));
+            .spawn(move || run(&slots, &worker));
         *running = spawned.is_ok();
     }
 }
 
-fn run(slots: &Mutex<HashMap<String, Slot>>, worker: &Mutex<bool>, protect: &AtomicBool) {
+fn run(slots: &Mutex<HashMap<String, Slot>>, worker: &Mutex<bool>) {
     loop {
         std::thread::sleep(TICK);
-        let on = protect.load(Ordering::SeqCst);
         let mut slots = slots.lock().unwrap_or_else(|p| p.into_inner());
         slots.retain(|_, slot| match slot {
             Slot::Opening(_) => true,
             Slot::Open(s) => {
                 // A bulb that stops answering is let go; the next change
                 // opens a fresh stream.
-                let output = s.guard.next(s.target, Instant::now(), on);
+                let output = s.guard.next(s.target, Instant::now());
                 s.touched.elapsed() < IDLE && s.stream.push(output, Effect::Smooth, FADE_MS).is_ok()
             }
         });
@@ -212,26 +193,25 @@ mod tests {
         }
     }
 
-    /// Daylight and Night swapped on every tick, `on` or not: what each
-    /// tick sends, as brightness.
-    fn toggled(on: bool) -> Vec<u8> {
+    /// Daylight and Night swapped on every tick: what each tick sends, as
+    /// brightness.
+    fn toggled() -> Vec<u8> {
         let mut held = Guarded::new();
         let start = Instant::now();
         (0..100u32)
             .map(|k| {
                 let wish = if k % 2 == 0 { mood(100) } else { mood(8) };
-                held.next(wish, start + TICK * k, on).bright()
+                held.next(wish, start + TICK * k).bright()
             })
             .collect()
     }
 
     #[test]
     fn moods_switched_fast_are_eased() {
-        // Unprotected, every switch lands; protected, the swings soon stop
-        // reaching all the way: no more strobing between the two.
-        let free = toggled(false);
-        assert!(free.windows(2).all(|w| w[0].abs_diff(w[1]) == 92));
-        let held = toggled(true);
+        // The swings soon stop reaching all the way: no more strobing
+        // between the two. The protection is always on, so there is no
+        // unprotected case to compare with.
+        let held = toggled();
         let late = &held[50..];
         let swing = late.iter().max().unwrap() - late.iter().min().unwrap();
         assert!(swing < 92, "still strobing: {late:?}");
@@ -245,7 +225,7 @@ mod tests {
     fn a_single_change_lands_at_once() {
         let mut held = Guarded::new();
         let start = Instant::now();
-        assert_eq!(held.next(mood(8), start, true), mood(8));
-        assert_eq!(held.next(mood(100), start + TICK, true), mood(100));
+        assert_eq!(held.next(mood(8), start), mood(8));
+        assert_eq!(held.next(mood(100), start + TICK), mood(100));
     }
 }

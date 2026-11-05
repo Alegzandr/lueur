@@ -1,5 +1,6 @@
 //! What the Lighting page does to the lights: moods, modes, power, brightness,
-//! white and colour, saved scenes, the sleep timer and the restart banner.
+//! white and colour, saved scenes, the sleep timer, and the restart that
+//! follows a change to the room.
 //!
 //! Each action runs the shell's commands in one job off the window's thread,
 //! then takes back what the shell recorded of the lights.
@@ -7,7 +8,7 @@
 use super::model::{Room, dimmed_only, scene_named};
 use crate::i18n::{self, t};
 use crate::state::{Lueur, model};
-use gpui::{App, Context, Global, SharedString};
+use gpui::{App, Context, Entity, Global, SharedString, Task};
 use lueur_core::color::Rgb;
 use lueur_core::config::{AppConfig, SavedScene, SceneLight};
 use lueur_core::scene::{LightState, NATURAL};
@@ -15,7 +16,7 @@ use lueur_shell::lights::PowerResult;
 use lueur_shell::service::{self, EffectStatus};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Warm white: an identify flash should read as "this one", never as a
 /// colour the effect could have picked.
@@ -40,34 +41,65 @@ impl Sending {
     }
 }
 
-/// The room as the running effect read it when it started: the effect reads
-/// the plan only then, so a plan changed since needs a restart.
+/// How long the room must stay as it is before the effects restart on it,
+/// so typing a position or pressing an arrow key a few times restarts them
+/// once, not at every step.
+const RESTART_AFTER: Duration = Duration::from_millis(600);
+
+/// The effects read the room (the plan, which bulb drives which light, the
+/// capture) only when they start, so a change to it restarts them. This
+/// keeps the room they play and the restart waiting to happen.
 #[derive(Default)]
-pub struct Started(pub Option<String>);
+struct Started {
+    /// The room the running effects read when they started.
+    playing: Option<String>,
+    /// The room a restart was last planned for. The window hears of other
+    /// news (what plays, a toast) all the time; this keeps that news from
+    /// putting the restart off again, and keeps a restart that failed from
+    /// being tried again until the room changes once more.
+    planned: Option<String>,
+    /// The restart waiting for the room to rest. Dropping it cancels it.
+    waiting: Option<Task<()>>,
+}
 
 impl Global for Started {}
 
-/// Follow what plays: forget the room when nothing does, note it when an
-/// effect is first seen playing.
-pub fn track_started(lueur: &gpui::Entity<Lueur>, cx: &mut App) {
+/// Follow what plays and the room as drawn: note the room when an effect is
+/// first seen playing, forget it when nothing plays, and restart the
+/// effects once a change to the room has rested. Never while a drag on the
+/// plan lasts: its release brings the call that plans the restart.
+pub fn follow_room(lueur: &Entity<Lueur>, cx: &mut App) {
     let l = lueur.read(cx);
     let running = l.status.running;
-    let topology = Room::of(l).topology();
-    let known = cx.default_global::<Started>().0.is_some();
+    let arranging = l.arranging;
+    let room = Room::of(l).topology();
+    let started = cx.default_global::<Started>();
     if !running {
-        cx.global_mut::<Started>().0 = None;
-    } else if !known {
-        cx.global_mut::<Started>().0 = Some(topology);
+        *started = Started::default();
+        return;
     }
-}
-
-/// True when the running effect is out of date with the room as drawn.
-pub fn needs_restart(l: &Lueur, cx: &App) -> bool {
-    l.status.running
-        && cx
-            .try_global::<Started>()
-            .and_then(|s| s.0.as_ref())
-            .is_some_and(|s| *s != Room::of(l).topology())
+    let Some(playing) = &started.playing else {
+        started.playing = Some(room);
+        return;
+    };
+    if *playing == room || arranging {
+        // Back as the effects play it, or still being dragged: nothing to
+        // restart yet.
+        started.planned = None;
+        started.waiting = None;
+        return;
+    }
+    if started.planned.as_ref() == Some(&room) {
+        return;
+    }
+    started.planned = Some(room);
+    let waiting = lueur.update(cx, |_, cx| {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(RESTART_AFTER).await;
+            let _ = this.update(cx, |l, cx| l.restart_on_room(cx));
+        })
+    });
+    cx.global_mut::<Started>().waiting = Some(waiting);
 }
 
 impl Lueur {
@@ -235,23 +267,36 @@ impl Lueur {
         );
     }
 
-    /// Stop and start the effects again so they pick up the room as drawn.
-    pub fn restart_effect(&mut self, cx: &mut Context<Self>) {
+    /// Save the room and restart the effects on it. A failure shows as an
+    /// error toast, like any other.
+    fn restart_on_room(&mut self, cx: &mut Context<Self>) {
         if self.busy {
+            // An effect is being started or stopped. Once it is, the window
+            // hears of it and plans the restart again.
+            cx.global_mut::<Started>().planned = None;
             return;
         }
+        if !self.status.running {
+            return;
+        }
+        let room = Room::of(self).topology();
         self.busy = true;
         cx.notify();
+        let config = self.config.clone();
         self.run_then(
             cx,
-            |s| service::restart_effect(s),
-            |this, result, cx| {
+            move |s| {
+                service::save_config(s, config)?;
+                service::restart_effect(s)
+            },
+            move |this, result, cx| {
                 this.busy = false;
                 match result {
                     Ok(status) => {
                         this.status = status;
-                        let topology = Room::of(this).topology();
-                        cx.set_global(Started(Some(topology)));
+                        let started = cx.default_global::<Started>();
+                        started.playing = Some(room);
+                        started.planned = None;
                     }
                     Err(e) => {
                         this.fail(&e, cx);

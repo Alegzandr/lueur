@@ -37,23 +37,27 @@
 //! own budget, flashes the room twice as often. A cut, or something moving
 //! across the picture now and then, stays free.
 //!
-//! Turned off, the guard lets everything through, with one exception: a show
-//! still holds its white flashes (a third signal, how much near-white light
-//! a light gives) to the same budget. The music has always promised never
-//! to flash white more than three times a second, and that promise does not
-//! depend on the setting.
+//! A third signal, how much near-white light a light gives, keeps its own
+//! budget too, so a show never flashes white more than three times a second.
+//!
+//! The guard cannot be turned off. Older versions had a setting for it; the
+//! field is still read and written (see [`SafetySettings`]) so their files
+//! keep loading, but nothing looks at it.
 
 use crate::color::{BulbOutput, MAX_BRIGHT, MIN_BRIGHT, Rgb, full_chroma};
 use crate::show::blend;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
-/// The photosensitivity protection, on unless the user turns it off.
+/// The photosensitivity protection's old setting. The protection is always
+/// on: a file that says otherwise is read as on, and the field is written as
+/// on so an older version that reads this file keeps its protection too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SafetySettings {
-    /// No light flashes more than three times a second, nor the room, and
-    /// the ambilight brightens over a tenth of a second at least.
+    /// Always true, and read by nothing. Kept only so files stay readable
+    /// both ways.
+    #[serde(with = "crate::always_on")]
     pub flash_guard: bool,
 }
 
@@ -166,19 +170,9 @@ fn glare(o: BulbOutput) -> f32 {
     level * ((0.35 - crate::color::saturation(chroma(o))) / 0.25).clamp(0.0, 1.0)
 }
 
-/// Which signals a guard holds to the budget.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Watch {
-    /// Every flash (the protection is on).
-    All,
-    /// White flashes only (a show with the protection off).
-    Whites,
-}
-
 /// What a light is held to this frame.
 #[derive(Clone, Copy)]
 struct Rules<'a> {
-    watch: Watch,
     /// How fast it may brighten, if capped.
     rise: Option<f32>,
     /// The room's budgets, when the room keeps one.
@@ -410,12 +404,9 @@ struct Lamp {
 }
 
 impl Lamp {
-    fn allows(&self, o: BulbOutput, now: f64, watch: Watch, room: Option<&Room>) -> bool {
+    fn allows(&self, o: BulbOutput, now: f64, room: Option<&Room>) -> bool {
         let i = self.index;
         let white = self.white.allows(glare(o), now, room.map(|r| &r.white), i);
-        if watch == Watch::Whites {
-            return white;
-        }
         let (general, red) = signals(o);
         white
             && self
@@ -433,7 +424,7 @@ impl Lamp {
         now: f64,
         rules: Rules,
     ) -> BulbOutput {
-        let Rules { watch, rise, room } = rules;
+        let Rules { rise, room } = rules;
         let (from, from_red) = signals(prev);
         let from_white = glare(prev);
         let mut want = target;
@@ -456,7 +447,7 @@ impl Lamp {
             }
         }
         let easing = self.held_at.is_some_and(|t| now - t < WINDOW);
-        if !easing && self.allows(want, now, watch, room) {
+        if !easing && self.allows(want, now, room) {
             return want;
         }
         // Over budget: the largest step towards it that neither completes a
@@ -464,11 +455,8 @@ impl Lamp {
         let pace = EASE * dt + QUANTUM;
         let fits = |o: BulbOutput| {
             let (g, r) = signals(o);
-            let steady = match watch {
-                Watch::All => (g - from).abs() <= pace && (r - from_red).abs() <= pace,
-                Watch::Whites => true,
-            };
-            steady && (glare(o) - from_white).abs() <= pace && self.allows(o, now, watch, room)
+            let steady = (g - from).abs() <= pace && (r - from_red).abs() <= pace;
+            steady && (glare(o) - from_white).abs() <= pace && self.allows(o, now, room)
         };
         let sent = if fits(want) {
             want
@@ -502,17 +490,12 @@ impl Lamp {
 
 /// Holds every light of one running mode under the flash budget.
 ///
-/// Keep one per loop, and pass it every frame's outputs, protected or not:
-/// it watches even while turned off, so turning it on mid-show protects at
-/// once.
+/// Keep one per loop, and pass it every frame's outputs.
 #[derive(Debug, Clone)]
 pub struct FlashGuard {
     lamps: Vec<Lamp>,
     /// How fast a light may brighten, for the ambilight.
     rise: Option<f32>,
-    /// A show: white flashes are held to the budget even with the
-    /// protection off.
-    show: bool,
     /// Whether the room keeps a budget of its own (see [`Crowd`]).
     crowd: bool,
     /// Boxed: a guard is kept by value beside every light set by hand.
@@ -522,13 +505,11 @@ pub struct FlashGuard {
 }
 
 impl FlashGuard {
-    /// A guard that holds flashes to the budget while the protection is on,
-    /// and lets everything through while it is off: for lights set by hand.
+    /// A guard that holds flashes to the budget: for lights set by hand.
     pub fn new(lights: usize) -> Self {
         FlashGuard {
             lamps: vec![Lamp::default(); lights],
             rise: None,
-            show: false,
             crowd: false,
             room: Box::default(),
             now: 0.0,
@@ -536,11 +517,9 @@ impl FlashGuard {
     }
 
     /// A guard for a show: rises are free (the music's punches are the show),
-    /// the room as a whole keeps the budget as well as each light, and white
-    /// flashes stay within both even with the protection off.
+    /// and the room as a whole keeps the budget as well as each light.
     pub fn show(lights: usize) -> Self {
         FlashGuard {
-            show: true,
             crowd: true,
             ..FlashGuard::new(lights)
         }
@@ -559,8 +538,8 @@ impl FlashGuard {
     }
 
     /// Hold `outputs`, the frame about to be sent, `dt` seconds after the last
-    /// one; `on` is the user's setting.
-    pub fn apply(&mut self, outputs: &mut [BulbOutput], dt: f32, on: bool) {
+    /// one. There is no way to skip it: every mode's output goes through.
+    pub fn apply(&mut self, outputs: &mut [BulbOutput], dt: f32) {
         // A stall is not time the eye had to rest: count it short.
         let dt = if dt.is_finite() {
             dt.clamp(0.0, 0.25)
@@ -578,7 +557,6 @@ impl FlashGuard {
         let FlashGuard {
             lamps,
             rise,
-            show,
             crowd,
             room,
             ..
@@ -589,23 +567,14 @@ impl FlashGuard {
             lamp.asked.see(signals(target).0, now);
             let crowd = crowd.then_some(&**room);
             let sent = match lamp.shown {
-                Some(prev) if on => {
+                Some(prev) => {
                     let rules = Rules {
-                        watch: Watch::All,
                         rise: *rise,
                         room: crowd,
                     };
                     lamp.limit(prev, target, dt, now, rules)
                 }
-                Some(prev) if *show => {
-                    let rules = Rules {
-                        watch: Watch::Whites,
-                        rise: None,
-                        room: crowd,
-                    };
-                    lamp.limit(prev, target, dt, now, rules)
-                }
-                _ => {
+                None => {
                     lamp.held_at = None;
                     target
                 }
@@ -697,27 +666,28 @@ mod tests {
         guard: &mut FlashGuard,
         frames: &[Vec<BulbOutput>],
         dt: f32,
-        on: bool,
     ) -> Vec<Vec<BulbOutput>> {
         frames
             .iter()
             .map(|f| {
                 let mut f = f.clone();
-                guard.apply(&mut f, dt, on);
+                guard.apply(&mut f, dt);
                 f
             })
             .collect()
     }
 
     #[test]
-    fn it_is_on_unless_turned_off() {
+    fn it_is_on_whatever_the_file_says() {
         assert!(AppConfig::from_json("{}").unwrap().safety.flash_guard);
         let json = r#"{ "safety": {} }"#;
         assert!(AppConfig::from_json(json).unwrap().safety.flash_guard);
+        // An older version could turn it off: the file is read as on, and
+        // written as on, so that version keeps the protection too.
         let json = r#"{ "safety": { "flash_guard": false } }"#;
         let cfg = AppConfig::from_json(json).unwrap();
-        assert!(!cfg.safety.flash_guard);
-        assert!(cfg.to_json().unwrap().contains("\"flash_guard\": false"));
+        assert!(cfg.safety.flash_guard);
+        assert!(cfg.to_json().unwrap().contains("\"flash_guard\": true"));
     }
 
     #[test]
@@ -750,7 +720,7 @@ mod tests {
             })
             .collect();
         let mut guard = FlashGuard::ambilight(1);
-        assert_eq!(guarded(&mut guard, &frames, dt, true), frames);
+        assert_eq!(guarded(&mut guard, &frames, dt), frames);
     }
 
     #[test]
@@ -765,7 +735,7 @@ mod tests {
             vec![color(0, 80, 255, 8)],
         ];
         let mut guard = FlashGuard::ambilight(1);
-        assert_eq!(guarded(&mut guard, &frames, dt, true), frames);
+        assert_eq!(guarded(&mut guard, &frames, dt), frames);
     }
 
     #[test]
@@ -776,7 +746,7 @@ mod tests {
         frames.extend(vec![vec![white(100)]; 45]);
         frames.extend(vec![vec![color(30, 40, 60, 5)]; 5]);
         let mut guard = FlashGuard::ambilight(1);
-        let sent = guarded(&mut guard, &frames, dt, true);
+        let sent = guarded(&mut guard, &frames, dt);
         let full = sent
             .iter()
             .position(|f| f[0].bright() >= 95)
@@ -791,9 +761,6 @@ mod tests {
         }
         // It goes back to dark at once.
         assert_eq!(sent[55], frames[55]);
-        // Unprotected, the room whites out on the spot.
-        let mut guard = FlashGuard::ambilight(1);
-        assert_eq!(guarded(&mut guard, &frames, dt, false), frames);
     }
 
     #[test]
@@ -809,7 +776,7 @@ mod tests {
         }
         frames.extend(vec![vec![white(100)]; 30]);
         let mut guard = FlashGuard::ambilight(1);
-        let sent = guarded(&mut guard, &frames, dt, true);
+        let sent = guarded(&mut guard, &frames, dt);
         let last_rise = 10 + 32;
         let full = (last_rise..sent.len())
             .find(|&i| sent[i][0].bright() >= 95)
@@ -836,7 +803,7 @@ mod tests {
             });
         }
         let mut guard = FlashGuard::ambilight(2);
-        let sent = guarded(&mut guard, &frames, dt, true);
+        let sent = guarded(&mut guard, &frames, dt);
         let per_light = flashes(&sent, dt);
         assert!(per_light <= 3, "{per_light} flashes a second on one light");
         // Unguarded, the two lights alternate in full every 0.2 s; guarded,
@@ -870,7 +837,7 @@ mod tests {
         let mut frames = vec![vec![dark; 4]; 10];
         frames.extend(vec![vec![bright; 4]; 20]);
         let mut guard = FlashGuard::ambilight(4);
-        let sent = guarded(&mut guard, &frames, dt, true);
+        let sent = guarded(&mut guard, &frames, dt);
         assert_eq!(sent.last(), frames.last());
         let arrived = sent.iter().position(|f| f == &frames[29]).expect("arrives");
         assert!(arrived <= 10 + 6, "arrived on frame {arrived}");
@@ -906,7 +873,7 @@ mod tests {
                 "the test strobes too gently at {period}"
             );
             let mut guard = FlashGuard::ambilight(1);
-            let sent = guarded(&mut guard, &frames, dt, true);
+            let sent = guarded(&mut guard, &frames, dt);
             let n = flashes(&sent, dt);
             assert!(n <= 3, "{n} flashes a second, strobing every {period}");
             // Once the budget is spent, it glides: never again a step big
@@ -957,7 +924,7 @@ mod tests {
         let frames = busy_groove(&mut stage, &s, 6.0);
         assert!(flashes(&frames, 0.025) > 3, "the pattern is too tame");
         let mut guard = FlashGuard::show(4);
-        let sent = guarded(&mut guard, &frames, 0.025, true);
+        let sent = guarded(&mut guard, &frames, 0.025);
         let n = flashes(&sent, 0.025);
         assert!(n <= 3, "{n} flashes a second");
         // The show still plays: the lights still move with the music.
@@ -1002,29 +969,9 @@ mod tests {
         let raw = flashes_of(&frames, 0.025, glare);
         assert!(raw > 3, "{raw} whites a second only");
         let mut guard = FlashGuard::show(4);
-        let sent = guarded(&mut guard, &frames, 0.025, true);
+        let sent = guarded(&mut guard, &frames, 0.025);
         let n = flashes(&sent, 0.025);
         assert!(n <= 3, "{n} flashes a second");
-    }
-
-    #[test]
-    fn white_flashes_stay_capped_with_the_protection_off() {
-        // The music's promise holds whatever the setting: three white
-        // flashes a second at most.
-        let frames = white_storm();
-        let mut guard = FlashGuard::show(4);
-        let sent = guarded(&mut guard, &frames, 0.025, false);
-        let n = flashes_of(&sent, 0.025, glare);
-        assert!(n <= 3, "{n} white flashes a second");
-        // Its coloured punches are the user's choice, and left alone.
-        let s = ShowSettings {
-            flashes: false,
-            ..ShowSettings::default()
-        };
-        let mut stage = Stage::new(&Fixture::row(4));
-        let colours = busy_groove(&mut stage, &s, 4.0);
-        let mut guard = FlashGuard::show(4);
-        assert_eq!(guarded(&mut guard, &colours, 0.025, false), colours);
     }
 
     #[test]
@@ -1046,32 +993,27 @@ mod tests {
             .collect();
         assert!(flashes(&frames, dt) > 3);
         let mut guard = FlashGuard::new(1);
-        let sent = guarded(&mut guard, &frames, dt, true);
+        let sent = guarded(&mut guard, &frames, dt);
         assert!(flashes(&sent, dt) <= 3);
     }
 
     #[test]
-    fn turned_off_it_changes_nothing() {
+    fn a_strobe_is_always_held() {
+        // Every guard, the one for lights set by hand included, holds a
+        // strobe: there is no setting that lets it through.
         let frames: Vec<Vec<BulbOutput>> = (0..100)
             .map(|k| vec![if k % 2 == 0 { white(100) } else { white(1) }])
             .collect();
-        let mut guard = FlashGuard::ambilight(1);
-        assert_eq!(guarded(&mut guard, &frames, 0.025, false), frames);
-        assert!(!guard.held(0));
-    }
-
-    #[test]
-    fn turned_on_mid_strobe_it_protects_at_once() {
-        // It watched while off, so the strobe has already spent the budget.
-        let frames: Vec<Vec<BulbOutput>> = (0..40)
-            .map(|k| vec![if k % 2 == 0 { white(100) } else { white(1) }])
-            .collect();
-        let mut guard = FlashGuard::new(1);
-        guarded(&mut guard, &frames, 0.025, false);
-        let mut next = vec![white(100)];
-        guard.apply(&mut next, 0.025, true);
-        assert!(next[0].bright() < 20, "{:?}", next[0]);
-        assert!(guard.held(0));
+        assert!(flashes(&frames, 0.025) > 3);
+        for mut guard in [
+            FlashGuard::new(1),
+            FlashGuard::show(1),
+            FlashGuard::ambilight(1),
+        ] {
+            let sent = guarded(&mut guard, &frames, 0.025);
+            assert!(flashes(&sent, 0.025) <= 3);
+            assert_ne!(sent, frames);
+        }
     }
 
     #[test]

@@ -69,11 +69,11 @@ pub(super) fn run_show(
         // the show.
         let dt = last.elapsed().as_secs_f32().min(0.25);
         last = Instant::now();
-        let Ok((settings, wall, safety)) = live.lock().map(|g| {
+        let Ok((settings, wall)) = live.lock().map(|g| {
             if let Some(ears) = &mut ears {
                 ears.follow(&g.audio);
             }
-            (g.show, g.wall, g.safety)
+            (g.show, g.wall)
         }) else {
             break;
         };
@@ -94,7 +94,7 @@ pub(super) fn run_show(
         };
         let mut outputs = show.frame(&settings, dt, levels);
         let asked = on_walls(&mut outputs, wall);
-        guard.apply(&mut outputs, dt, safety.flash_guard);
+        guard.apply(&mut outputs, dt);
         let sharp = show.sharp();
         // A light is struck when any of its zones is; a hit the guard held
         // back glides in like the rest.

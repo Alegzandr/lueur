@@ -368,8 +368,7 @@ fn no_white_flashes_when_turned_off() {
 fn white_flashes_stay_under_three_a_second() {
     // The top of a build: every snare walks a white flash to the next
     // light, eight a second. Each light flashes only twice a second; the
-    // room flashes eight times. With the protection off as on, the
-    // show's guard holds the room to three.
+    // room flashes eight times. The show's guard holds the room to three.
     let s = ShowSettings::default();
     let dt = 0.025;
     let mut stage = Stage::new(&Fixture::row(4));
@@ -388,19 +387,17 @@ fn white_flashes_stay_under_three_a_second() {
     assert_eq!(stage.section, Section::Build);
     let raw = room_white_flashes(&frames, dt);
     assert!(raw > 3, "the roll only flashes {raw} times a second");
-    for on in [false, true] {
-        let mut guard = FlashGuard::show(4);
-        let sent: Vec<Vec<BulbOutput>> = frames
-            .iter()
-            .map(|f| {
-                let mut f = f.clone();
-                guard.apply(&mut f, dt, on);
-                f
-            })
-            .collect();
-        let n = room_white_flashes(&sent, dt);
-        assert!(n <= 3, "{n} white flashes a second, protection on: {on}");
-    }
+    let mut guard = FlashGuard::show(4);
+    let sent: Vec<Vec<BulbOutput>> = frames
+        .iter()
+        .map(|f| {
+            let mut f = f.clone();
+            guard.apply(&mut f, dt);
+            f
+        })
+        .collect();
+    let n = room_white_flashes(&sent, dt);
+    assert!(n <= 3, "{n} white flashes a second");
 }
 
 #[test]

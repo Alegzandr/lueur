@@ -7,7 +7,7 @@ use crate::capture::{FrameSource, ScreenSource};
 use lueur_core::color::Rgb;
 use lueur_core::engine::{Ambilight, EngineSettings};
 use lueur_core::geometry::LightMapping;
-use lueur_core::safety::{FlashGuard, SafetySettings};
+use lueur_core::safety::FlashGuard;
 use lueur_core::stage::Fixture;
 use lueur_core::sync::{self, Lag};
 use lueur_core::yeelight::Effect;
@@ -158,7 +158,7 @@ pub(super) fn run_ambilight(
                 let outputs = engine.process_outputs(frame, &mappings);
                 let mut outputs = lag.run(dt, outputs, &mut unsharp, &waits);
                 let asked = on_walls(&mut outputs, settings.wall);
-                guard.apply(&mut outputs, dt, settings.safety.flash_guard);
+                guard.apply(&mut outputs, dt);
                 push_zoned(
                     lights,
                     &outputs,
@@ -190,7 +190,6 @@ struct Frame {
     effect: Effect,
     duration_ms: u32,
     wall: Rgb,
-    safety: SafetySettings,
     target_fps: u32,
 }
 
@@ -201,7 +200,6 @@ impl Frame {
             effect: s.effect,
             duration_ms: s.duration_ms,
             wall: s.wall,
-            safety: s.safety,
             target_fps: s.target_fps,
         }
     }

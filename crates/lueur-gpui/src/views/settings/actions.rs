@@ -62,7 +62,7 @@ impl Lueur {
 
     /// Replace the configuration with one from a file the user picks. The
     /// shell keeps what must stay this computer's (opening at login, the
-    /// pairings) and keeps the photosensitivity protection on if it was.
+    /// pairings).
     pub fn import_config(&mut self, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,

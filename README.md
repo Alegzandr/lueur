@@ -182,8 +182,7 @@ When a film or video doesn't fill the screen (a wide film with bands above
 and below it, a 16:9 video on an ultrawide screen), Lueur leaves the
 black bars out after a couple of seconds, so the lights near those edges
 follow the picture instead of going dark. Subtitles or a player's controls in
-a bar don't bring it back. *Ignore black bars* in **Settings** turns this
-off.
+a bar don't bring it back. This is always on; there is nothing to set.
 
 *Dark scenes*, in **Settings**, sets how much a dark picture lights the room:
 *Lit* (the default) keeps some light on even in a night scene, *As on screen*
@@ -192,11 +191,11 @@ between them. *Colour strength* sets how much the lights strengthen the
 picture's colours, from *As on screen* to *Vivid*: bulbs tend to wash out a
 screen's colours, so a little extra is on by default.
 
-With *Photosensitivity protection* on (the default, in **Settings**), no
-light flashes more than three times a second, and neither does the room when
-lights take turns, like a siren flashing left and right. A sudden glare, such
-as a flashbang, takes a tenth of a second to reach full brightness, and
-longer when the picture keeps flashing.
+No light flashes more than three times a second, and neither does the room
+when lights take turns, like a siren flashing left and right. A sudden glare,
+such as a flashbang, takes a tenth of a second to reach full brightness, and
+longer when the picture keeps flashing. This protection is always on and
+cannot be turned off, whatever plays and whatever a configuration file says.
 
 If the screen can't be read for a while (screen sharing stopped on Linux, a
 display gone), the Screen tile says so, and the lights keep their colour
@@ -270,8 +269,8 @@ others in coarser steps.
   bigger steps), <kbd>Delete</kbd> removes it, <kbd>Esc</kbd> deselects, and
   holding <kbd>Shift</kbd> while turning the screen snaps to 15°.
 - **Mistakes.** Removing a light can be undone, and the room plan has undo and
-  redo. Changes made while effects play come with a one-click
-  *Apply*.
+  redo. A change to the room while effects play reaches them by itself:
+  they restart on the new room a moment after you stop moving things.
 - **Music.** On Windows the Music effect listens to the computer's own sound,
   so it follows any song or game: the default output, another one, or only
   what one application plays (Settings, *Sound source*), so a call or a
@@ -309,8 +308,7 @@ others in coarser steps.
   imports it back, to keep a copy or move to another computer. The file holds
   no password or key, so it is safe to share; on another computer, pair the
   bridges and import Smart Life again. An import keeps the pairings already
-  made on this computer, and if the photosensitivity protection is on here,
-  it stays on.
+  made on this computer.
 
 ## How the room mapping works
 

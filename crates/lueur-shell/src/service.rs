@@ -212,8 +212,9 @@ pub fn save_config(shell: &Shell, mut config: AppConfig) -> AppResult<()> {
 }
 
 /// The config was replaced: persist it, push the live-tunable settings to a
-/// running effect (topology changes need a restart, which the UI performs
-/// explicitly) and let the tray grey out what needs a bulb.
+/// running effect (topology changes need a restart, which the window makes
+/// by itself once the room rests) and let the tray grey out what needs a
+/// bulb.
 fn applied(shell: &Shell) -> AppResult<()> {
     persist_and_go_live(shell)?;
     shell.tray_refresh();
@@ -223,7 +224,6 @@ fn applied(shell: &Shell) -> AppResult<()> {
 fn persist_and_go_live(state: &AppState) -> AppResult<()> {
     state.persist()?;
     let live = LiveSettings::of(&*state.lock_config()?);
-    state.manual.protect(live.safety.flash_guard);
     state.effects.update_live(live);
     Ok(())
 }
@@ -252,7 +252,7 @@ pub fn export_config(state: &AppState, path: &Path) -> AppResult<()> {
 /// Whether Lueur opens at login stays this computer's: it mirrors the OS
 /// login item, which an import does not touch. So do its pairings; those an
 /// older export carries are added to them. The photosensitivity protection
-/// stays on if it was.
+/// and the black-bar trim have no setting, so a file cannot turn them off.
 pub fn import_config(shell: &Shell, path: &Path) -> AppResult<AppConfig> {
     let invalid = |e: &dyn std::fmt::Display| AppError::new("import_invalid").detail(e);
     let size = std::fs::metadata(path).map_err(|e| invalid(&e))?.len();
@@ -267,9 +267,6 @@ pub fn import_config(shell: &Shell, path: &Path) -> AppResult<AppConfig> {
     {
         let mut guard = shell.lock_config()?;
         config.behavior.run_on_startup = guard.behavior.run_on_startup;
-        // A file may turn the photosensitivity protection on, never off:
-        // someone else's setup must not take it away without a word.
-        config.safety.flash_guard |= guard.safety.flash_guard;
         let mut pairings = guard.pairings.clone();
         secrets::merge_pairings(&mut pairings, std::mem::take(&mut config.pairings));
         config.pairings = pairings;
