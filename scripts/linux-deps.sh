@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Libraries needed to build Lueur on Linux: Tauri 2 (WebKitGTK, GTK, the tray),
-# audio capture (cpal: ALSA) and screen capture (xcap: X11 and Wayland; the
+# GPUI (fonts, keyboard, X11, Wayland, Vulkan), audio capture (cpal: ALSA) and screen capture (xcap: X11 and Wayland; the
 # ScreenCast portal stream: PipeWire, and libclang to generate its bindings).
 #
 # Debian/Ubuntu (apt), Fedora (dnf) and Arch (pacman). Ubuntu needs 24.04 or
@@ -29,7 +29,7 @@ if command -v apt-get >/dev/null 2>&1; then
     libdbus-1-dev \
     libasound2-dev \
     libpipewire-0.3-dev \
-    libwayland-dev libegl-dev libgbm-dev
+    libwayland-dev libegl-dev libgbm-dev     libfontconfig-dev libxkbcommon-x11-dev libx11-xcb-dev libvulkan-dev
 elif command -v dnf >/dev/null 2>&1; then
   $SUDO dnf install -y \
     gcc gcc-c++ make file pkgconf-pkg-config clang clang-devel \
@@ -44,7 +44,7 @@ elif command -v dnf >/dev/null 2>&1; then
     dbus-devel \
     alsa-lib-devel \
     pipewire-devel \
-    wayland-devel mesa-libEGL-devel mesa-libgbm-devel
+    wayland-devel mesa-libEGL-devel mesa-libgbm-devel     fontconfig-devel libxkbcommon-x11-devel libX11-devel vulkan-loader-devel
 elif command -v pacman >/dev/null 2>&1; then
   $SUDO pacman -S --needed --noconfirm \
     base-devel file pkgconf clang \
@@ -59,7 +59,7 @@ elif command -v pacman >/dev/null 2>&1; then
     dbus \
     alsa-lib \
     pipewire \
-    wayland libglvnd mesa
+    wayland libglvnd mesa     fontconfig libxkbcommon-x11 libx11 vulkan-icd-loader
 else
   echo "linux-deps.sh: no apt-get, dnf or pacman here; install the packages" >&2
   echo "listed in docs/DEVELOPMENT.md with your package manager." >&2

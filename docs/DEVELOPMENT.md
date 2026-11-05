@@ -327,7 +327,7 @@ timer skip the bulbs another computer holds.
 - [Rust](https://rustup.rs/) 1.90+ and [Node.js](https://nodejs.org/) 20.19+ or 22.12+.
 - Tauri CLI: `npm install` pulls it in as a dev dependency (`npm run tauri`).
 
-**Linux** also needs the Tauri, audio and capture system libraries. One
+**Linux** also needs the Tauri, GPUI, audio and capture system libraries. One
 command installs them on Debian/Ubuntu (24.04 or later), Fedora and Arch, and
 is what the CI runs:
 
@@ -342,16 +342,16 @@ It installs exactly these:
 sudo apt-get install build-essential file pkg-config clang libclang-dev \
   libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
   libsoup-3.0-dev libssl-dev libxdo-dev libxcb1-dev libxrandr-dev libdbus-1-dev \
-  libasound2-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev
+  libasound2-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \n  libfontconfig-dev libxkbcommon-x11-dev libx11-xcb-dev libvulkan-dev
 # Fedora
 sudo dnf install gcc gcc-c++ make file pkgconf-pkg-config clang clang-devel \
   webkit2gtk4.1-devel gtk3-devel libappindicator-gtk3-devel librsvg2-devel \
   libsoup3-devel openssl-devel libxdo-devel libxcb-devel libXrandr-devel dbus-devel \
-  alsa-lib-devel pipewire-devel wayland-devel mesa-libEGL-devel mesa-libgbm-devel
+  alsa-lib-devel pipewire-devel wayland-devel mesa-libEGL-devel mesa-libgbm-devel \n  fontconfig-devel libxkbcommon-x11-devel libX11-devel vulkan-loader-devel
 # Arch
 sudo pacman -S --needed base-devel file pkgconf clang \
   webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg libsoup3 openssl xdotool \
-  libxcb libxrandr dbus alsa-lib pipewire wayland libglvnd mesa
+  libxcb libxrandr dbus alsa-lib pipewire wayland libglvnd mesa \n  fontconfig libxkbcommon-x11 libx11 vulkan-icd-loader
 ```
 
 At run time, Wayland capture needs `xdg-desktop-portal` and the desktop's
@@ -364,6 +364,17 @@ npm install
 npm run tauri dev      # hot-reloading app window
 ```
 
+The GPUI interface that is replacing the Tauri one runs on its own, with no
+npm step. It reads the same settings folder, so point it at another one to
+try it without touching your bulbs:
+
+```bash
+cargo run -p lueur-gpui
+LUEUR_DATA_DIR=/tmp/lueur-try cargo run -p lueur-gpui
+```
+
+The two never run at once: each recognises the other as Lueur already
+running and brings its window up instead.
 
 The UI also runs in a plain browser for design work: `npm run dev`, then open
 `http://localhost:1420/?demo` for a furnished sample room (add `&shared` to

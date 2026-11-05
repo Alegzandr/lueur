@@ -1,0 +1,49 @@
+[package]
+name = "lueur-gpui"
+description = "Lueur's window, drawn with GPUI over lueur-shell."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+# Its own binary name while the Tauri shell still builds `lueur` in the same
+# target folder. It takes that name when it replaces the Tauri one, since the
+# release and the updater ship `lueur` (see .github/workflows/release.yml).
+[[bin]]
+name = "lueur-gpui"
+path = "src/main.rs"
+
+[dependencies]
+lueur-core = { path = "../lueur-core" }
+lueur-shell = { path = "../lueur-shell" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { version = "0.4.29", features = ["kv"] }
+gpui = { workspace = true }
+gpui_platform = { workspace = true }
+# The shell's events, from its worker threads to the window's thread.
+async-channel = "2.5"
+# The system's language, when the interface follows it. Already in the tree
+# through GPUI.
+sys-locale = "0.3"
+# The tray icon's pixels.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# The tray: the crate Tauri's own tray uses, without Tauri. On Linux it needs
+# a GTK loop of its own, which this shell does not run yet.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+tray-icon = "0.25"
+
+# One instance at a time, recognised by the Tauri version too (src/single.rs).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui_platform = { workspace = true, features = ["wayland", "x11"] }
