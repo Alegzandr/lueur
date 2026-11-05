@@ -10,6 +10,7 @@
 mod actions;
 mod backdrop;
 mod controls;
+mod glow;
 mod lights;
 mod model;
 mod modes;

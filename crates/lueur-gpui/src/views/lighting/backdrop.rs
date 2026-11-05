@@ -2,26 +2,28 @@
 //! per light where it stands, in the colour it was last sent; behind the
 //! other pages, the room's photograph as its lights make it now.
 //!
-//! GPUI has neither a shader for the page nor a blur filter. The pools are
-//! soft shadows of round shapes, which GPUI blurs as Gaussian bells, laid
-//! over the ground rather than added as light. The photograph is drawn
-//! several times, a little apart and each fainter, which averages it into a
-//! blur; on paper a wash of the ground then lifts it to a high key, as the
-//! stylesheet's filter does.
+//! The pools are worked out as the Tauri versions' shader worked them out
+//! (see `glow.rs`) and stepped once per frame the screen shows. GPUI has no
+//! blur filter: the photograph is drawn several times, a little apart and
+//! each fainter, which averages it into a blur; on paper a wash of the
+//! ground then lifts it to a high key, as the stylesheet's filter did.
 
 use super::controls::photo;
+use super::glow;
 use super::model::{Doing, Look, Room, kelvin_rgb, seen_from, tint_rgb};
 use crate::state::{Lueur, View};
 use crate::theme::{Theme, theme};
 use gpui::{
-    Animation, AnimationExt, BoxShadow, Context, Entity, Hsla, IntoElement, Render, Rgba, Task,
-    Window, div, ease_in_out, linear_color_stop, linear_gradient, prelude::*, px,
+    Animation, AnimationExt, Bounds, BoxShadow, Context, Corners, Entity, Hsla, IntoElement,
+    Render, RenderImage, Rgba, Task, Window, div, ease_in_out, linear_color_stop, linear_gradient,
+    point, prelude::*, px, size,
 };
 use lueur_shell::runner::Glow;
 use lueur_shell::service;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// What a zone's pool shows on screen, eased toward what its light shows.
@@ -44,6 +46,18 @@ pub struct GlowBackdrop {
     /// pools and asks for the next one. Once they rest, nothing is drawn
     /// until the lights change again.
     animating: bool,
+    /// The glow as last worked out, and for which page size and theme.
+    image: Option<(Arc<RenderImage>, (f32, f32), bool)>,
+    /// Glow images replaced since the last paint, to free on the GPU.
+    stale: Rc<std::cell::RefCell<Vec<Arc<RenderImage>>>>,
+    /// The dither laid over the glow (see `glow::noise`).
+    noise: Arc<RenderImage>,
+}
+
+/// BGRA pixels as an image GPUI draws.
+fn bgra_image(w: u32, h: u32, pixels: Vec<u8>) -> Option<Arc<RenderImage>> {
+    let buffer = image::RgbaImage::from_raw(w, h, pixels)?;
+    Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
 }
 
 impl GlowBackdrop {
@@ -66,6 +80,10 @@ impl GlowBackdrop {
             last: Instant::now(),
             size: (0.0, 0.0),
             animating: false,
+            image: None,
+            stale: Rc::default(),
+            noise: bgra_image(glow::NOISE_SIDE, glow::NOISE_SIDE, glow::noise())
+                .expect("the dither tile has its own size"),
         };
         this.wake(cx);
         this
@@ -188,12 +206,6 @@ impl GlowBackdrop {
     }
 }
 
-/// More saturated, as coloured light on a wall looks.
-fn saturate(rgb: [f32; 3], by: f32) -> [f32; 3] {
-    let grey = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
-    rgb.map(|c| (grey + (c - grey) * by).clamp(0.0, 255.0))
-}
-
 fn colour(rgb: [f32; 3], a: f32) -> Hsla {
     Rgba {
         r: rgb[0] / 255.0,
@@ -241,37 +253,109 @@ impl Render for GlowBackdrop {
         )
         .absolute()
         .size_full();
-        let arrival = self.arrival();
-        let pools = self.shown.values().map(|p| {
-            // The pool's reach; the eye reads a dim bulb as brighter than
-            // its share of full power.
-            let reach = w.max(h) * (0.32 + 0.12 * p.level);
-            let alpha = (0.75 * p.level.powf(0.6) * strength * arrival).min(1.0);
-            // A round shape a third of the reach, blurred to a bell that
-            // fades out by the reach; its blur thins its middle, which the
-            // colour's strength makes up for.
-            let core = reach * 0.7;
-            div()
-                .absolute()
-                .left(px(p.x * w - core / 2.0))
-                .top(px(p.y * h - core / 2.0))
-                .size(px(core))
-                .rounded_full()
-                .shadow(vec![
-                    BoxShadow::new(
-                        px(0.0),
-                        px(0.0),
-                        colour(saturate(p.rgb, saturation), (alpha * 2.0).min(1.0)),
-                    )
-                    .blur_radius(px(reach * 0.55)),
-                ])
-        });
+        // Worked out again only when something moved, the page changed size
+        // or the theme changed; otherwise the last glow is drawn as it was.
+        let fresh = self
+            .image
+            .as_ref()
+            .is_some_and(|(_, at, dark)| *at == (w, h) && *dark == theme.dark);
+        if self.animating || !fresh {
+            let pools: Vec<glow::Pool> = self
+                .shown
+                .values()
+                .map(|p| glow::Pool {
+                    x: p.x,
+                    y: p.y,
+                    rgb: p.rgb,
+                    level: p.level,
+                })
+                .collect();
+            let (tw, th) = glow::image_size(w, h);
+            let pixels = glow::render(
+                &pools,
+                (w, h),
+                (tw, th),
+                strength * self.arrival(),
+                saturation,
+            );
+            if let Some(image) = bgra_image(tw, th, pixels)
+                && let Some((old, _, _)) = self.image.replace((image, (w, h), theme.dark))
+            {
+                self.stale.borrow_mut().push(old);
+            }
+        }
+        let glow_image = self.image.as_ref().map(|(i, _, _)| i.clone());
+        // Where light reaches, the only place the dither goes: the rest of
+        // the page stays perfectly plain.
+        let lit: Vec<(f32, f32, f32)> = self
+            .shown
+            .values()
+            .filter(|p| p.level > 0.0)
+            .map(|p| {
+                glow::reach_square(
+                    &glow::Pool {
+                        x: p.x,
+                        y: p.y,
+                        rgb: p.rgb,
+                        level: p.level,
+                    },
+                    (w, h),
+                )
+            })
+            .collect();
+        let noise = self.noise.clone();
+        let stale = self.stale.clone();
+        let paint = gpui::canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                if let Some(image) = glow_image {
+                    let _ = window.paint_image(bounds, bounds, Corners::default(), image, 0, false);
+                    // The dither, one tile pixel to one screen pixel, where
+                    // light reaches. Tiles sit on one grid for the whole
+                    // page, so two pools' squares never show a seam.
+                    let side = glow::NOISE_SIDE as f32 / window.scale_factor();
+                    let (ox, oy) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+                    let (bw, bh) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+                    let cols = (bw / side).ceil() as i32;
+                    let rows = (bh / side).ceil() as i32;
+                    for row in 0..rows {
+                        for col in 0..cols {
+                            let (tx, ty) = (col as f32 * side, row as f32 * side);
+                            let touched = lit.iter().any(|&(l, t, s)| {
+                                tx < l + s && tx + side > l && ty < t + s && ty + side > t
+                            });
+                            if !touched {
+                                continue;
+                            }
+                            let tile = Bounds::new(
+                                point(px(ox + tx), px(oy + ty)),
+                                size(px(side), px(side)),
+                            );
+                            let _ = window.paint_image(
+                                bounds,
+                                tile,
+                                Corners::default(),
+                                noise.clone(),
+                                0,
+                                false,
+                            );
+                        }
+                    }
+                }
+                // The glow images this one replaced are no longer drawn.
+                for old in stale.borrow_mut().drain(..) {
+                    let _ = window.drop_image(old);
+                }
+            },
+        )
+        .absolute()
+        .size_full();
         div()
             .absolute()
             .inset_0()
             .overflow_hidden()
             .child(measure)
-            .children(pools)
+            .child(paint)
     }
 }
 
