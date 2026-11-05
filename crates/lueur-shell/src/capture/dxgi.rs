@@ -708,7 +708,7 @@ mod tests {
     /// Time the shrink-and-read path on the real primary display, per
     /// presented frame. Needs a desktop session and something moving on
     /// screen, so it only runs on request:
-    /// `cargo test -p lueur capture_cost -- --ignored --nocapture`
+    /// `cargo test -p lueur-shell capture_cost -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn dxgi_capture_cost() {

@@ -361,7 +361,7 @@ Also worth a test where it applies:
 
 Tests must not need a bulb. A test against real hardware is `#[ignore]`d
 and reads its address from an environment variable (see the Tuya one in
-`src-tauri/src/tuya.rs`).
+`crates/lueur-shell/src/tuya.rs`).
 
 `cargo test -p lueur-core` runs them; the whole check before a pull request
 is at the [end of this guide](#before-the-pull-request).
@@ -415,14 +415,14 @@ DEVELOPMENT.md):
   address it was granted at, or over TLS to a pinned certificate; anything
   else is listed unpaired and kept in `identity.rs` for the user to confirm.
 - **Kept from the interface and from exports**: `blank()` and `restore()`
-  in `src-tauri/src/secrets.rs`.
+  in `crates/lueur-shell/src/secrets.rs`.
 - **Sealed on disk**: `credential_mut()`, `holds_credentials()` and `fill()`
-  in `src-tauri/src/vault.rs`.
+  in `crates/lueur-shell/src/vault.rs`.
 - **Never in a log**: mask it in the hand-written `Debug` impls in
   `device/mod.rs` (the kind, and the pairing type) with `Masked`, give the
   stream's wire `.hiding(credential)` if the credential travels with
   requests, and never name it in a log call. The test
-  `no_log_call_names_a_credential` in `src-tauri/src/logging.rs` fails on a
+  `no_log_call_names_a_credential` in `crates/lueur-shell/src/logging.rs` fails on a
   log call that formats a variable called `token`, `key`, `username` and
   the like; add the credential's field name to its list if it is a new
   one.

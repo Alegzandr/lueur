@@ -33,14 +33,13 @@ use std::time::{Duration, Instant};
 
 use lueur_core::config::{Appearance, Language};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-use crate::state::AppState;
+use lueur_shell::Shell;
+use std::sync::Arc;
 
 pub const SPLASH: &str = "splash";
-/// Event the frontend listens to, with the installed version as payload.
-pub const UPDATE_READY: &str = "update-ready";
 /// Often enough that a running app offers a new version the day it is out;
 /// each check is one small HTTPS request.
 const CHECK_EVERY: Duration = Duration::from_secs(60 * 60);
@@ -79,8 +78,6 @@ pub struct UpdateState {
     progress: Mutex<Progress>,
     /// The version that failed to install in this process.
     failed: Mutex<Option<String>>,
-    /// Version already installed and waiting for a restart.
-    ready: Mutex<Option<String>>,
 }
 
 #[tauri::command]
@@ -90,25 +87,16 @@ pub fn update_progress(state: State<'_, UpdateState>) -> Progress {
 
 /// The version installed while the app was running, if any.
 #[tauri::command]
-pub fn update_ready(state: State<'_, UpdateState>) -> Option<String> {
-    state.ready.lock().ok().and_then(|r| r.clone())
-}
-
-/// [`update_ready`], for the tray.
-pub fn ready(app: &AppHandle) -> Option<String> {
-    app.try_state::<UpdateState>()?
-        .ready
-        .lock()
-        .ok()
-        .and_then(|r| r.clone())
+pub fn update_ready(shell: State<'_, Arc<Shell>>) -> Option<String> {
+    shell.update_ready()
 }
 
 /// Restarts into the installed version.
 #[tauri::command]
 pub fn restart_app(app: AppHandle) {
     // The bulbs are in music mode while the effect runs: hand them back.
-    if let Some(state) = app.try_state::<AppState>() {
-        crate::lights::suspend(&state, false);
+    if let Some(shell) = app.try_state::<Arc<Shell>>() {
+        lueur_shell::lights::suspend(&shell, false);
     }
     // Goes through RunEvent::Exit so the single-instance lock is released
     // before the new process starts; `restart()` would skip it.
@@ -147,7 +135,7 @@ impl Failure {
 }
 
 fn failed_path(app: &AppHandle) -> PathBuf {
-    app.state::<AppState>().data_dir.join(FAILED_FILE)
+    app.state::<Arc<Shell>>().data_dir.join(FAILED_FILE)
 }
 
 fn failed_version(app: &AppHandle) -> Option<String> {
@@ -201,7 +189,7 @@ pub fn enabled() -> bool {
 /// system's.
 fn splash_url(app: &AppHandle) -> String {
     let interface = app
-        .state::<AppState>()
+        .state::<Arc<Shell>>()
         .lock_config()
         .map(|c| c.interface)
         .unwrap_or_default();
@@ -274,11 +262,8 @@ async fn watch(app: AppHandle, mut wait: Duration) {
         tokio::time::sleep(wait).await;
         wait = match check_and_install(&app, false).await {
             Ok(Some(version)) => {
-                if let Ok(mut r) = app.state::<UpdateState>().ready.lock() {
-                    *r = Some(version.clone());
-                }
-                let _ = app.emit(UPDATE_READY, version);
-                crate::tray::refresh(&app);
+                // Tells the window and brings the tray up to date.
+                app.state::<Arc<Shell>>().set_update_ready(version);
                 // Installed: nothing more to do until the next restart.
                 return;
             }
@@ -371,7 +356,7 @@ fn install(update: &Update, bytes: &[u8]) -> Result<(), String> {
         .and_then(|()| self_replace::self_replace(&tmp).map_err(|e| e.to_string()));
     let _ = std::fs::remove_file(&tmp);
     if result.is_ok() {
-        crate::install::updated(&update.version);
+        lueur_shell::install::updated(&update.version);
     }
     result
 }

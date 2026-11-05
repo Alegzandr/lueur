@@ -2,7 +2,7 @@
 //! frame, and the CPU the process uses at the target rate. No bulb needed.
 //!
 //! ```text
-//! cargo run --release -p lueur --example capture_bench -- [options]
+//! cargo run --release -p lueur-shell --example capture_bench -- [options]
 //!   --backend NAME   auto (what the ambilight uses), gdi, xcap, or all (default)
 //!   --frames N       frames measured per backend (default 300)
 //!   --fps N          target rate (default 45, the app's default)
@@ -13,7 +13,7 @@
 //! Something should move on screen (a video, a game) while it runs: a still
 //! desktop sends Desktop Duplication and PipeWire nothing new to read.
 
-use lueur_lib::capture_bench::{Report, Setup, backends, run};
+use lueur_shell::capture_bench::{Report, Setup, backends, run};
 
 fn main() {
     let mut setup = Setup::default();

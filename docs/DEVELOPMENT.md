@@ -26,7 +26,7 @@ lueur/
 │   │                     relink.rs brings dropped bulbs back, lease.rs
 │   │                     shares bulbs with other computers running Lueur
 │   └─ config.rs          Persisted settings
-├─ src-tauri/             Desktop shell (Tauri v2)
+├─ crates/lueur-shell/    The desktop service, no GUI: what the window calls
 │   ├─ capture.rs         Screen capture behind a FrameSource trait
 │   │  ├─ dxgi.rs        Windows: Desktop Duplication, GPU-downscaled
 │   │  ├─ gdi.rs         Windows fallback: GDI, shrunk while it copies
@@ -46,19 +46,24 @@ lueur/
 │   ├─ devices.rs         Dispatch between the core families and Tuya
 │   ├─ tuya.rs            Tuya LAN control (rustuya), discovery by key
 │   ├─ tuya_cloud.rs      Smart Life QR sign-in that imports local keys
-│   ├─ commands.rs        Validated IPC surface
+│   ├─ service.rs         The commands a window calls, validated
+│   ├─ tray_model.rs      What the tray menu shows and what its items do
 │   ├─ secrets.rs         Credentials kept from the UI and from exports
 │   ├─ identity.rs        Paired bridges heard where nothing vouches for them
 │   ├─ peers.rs           Talks with other computers running Lueur (LAN)
 │   ├─ vault.rs           Credentials sealed on disk, the key in the OS keyring
-│   ├─ tray.rs            Tray menu: start/stop, open, quit
-│   ├─ titlebar.rs        Windows: the title bar drawn by the page
+│   ├─ autostart.rs       Launch at login, the same entry the Tauri plugin wrote
 │   ├─ error.rs           Errors sent as codes the UI words in its language
 │   ├─ logging.rs         Logs to stderr and a capped file, set by LUEUR_LOG
 │   ├─ install.rs         Windows: silent per-user install and uninstall
-│   ├─ updater.rs         Startup splash and updates from GitHub releases
 │   ├─ state.rs, paths.rs Shared app state; where the data folder is
-│   └─ lib.rs             Tray, autostart, single-instance, window handling
+│   └─ lib.rs             Shell, the events it raises and the Host that hears them
+├─ src-tauri/             The window, drawn by Tauri v2 over lueur-shell
+│   ├─ commands.rs        IPC wrappers over lueur_shell::service
+│   ├─ tray.rs            The tray, drawn from lueur_shell::tray_model
+│   ├─ titlebar.rs        Windows: the title bar drawn by the page
+│   ├─ updater.rs         Startup splash and updates from GitHub releases
+│   └─ lib.rs             Single-instance, window handling, events to the page
 └─ src/                   Svelte 5 (runes) + TypeScript frontend
     ├─ lib/state.svelte.ts  App state and every action the UI can take
     ├─ lib/state/           …split by concern: app, config, devices, effect,
@@ -132,7 +137,7 @@ What it costs is measured by an example that runs capture and colour
 computation at the target rate without any bulb:
 
 ```bash
-cargo run --release -p lueur --example capture_bench -- --help
+cargo run --release -p lueur-shell --example capture_bench -- --help
 ```
 
 On the reference machine (Ryzen 7 9850X3D, RTX 4080 SUPER, Windows 11, one
@@ -160,7 +165,7 @@ bans the APIs that would break them, and the app crate denies those lints.
 ### Smart Life sign-in
 
 The QR sign-in uses the partner id Home Assistant ships with Tuya's SDK
-(`CLIENT_ID` in `src-tauri/src/tuya_cloud.rs`). A public release should
+(`CLIENT_ID` in `crates/lueur-shell/src/tuya_cloud.rs`). A public release should
 register its own with Tuya.
 
 ### Hue streaming
@@ -358,6 +363,7 @@ portal backend (`-gnome`, `-kde`, `-wlr`…), which desktops install already.
 npm install
 npm run tauri dev      # hot-reloading app window
 ```
+
 
 The UI also runs in a plain browser for design work: `npm run dev`, then open
 `http://localhost:1420/?demo` for a furnished sample room (add `&shared` to

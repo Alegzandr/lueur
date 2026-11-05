@@ -211,7 +211,7 @@ mod tests {
 
     /// Time the shrinking GDI copy on the real primary display. Needs a
     /// desktop session, so it only runs on request:
-    /// `cargo test -p lueur capture_cost -- --ignored --nocapture`
+    /// `cargo test -p lueur-shell capture_cost -- --ignored --nocapture`
     #[test]
     fn samples_at_twice_the_readback() {
         assert_eq!(sample_size(2560, 1440), (640, 360));

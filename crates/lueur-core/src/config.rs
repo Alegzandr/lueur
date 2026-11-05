@@ -1,6 +1,6 @@
 //! Persistent configuration.
 //!
-//! The shell decides where the data directory is (see `src-tauri/src/paths.rs`);
+//! The shell decides where the data directory is (see `crates/lueur-shell/src/paths.rs`);
 //! this module only reads and writes `config.json` inside it.
 
 use crate::device::{DeviceKind, Endpoint, Pairings};

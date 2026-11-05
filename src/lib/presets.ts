@@ -3,7 +3,7 @@
 //
 // A feel is its smoothing: how fast the light follows the picture. The bulb's
 // own fade is fitted to the time between two updates whatever is asked (see
-// `pace` in src-tauri/src/runner/ambilight.rs), so a feel does not set one;
+// `pace` in crates/lueur-shell/src/runner/ambilight.rs), so a feel does not set one;
 // it only keeps the fade on.
 
 import type { AppConfig } from "./types";

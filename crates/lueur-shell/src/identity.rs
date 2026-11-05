@@ -17,10 +17,6 @@ use crate::lights::validate_ip;
 use crate::state::AppState;
 use lueur_core::device::{DeviceKind, DiscoveredDevice, Pairings, hue, nanoleaf};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
-
-/// Event the frontend listens to, with every [`Unverified`] as payload.
-pub const DEVICE_UNVERIFIED: &str = "device-unverified";
 
 /// A paired device heard where nothing proves it is the one paired.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -136,19 +132,18 @@ pub fn forget(pairings: &mut Pairings, u: &Unverified) -> AppResult<()> {
 
 /// Keep what the search that found `found` could not vouch for, and tell
 /// the interface when there is something to ask.
-pub fn note(app: &AppHandle, found: &[DiscoveredDevice]) -> AppResult<()> {
-    let state = app.state::<AppState>();
+pub fn note(shell: &crate::Shell, found: &[DiscoveredDevice]) -> AppResult<()> {
+    let state: &AppState = shell;
     let list = unverified(&state.lock_config()?.pairings, found);
     *state.unverified.lock().map_err(|_| AppError::poisoned())? = list.clone();
     if !list.is_empty() {
-        let _ = app.emit(DEVICE_UNVERIFIED, list);
+        shell.emit(crate::Event::DevicesUnverified(list));
     }
     Ok(())
 }
 
 /// The devices waiting for the user's word, from the last search.
-#[tauri::command]
-pub fn unverified_devices(state: State<'_, AppState>) -> AppResult<Vec<Unverified>> {
+pub fn unverified_devices(state: &AppState) -> AppResult<Vec<Unverified>> {
     Ok(state
         .unverified
         .lock()
@@ -160,8 +155,7 @@ pub fn unverified_devices(state: State<'_, AppState>) -> AppResult<Vec<Unverifie
 /// theirs. Only one that search listed can be confirmed, at the address and
 /// with the certificate it was heard with: the interface names it, nothing
 /// more.
-#[tauri::command]
-pub fn confirm_device(state: State<'_, AppState>, id: String) -> AppResult<()> {
+pub fn confirm_device(state: &AppState, id: &str) -> AppResult<()> {
     let u = state
         .unverified
         .lock()
@@ -189,8 +183,7 @@ pub fn confirm_device(state: State<'_, AppState>, id: String) -> AppResult<()> {
 /// Forget the pairing of the bridge `id` the last search found showing
 /// another certificate than the pinned one, so the user can pair it again
 /// with its button (a bridge they reset). Its lights lose their username.
-#[tauri::command]
-pub fn forget_device(state: State<'_, AppState>, id: String) -> AppResult<()> {
+pub fn forget_device(state: &AppState, id: &str) -> AppResult<()> {
     let u = state
         .unverified
         .lock()

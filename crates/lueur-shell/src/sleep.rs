@@ -15,15 +15,10 @@
 use crate::error::{AppError, AppResult};
 use crate::lights;
 use crate::state::AppState;
-use crate::tray;
+use crate::{Event, Shell};
 use lueur_core::scene::LightState;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
-
-/// Event telling the frontend the timer was set, cancelled or ran out. The
-/// payload is its [`Status`], or null.
-pub const SLEEP_CHANGED: &str = "sleep-changed";
 
 /// The longest timer the interface may ask for, in minutes.
 pub const MAX_MINUTES: u32 = 240;
@@ -94,11 +89,11 @@ pub fn fading(state: &AppState) -> bool {
 
 /// Set the timer to go off in `minutes` (replacing any other), or cancel it
 /// with `None`.
-pub fn set(app: &AppHandle, minutes: Option<u32>) -> AppResult<Option<Status>> {
+pub fn set(shell: &Arc<Shell>, minutes: Option<u32>) -> AppResult<Option<Status>> {
     if minutes.is_some_and(|m| m == 0 || m > MAX_MINUTES) {
         return Err(AppError::new("invalid_timer"));
     }
-    let state = app.state::<AppState>();
+    let state: &AppState = shell;
     let generation = {
         let mut t = state.sleep.lock();
         t.generation += 1;
@@ -108,37 +103,37 @@ pub fn set(app: &AppHandle, minutes: Option<u32>) -> AppResult<Option<Status>> {
         t.generation
     };
     if minutes.is_some() {
-        let handle = app.clone();
+        let handle = Arc::clone(shell);
         std::thread::Builder::new()
             .name("lueur-sleep".into())
             .spawn(move || run(&handle, generation))
             .map_err(AppError::internal)?;
     }
-    changed(app);
-    Ok(status(&state))
+    changed(shell);
+    Ok(status(state))
 }
 
-fn run(app: &AppHandle, generation: u64) {
-    let state = app.state::<AppState>();
+fn run(shell: &Shell, generation: u64) {
+    let state: &AppState = shell;
     // Until the lights are out or the timer is cancelled.
     let _awake = crate::awake::Awake::hold();
     loop {
         if !state.sleep.current(generation) {
             return;
         }
-        if remaining(&state).is_none_or(|left| left <= FADE.as_secs()) {
+        if remaining(state).is_none_or(|left| left <= FADE.as_secs()) {
             break;
         }
         std::thread::sleep(POLL);
     }
 
     state.sleep.lock().fading = true;
-    crate::auto::user_took_over(&state);
-    lights::stop_effect(&state, false);
-    changed(app);
+    crate::auto::user_took_over(state);
+    lights::stop_effect(state, false);
+    changed(shell);
 
-    if fade(&state, generation) {
-        if let Err(e) = lights::sleep_all(&state) {
+    if fade(state, generation) {
+        if let Err(e) = lights::sleep_all(state) {
             log::warn!("cannot put the lights out at the end of the sleep timer: {e}");
         }
         let mut t = state.sleep.lock();
@@ -149,8 +144,8 @@ fn run(app: &AppHandle, generation: u64) {
             };
         }
     }
-    tray::lights_changed(app, None);
-    changed(app);
+    shell.lights_changed(None);
+    changed(shell);
 }
 
 /// Dim every light that is on down to its lowest, but those whose bulb
@@ -196,7 +191,7 @@ fn fade(state: &AppState, generation: u64) -> bool {
     false
 }
 
-fn changed(app: &AppHandle) {
-    let _ = app.emit(SLEEP_CHANGED, status(&app.state::<AppState>()));
-    tray::refresh(app);
+fn changed(shell: &Shell) {
+    shell.emit(Event::SleepChanged(status(shell)));
+    shell.tray_refresh();
 }

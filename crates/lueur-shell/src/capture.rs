@@ -324,7 +324,7 @@ mod tests {
 
     /// Time `xcap`'s one-shot capture on the real primary display. Needs a
     /// desktop session, so it only runs on request:
-    /// `cargo test -p lueur capture_cost -- --ignored --nocapture`
+    /// `cargo test -p lueur-shell capture_cost -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn xcap_capture_cost() {

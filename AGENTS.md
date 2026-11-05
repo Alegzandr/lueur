@@ -10,8 +10,11 @@ changing something.
 - `crates/lueur-core/`: pure Rust, no GUI, fully unit-tested. Colour, room
   geometry, the engine, the music stage, the photosensitivity guard, and
   every bulb family behind one API.
-- `src-tauri/`: the Tauri v2 desktop shell. Screen capture, the live loops,
-  the IPC commands, secrets, the tray.
+- `crates/lueur-shell/`: the desktop service, no GUI. Screen capture, the
+  live loops, the bulbs, secrets, the background workers and the commands a
+  window calls (`service.rs`), behind a `Host` each front end implements.
+- `src-tauri/`: the Tauri v2 window over `lueur-shell`: the IPC wrappers,
+  the tray, the splash and its updater.
 - `src/`: the interface, Svelte 5 (runes) and TypeScript. Views in
   `src/lib/views/`, shared controls in `src/lib/ui/`, design tokens in
   `src/styles/app.css`.
@@ -45,7 +48,7 @@ they pass.
   second). Never route light around it.
 - **Privacy.** Bulbs are reached only at private addresses. The only outside
   traffic is the update check and the Smart Life sign-in. Credentials stay
-  out of the UI and out of exported configurations (`src-tauri/src/secrets.rs`).
+  out of the UI and out of exported configurations (`crates/lueur-shell/src/secrets.rs`).
 - **Two languages.** Every user-facing string goes in `src/lib/i18n.ts`, in
   both `en` and `fr`, with the same standing. Brand names don't translate.
 - **Both themes.** Any new design token is defined for light, OS dark and

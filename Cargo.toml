@@ -4,13 +4,14 @@
 # we want to unit-test in isolation (room geometry, the Yeelight protocol,
 # colour processing, the screen colour engine and config persistence).
 #
-# `src-tauri` is the desktop shell. It depends on `lueur-core` and wires it up
-# to real screen capture (xcap) and the Tauri webview. It is intentionally kept
-# thin so that the interesting, security-sensitive logic lives in the core crate
-# where it can be tested without a display server or webview.
+# `lueur-shell` is the desktop service without a GUI: real screen capture,
+# the bulbs on the network, the background workers and the commands a window
+# calls. `src-tauri` puts it in a Tauri webview, and stays thin, so the
+# interesting, security-sensitive logic lives where it can be tested without
+# a display server.
 [workspace]
 resolver = "2"
-members = ["crates/lueur-core", "src-tauri"]
+members = ["crates/lueur-core", "crates/lueur-shell", "src-tauri"]
 
 [workspace.package]
 version = "0.18.2"

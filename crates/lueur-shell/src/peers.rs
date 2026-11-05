@@ -12,16 +12,14 @@
 //! reaches a bulb: the worst a forged one can do is make a light wait,
 //! which the user's take overrides.
 
-use crate::error::AppError;
 use crate::state::AppState;
-use crate::tray;
+use crate::{Event, Shell};
 use lueur_core::device::common::{broadcast_targets, is_lan};
 use lueur_core::device::lease::{self, Announce};
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
 
 /// The port every instance listens and broadcasts on.
 pub const PORT: u16 = 47_474;
@@ -35,11 +33,11 @@ const RETARGET: Duration = Duration::from_secs(30);
 const NOTIFY_GAP: Duration = Duration::from_millis(250);
 
 /// Talk with the other instances for as long as the app runs.
-pub fn spawn(app: &AppHandle) {
-    let app = app.clone();
+pub fn spawn(shell: &Arc<Shell>) {
+    let shell = Arc::clone(shell);
     let _ = std::thread::Builder::new()
         .name("lueur-peers".into())
-        .spawn(move || run(&app));
+        .spawn(move || run(&shell));
 }
 
 /// The socket announcements go out of and come in on. Another program on
@@ -63,8 +61,8 @@ fn send(socket: &UdpSocket, targets: &[Ipv4Addr], a: &Announce) {
     }
 }
 
-fn run(app: &AppHandle) {
-    let leases = Arc::clone(&app.state::<AppState>().leases);
+fn run(shell: &Shell) {
+    let leases = Arc::clone(&shell.leases);
     let socket = match bind() {
         Ok(s) => s,
         Err(e) => {
@@ -110,7 +108,7 @@ fn run(app: &AppHandle) {
         if version != seen && notified.is_none_or(|t| t.elapsed() >= NOTIFY_GAP) {
             seen = version;
             notified = Some(Instant::now());
-            let _ = app.emit(tray::EFFECT_CHANGED, None::<AppError>);
+            shell.emit(Event::EffectChanged(None));
         }
     }
 }

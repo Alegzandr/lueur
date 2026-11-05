@@ -14,9 +14,9 @@
 use crate::lights;
 use crate::runner::Mode;
 use crate::state::AppState;
-use crate::tray;
+use crate::{Event, Shell};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
 
 /// How often fullscreen is checked. A start takes a moment anyway (the bulbs
 /// have to be reached), so polling faster would not be noticed.
@@ -27,9 +27,6 @@ const GRACE: Duration = Duration::from_secs(4);
 
 /// Whether this system can tell when something is fullscreen.
 pub const SUPPORTED: bool = cfg!(windows);
-
-/// Sent to the window when automatic mode started the ambilight.
-pub const AUTO_STARTED: &str = "auto-started";
 
 #[cfg(windows)]
 fn fullscreen() -> bool {
@@ -94,14 +91,14 @@ pub enum Owner {
 }
 
 /// Watch for fullscreen for as long as the app runs.
-pub fn spawn(app: &AppHandle) {
+pub fn spawn(shell: &Arc<Shell>) {
     if !SUPPORTED {
         return;
     }
-    let app = app.clone();
+    let shell = Arc::clone(shell);
     let _ = std::thread::Builder::new()
         .name("lueur-auto".into())
-        .spawn(move || watch(&app));
+        .spawn(move || watch(&shell));
 }
 
 /// What the watcher does after one look at the screen.
@@ -134,13 +131,13 @@ fn step(in_session: bool, enabled: bool, owner: Owner, playing: &[Mode]) -> Step
     }
 }
 
-fn watch(app: &AppHandle) {
+fn watch(shell: &Shell) {
     let mut last_seen: Option<Instant> = None;
     // What played when automatic mode took over, to play again after.
     let mut before: Vec<(Mode, Vec<String>)> = Vec::new();
     loop {
         std::thread::sleep(POLL);
-        let state = app.state::<AppState>();
+        let state: &AppState = shell;
         let (enabled, monitor_index) = state
             .lock_config()
             .map(|c| {
@@ -160,34 +157,34 @@ fn watch(app: &AppHandle) {
         match step(in_session, enabled, owner, &state.effects.modes()) {
             Step::Wait => {}
             Step::TakeOver => {
-                set_owner(&state, Owner::Auto);
-                before = lights::playing(&state);
-                if lights::start_effect(&state).is_ok() {
-                    let _ = app.emit(AUTO_STARTED, ());
+                set_owner(state, Owner::Auto);
+                before = lights::playing(state);
+                if lights::start_effect(state).is_ok() {
+                    shell.emit(Event::AutoStarted);
                 } else {
                     // Nothing to light (no light follows the screen, say):
                     // put back what played, and stay out of the way until
                     // the next fullscreen session.
                     if !before.is_empty() {
                         let before = std::mem::take(&mut before);
-                        give_back(&state, &before);
+                        give_back(state, &before);
                     }
-                    set_owner(&state, Owner::User);
+                    set_owner(state, Owner::User);
                 }
-                changed(app);
+                shell.lights_changed(None);
             }
             // Had the user chosen anything meanwhile, they would own it:
             // what they chose is never undone here. Asked again under the
             // change lock, so a choice made just now wins too.
             Step::GiveBack => {
-                give_back(&state, &before);
-                changed(app);
+                give_back(state, &before);
+                shell.lights_changed(None);
             }
         }
         if !in_session {
             last_seen = None;
             before.clear();
-            set_owner(&state, Owner::Nobody);
+            set_owner(state, Owner::Nobody);
         }
     }
 }
@@ -207,10 +204,6 @@ pub fn user_took_over(state: &AppState) {
     if fullscreen() || state.is_running() {
         set_owner(state, Owner::User);
     }
-}
-
-fn changed(app: &AppHandle) {
-    tray::lights_changed(app, None);
 }
 
 /// Put back what played before a fullscreen session, saying so if it fails.

@@ -8,7 +8,7 @@ authors.workspace = true
 rust-version.workspace = true
 default-run = "lueur"
 
-# The library the binary and (future) integration tests share.
+# The library the binary links.
 [lib]
 name = "lueur_lib"
 crate-type = ["lib"]
@@ -22,97 +22,27 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 lueur-core = { path = "../crates/lueur-core" }
+lueur-shell = { path = "../crates/lueur-shell" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
-tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 # The save and open dialogs of the config export and import, used from Rust
 # only (no frontend permission).
 tauri-plugin-dialog = "2"
-# The updater's timer (a six hour sleep must not hold a thread) and the
-# runtime the Tuya driver runs on.
-tokio = { version = "1", features = ["net", "rt-multi-thread", "sync", "time"] }
-
-# Tuya / Smart Life (src/tuya.rs, src/tuya_cloud.rs). Local control goes
-# through rustuya; the one-off Smart Life sign-in that hands over each bulb's
-# local key is an HTTPS API whose payloads are signed and AES-GCM sealed.
-rustuya = { version = "0.4.6", features = ["tokio"] }
-ureq = { version = "3.5.0", features = ["json"] }
-aes-gcm = "0.11.1"
-base64 = "0.23.1"
-getrandom = "0.4.3"
-hmac = "0.13.0"
-md-5 = "0.11.0"
-sha2 = "0.11.1"
-uuid = { version = "1.29.0", features = ["v4"] }
-qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
-# The key that seals the credentials on disk (src/vault.rs), in the OS's own
-# keyring: Credential Manager, Keychain, Secret Service.
-keyring = "4.2.0"
-
-# Cross-platform screen capture (Windows/macOS/Linux). Version pinned by
-# `cargo generate-lockfile`; see README for the capture-backend notes.
-xcap = "0.9"
-# The local time of day, for the natural light (src/natural.rs).
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
-cpal = "0.18"
-# Logs (src/logging.rs): the facade most of the tree already logs through,
-# with a small logger of our own instead of a logging framework.
-log = { version = "0.4.29", features = ["kv"] }
-# Opens the logs folder in the file manager (src/logging.rs), from Rust
-# only (no frontend permission).
+# Opens the logs folder in the file manager, from Rust only (no frontend
+# permission).
 tauri-plugin-opener = "2"
+# The updater's timer (a six hour sleep must not hold a thread).
+tokio = { version = "1", features = ["time"] }
+log = { version = "0.4.29", features = ["kv"] }
 
-# Desktop Duplication and GDI capture (see src/capture/dxgi.rs, gdi.rs) and
-# the SDR white of an HDR display, the capture benchmark's CPU time, the
-# per-user install (src/install.rs) and one application's sound for the
-# music show (src/audio/apps.rs), and keeping the computer awake for the
-# sleep timer (src/awake.rs). Same `windows` version xcap already pulls in,
-# so it adds no second copy.
+# The window border colour (src/titlebar.rs) and the in-place update of the
+# installed executable (src/updater.rs).
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62", features = [
-    "Win32_Devices_Display",
-    "Win32_Foundation",
-    "Win32_Graphics_Direct3D",
-    "Win32_Graphics_Direct3D_Fxc",
-    "Win32_Graphics_Direct3D11",
-    "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Dxgi_Common",
-    "Win32_Graphics_Dwm",
-    "Win32_Graphics_Gdi",
-    "Win32_Media_Audio",
-    "Win32_Media_Multimedia",
-    "Win32_Storage_FileSystem",
-    "Win32_System_Com",
-    "Win32_System_Com_StructuredStorage",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Power",
-    "Win32_System_SystemInformation",
-    "Win32_System_Threading",
-    "Win32_System_Variant",
-    "Win32_UI_HiDpi",
-    "Win32_UI_Shell",
-    "Win32_UI_WindowsAndMessaging",
-] }
-# The `#[implement]` of src/audio/apps.rs names it; the version `windows`
-# itself uses.
-windows-core = "0.62"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
 self-replace = "1.5"
-winreg = "0.56"
-
-# The computer's name other computers running Lueur show (src/peers.rs).
-# Already in the tree through Tauri, tokio and the audio.
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
-# Wayland capture through the ScreenCast portal (see src/capture/screencast.rs):
-# the portal over D-Bus, its video over PipeWire. The versions xcap already
-# pulls in on Linux, so neither adds a second copy.
-[target.'cfg(target_os = "linux")'.dependencies]
-zbus = "5.17"
-pipewire = "0.10"
 
 [dev-dependencies]
 # The versions the updater compares (src/updater.rs tests); already built

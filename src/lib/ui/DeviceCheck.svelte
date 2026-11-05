@@ -2,7 +2,7 @@
   // A paired Hue bridge or Nanoleaf controller the last search heard where
   // nothing proves it is the one paired (a new address, or another
   // certificate). Lueur sends it nothing until the user says it is theirs;
-  // see src-tauri/src/identity.rs.
+  // see crates/lueur-shell/src/identity.rs.
   import { onMount } from "svelte";
   import { app, fail, notify, pair, scan } from "../state.svelte";
   import { t } from "../i18n";

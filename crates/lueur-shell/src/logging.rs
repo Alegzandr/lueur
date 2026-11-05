@@ -342,17 +342,10 @@ fn log_dir() -> io::Result<&'static Path> {
     Ok(dir)
 }
 
-/// Show the logs folder in the file manager.
-#[tauri::command]
-pub fn open_logs_folder(app: tauri::AppHandle) -> AppResult<()> {
-    use tauri_plugin_opener::OpenerExt;
-    let dir = log_dir().map_err(|e| AppError::new("logs_unavailable").detail(e))?;
-    app.opener()
-        .open_path(dir.to_string_lossy(), None::<&str>)
-        .map_err(|e| {
-            log::warn!("cannot open the logs folder: {e}");
-            AppError::new("logs_unavailable").detail(e)
-        })
+/// The logs folder, created if need be, for the window to show in the file
+/// manager.
+pub fn logs_folder() -> AppResult<&'static Path> {
+    log_dir().map_err(|e| AppError::new("logs_unavailable").detail(e))
 }
 
 /// Whether `level` is logged for `target` right now.
@@ -517,7 +510,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Every log call in both crates, with the names it formats.
+    /// Every log call in the workspace's crates, with the names it formats.
     fn log_calls() -> Vec<(PathBuf, String)> {
         fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
             for entry in fs::read_dir(dir).unwrap().flatten() {
@@ -532,7 +525,8 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut files = Vec::new();
         walk(&root.join("src"), &mut files);
-        walk(&root.join("../crates/lueur-core/src"), &mut files);
+        walk(&root.join("../lueur-core/src"), &mut files);
+        walk(&root.join("../../src-tauri/src"), &mut files);
         assert!(files.len() > 20, "the sources were found");
 
         let mut calls = Vec::new();

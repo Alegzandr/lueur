@@ -1,4 +1,4 @@
-//! Shared application state managed by Tauri.
+//! The application state the commands and the workers share.
 
 use crate::auto;
 use crate::error::{AppError, AppResult};
@@ -13,8 +13,8 @@ use lueur_core::device::lease::{self, Leases};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-/// Everything the IPC commands need, behind interior mutability so Tauri can
-/// share it across threads.
+/// Everything the commands need, behind interior mutability so it can be
+/// shared across threads.
 pub struct AppState {
     pub data_dir: PathBuf,
     pub config: Mutex<AppConfig>,

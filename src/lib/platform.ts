@@ -5,11 +5,11 @@ const nav = typeof navigator !== "undefined" ? navigator : undefined;
 const WINDOWS = !!nav && /windows/i.test(nav.userAgent);
 
 /** Whether fullscreen can be detected, which only Windows offers (see
- *  src-tauri/src/auto.rs): automatic mode exists nowhere else. */
+ *  crates/lueur-shell/src/auto.rs): automatic mode exists nowhere else. */
 export const DETECTS_FULLSCREEN = WINDOWS;
 
 /** Whether the music listens to outputs and applications, which only
- *  Windows lets an app tap (see src-tauri/src/audio.rs); elsewhere it hears
+ *  Windows lets an app tap (see crates/lueur-shell/src/audio.rs); elsewhere it hears
  *  an input. */
 export const HEARS_OUTPUTS = WINDOWS;
 

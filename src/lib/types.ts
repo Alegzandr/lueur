@@ -90,7 +90,7 @@ export interface HueBridge {
 }
 
 /** A paired bridge or controller the last search heard where nothing
- *  proves it is the one paired (see src-tauri/src/identity.rs). */
+ *  proves it is the one paired (see crates/lueur-shell/src/identity.rs). */
 export interface UnverifiedDevice {
   id: string;
   family: "hue" | "nanoleaf";

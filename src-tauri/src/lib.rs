@@ -1,72 +1,59 @@
-//! Lueur desktop shell.
+//! Lueur desktop shell, drawn by Tauri.
 //!
-//! Wires the pure [`lueur_core`] engine to real screen capture, the bulbs on
-//! the network and a Tauri webview, and adds the OS niceties gamers expect:
-//! system-tray minimise, launch-on-startup, single-instance behaviour, a
-//! silent per-user install on Windows and updates from GitHub releases.
+//! The app itself lives in `lueur_shell`: capture, the bulbs, the live loops,
+//! the workers and the commands. This crate puts it in a Tauri webview and
+//! adds what Tauri draws: the window, the tray, the splash and its updater.
 
 // The anti-cheat bans in `clippy.toml` are hard errors, not suggestions.
 #![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
-mod audio;
-mod auto;
-mod awake;
-mod capture;
 mod commands;
-mod devices;
-mod error;
-mod identity;
-#[cfg(windows)]
-mod install;
-mod lights;
-mod logging;
-mod manual;
-mod natural;
-mod paths;
-mod peers;
-mod runner;
-mod secrets;
-mod sleep;
-mod state;
 mod titlebar;
 mod tray;
-mod tuya;
-mod tuya_cloud;
 mod updater;
-mod vault;
-
-/// The capture benchmark, for `examples/capture_bench.rs` only.
-#[doc(hidden)]
-pub use capture::bench as capture_bench;
 
 use lueur_core::config::Appearance;
-use state::AppState;
-use tauri::{AppHandle, Manager, WindowEvent};
-use tauri_plugin_autostart::ManagerExt;
-
-/// Launch argument the OS autostart passes, so a login launch opens hidden.
-const MINIMIZED_ARG: &str = "--minimized";
+use lueur_shell::{Event, Host, MINIMIZED_ARG, Shell, logging, paths};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 
 /// Label of the main window (see `tauri.conf.json`).
 pub(crate) const MAIN_WINDOW: &str = "main";
 
+/// Hands the shell's events to the webview, the tray and the window.
+struct TauriHost(AppHandle);
+
+impl Host for TauriHost {
+    fn emit(&self, event: Event) {
+        let app = &self.0;
+        let name = event.name();
+        let _ = match event {
+            Event::EffectChanged(error) => app.emit(name, error),
+            Event::LightsChanged | Event::AutoStarted => app.emit(name, ()),
+            Event::DevicesUnverified(list) => app.emit(name, list),
+            Event::SleepChanged(status) => app.emit(name, status),
+            Event::UpdateReady(version) => app.emit(name, version),
+            Event::TrayStale { always } => {
+                tray::update(app, always);
+                Ok(())
+            }
+            Event::FocusMain => {
+                tray::focus_main(app);
+                Ok(())
+            }
+        };
+    }
+}
+
 /// Starts the tray, the window and the effect, once the startup update check
 /// is done.
 pub(crate) fn start(app: &AppHandle) {
-    // An install moved the executable: point the login item at the new path.
-    let launcher = app.autolaunch();
-    if launcher.is_enabled().unwrap_or(false) {
-        let _ = launcher.enable();
-    }
-
+    let shell = Arc::clone(&app.state::<Arc<Shell>>());
     if let Err(e) = tray::setup(app) {
         log::error!("tray: {e}");
     }
-    auto::spawn(app);
-    natural::spawn(app);
 
-    let (behavior, appearance) = app
-        .state::<AppState>()
+    let (behavior, appearance) = shell
         .lock_config()
         .map(|c| (c.behavior, c.interface.appearance))
         .unwrap_or_default();
@@ -92,15 +79,7 @@ pub(crate) fn start(app: &AppHandle) {
         tray::focus_main(app);
     }
 
-    // Each light picks up the mode it was left playing.
-    let handle = app.clone();
-    std::thread::spawn(move || {
-        if let Err(e) = lights::resume(&handle.state::<AppState>()) {
-            log::warn!("cannot resume the modes the lights were left playing: {e}");
-        }
-        // The window may have read the state before the bulbs answered.
-        tray::lights_changed(&handle, None);
-    });
+    shell.start();
 }
 
 /// Build and run the application.
@@ -109,11 +88,11 @@ pub fn run() {
     logging::init(&data_dir);
 
     #[cfg(windows)]
-    if !install::prepare() {
+    if !lueur_shell::install::prepare() {
         return;
     }
 
-    let app_state = AppState::load(data_dir);
+    let shell = Shell::load(data_dir);
 
     tauri::Builder::default()
         // Only one instance may run; a second launch just focuses the window.
@@ -123,11 +102,6 @@ pub fn run() {
                 tray::focus_main(app);
             }
         }))
-        // Launch-on-login. `--minimized` lets a startup launch open hidden.
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec![MINIMIZED_ARG]),
-        ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         // Opens the logs folder, from Rust only: no capability grants it to
@@ -137,7 +111,7 @@ pub fn run() {
                 .open_js_links_on_click(false)
                 .build(),
         )
-        .manage(app_state)
+        .manage(Arc::clone(&shell))
         .manage(updater::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
@@ -167,42 +141,18 @@ pub fn run() {
             commands::set_run_on_startup,
             commands::set_ui_language,
             commands::set_window_theme,
+            commands::unverified_devices,
+            commands::confirm_device,
+            commands::forget_device,
+            commands::credentials_sealed,
+            commands::open_logs_folder,
             updater::update_progress,
             updater::update_ready,
             updater::restart_app,
-            identity::unverified_devices,
-            identity::confirm_device,
-            identity::forget_device,
-            vault::credentials_sealed,
-            logging::open_logs_folder,
         ])
-        .setup(|app| {
-            // Listening for the other computers running Lueur from the
-            // first moment, so the effect resumed at launch knows which
-            // bulbs they hold.
-            peers::spawn(app.handle());
-            // An effect that ends by itself (no capture, no sound) still
-            // shows as playing until the window and the tray are told.
-            let handle = app.handle().clone();
-            runner::on_end(move || {
-                let handle = handle.clone();
-                std::thread::spawn(move || {
-                    use tauri::Emitter;
-                    let _ = handle.emit(tray::EFFECT_CHANGED, None::<error::AppError>);
-                    tray::refresh(&handle);
-                });
-            });
-            // A bulb that dropped or came back, or the ambilight's screen
-            // going in or out of HDR: the window shows which lights are
-            // being reconnected, and whether the colours come from HDR.
-            let handle = app.handle().clone();
-            runner::on_status(move || {
-                let handle = handle.clone();
-                std::thread::spawn(move || {
-                    use tauri::Emitter;
-                    let _ = handle.emit(tray::EFFECT_CHANGED, None::<error::AppError>);
-                });
-            });
+        .setup(move |app| {
+            shell.attach(Arc::new(TauriHost(app.handle().clone())));
+            shell.spawn_workers();
             // The main window is created hidden; `start` shows it.
             if updater::enabled() {
                 updater::launch(app.handle())?;
@@ -215,10 +165,9 @@ pub fn run() {
             if window.label() != MAIN_WINDOW {
                 return;
             }
+            let shell = window.app_handle().state::<Arc<Shell>>();
             let to_tray = || {
-                window
-                    .app_handle()
-                    .state::<AppState>()
+                shell
                     .lock_config()
                     .map(|c| c.behavior.minimize_to_tray)
                     .unwrap_or(true)
@@ -229,8 +178,7 @@ pub fn run() {
                 // sets one without asking to keep running, and quitting
                 // would leave the lights on.
                 WindowEvent::CloseRequested { api, .. }
-                    if to_tray()
-                        || sleep::minutes(&window.app_handle().state::<AppState>()).is_some() =>
+                    if to_tray() || lueur_shell::sleep::minutes(&shell).is_some() =>
                 {
                     let _ = window.hide();
                     api.prevent_close();
@@ -255,15 +203,11 @@ pub fn run() {
         .expect("error while building Lueur")
         .run(|app, event| {
             // However Lueur quits (the tray, closing the window, Cmd+Q, the
-            // session ending), the bulbs leave music mode rather than freeze
-            // on the last frame: on a warm glow, or playing the show by
-            // themselves when they can. A no-op when the tray's Quit has
-            // done it already.
+            // session ending), the bulbs are handed back.
             if let tauri::RunEvent::Exit = event
-                && let Some(state) = app.try_state::<AppState>()
+                && let Some(shell) = app.try_state::<Arc<Shell>>()
             {
-                lights::quit(&state);
-                peers::leave(&state);
+                shell.quit();
             }
         });
 }

@@ -7,12 +7,11 @@
 //! steps are small enough that each change goes unnoticed.
 
 use crate::lights;
-use crate::state::AppState;
-use crate::tray;
+use crate::{Event, Shell};
 use chrono::Timelike;
 use lueur_core::scene::{self, LightState};
+use std::sync::Arc;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
 
 /// How often the lights are brought in line with the clock. The curve moves
 /// at most a few kelvin a minute, so this is plenty.
@@ -25,20 +24,20 @@ pub fn now() -> LightState {
 }
 
 /// Keep the lights following the day for as long as the app runs.
-pub fn spawn(app: &AppHandle) {
-    let app = app.clone();
+pub fn spawn(shell: &Arc<Shell>) {
+    let shell = Arc::clone(shell);
     let _ = std::thread::Builder::new()
         .name("lueur-natural".into())
         .spawn(move || {
             loop {
                 std::thread::sleep(TICK);
-                let state = app.state::<AppState>();
+                let state = &shell.state;
                 // The sleep timer is dimming the room: leave it to that.
-                if crate::sleep::fading(&state) {
+                if crate::sleep::fading(state) {
                     continue;
                 }
-                if lights::follow_natural(&state, now()).unwrap_or(false) {
-                    let _ = app.emit(tray::LIGHTS_CHANGED, ());
+                if lights::follow_natural(state, now()).unwrap_or(false) {
+                    shell.emit(Event::LightsChanged);
                 }
             }
         });

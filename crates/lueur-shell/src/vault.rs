@@ -311,13 +311,6 @@ fn write(data_dir: &Path, body: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, &path)
 }
 
-/// Whether the credentials are encrypted on disk this session. Settings
-/// says so when they are not, for want of a keyring.
-#[tauri::command]
-pub fn credentials_sealed(state: tauri::State<'_, crate::state::AppState>) -> bool {
-    state.credentials_sealed()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
