@@ -13,9 +13,10 @@ rust-version.workspace = true
 name = "lueur"
 path = "src/main.rs"
 
-# The executable's icon and version on Windows (build.rs). The version GPUI
-# already builds with.
-[target.'cfg(windows)'.build-dependencies]
+# The executable's icon and version on Windows (build.rs), the version GPUI
+# already builds with. Declared for every host: the build script decides by
+# the target, and calls it only for Windows.
+[build-dependencies]
 embed-resource = "3.0"
 
 [dependencies]
