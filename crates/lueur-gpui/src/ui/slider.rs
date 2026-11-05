@@ -148,7 +148,10 @@ impl Slider {
             div()
                 .id(ElementId::Name(SharedString::from(format!("{id}-bar"))))
                 .relative()
-                .flex_1()
+                // Full width of its column, never squeezed below its height:
+                // `flex_1` would give it a zero basis there.
+                .w_full()
+                .flex_none()
                 .h(px(thumb))
                 .cursor_pointer()
                 .child(
