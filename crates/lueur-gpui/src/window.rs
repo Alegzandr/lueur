@@ -362,16 +362,25 @@ impl Render for MainWindow {
             .font_family(crate::app::FONT)
             .child(sidebar)
             .child(
-                div().flex_1().h_full().flex().flex_col().child(top).child(
-                    div()
-                        .id("page")
-                        .flex_1()
-                        .overflow_y_scroll()
-                        .px(px(size::S6 + size::S2))
-                        .pt(px(size::S3))
-                        .pb(px(size::S6))
-                        .child(page),
-                ),
+                // `min_w_0`: the column takes the window's width, never the width
+                // of its longest line, which would push the caption buttons out.
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .child(top)
+                    .child(
+                        div()
+                            .id("page")
+                            .flex_1()
+                            .overflow_y_scroll()
+                            .px(px(size::S6 + size::S2))
+                            .pt(px(size::S3))
+                            .pb(px(size::S6))
+                            .child(page),
+                    ),
             )
             .child(toasts)
     }
