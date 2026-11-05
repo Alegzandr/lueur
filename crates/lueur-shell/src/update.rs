@@ -35,14 +35,13 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 
-/// Where the release publishes its manifest: the `endpoints` of
-/// `src-tauri/tauri.conf.json`.
+/// Where the release publishes its manifest, the address the Tauri versions
+/// (up to 0.18) read too: they update into this one from it.
 pub const ENDPOINT: &str =
     "https://github.com/Alegzandr/lueur/releases/latest/download/latest.json";
 
 /// The minisign public key the release signs with, base64 encoded as the
-/// `pubkey` of `src-tauri/tauri.conf.json` (a test keeps the two equal while
-/// that file exists).
+/// Tauri versions held it. Changing it would strand every installed copy.
 pub const PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc5N0NBMTkxRTY1QTA0MTIKUldRU0JGcm1rYUY4ZVc0YkxHeS9xcGNURWlBYkE1bVJtSWVtbFFSenkvSTVld1d2QlNvZmthQlYK";
 
 /// Often enough that a running app offers a new version the day it is out;
@@ -1031,17 +1030,15 @@ mod tests {
         assert!(minisign_verify::PublicKey::decode(&key).is_ok());
     }
 
-    /// The key and the manifest the Tauri version updates from: both
-    /// versions must read the same releases.
+    /// The manifest the Tauri versions read (their `tauri.conf.json`, up to
+    /// 0.18): installed copies update into this one from it, so it must not
+    /// move.
     #[test]
-    fn the_same_key_and_manifest_as_the_tauri_version() {
-        let conf: serde_json::Value =
-            serde_json::from_str(include_str!("../../../src-tauri/tauri.conf.json")).unwrap();
-        let updater = &conf["plugins"]["updater"];
-        assert_eq!(updater["pubkey"], PUBKEY);
-        assert_eq!(updater["endpoints"][0], ENDPOINT);
-        assert_eq!(updater["endpoints"].as_array().unwrap().len(), 1);
-        assert_eq!(updater["requireSignedVersion"], true);
+    fn the_same_manifest_as_the_tauri_versions() {
+        assert_eq!(
+            ENDPOINT,
+            "https://github.com/Alegzandr/lueur/releases/latest/download/latest.json"
+        );
     }
 
     #[test]

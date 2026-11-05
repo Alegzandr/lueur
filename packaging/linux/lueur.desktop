@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Lueur
+Comment=One app for all your smart bulbs.
+Comment[fr]=Une seule app pour toutes vos ampoules connectées.
+Exec=lueur
+Icon=lueur
+Categories=Utility;
+Terminal=false
+StartupWMClass=com.lueur.app

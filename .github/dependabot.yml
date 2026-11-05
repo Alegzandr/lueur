@@ -7,17 +7,11 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+  # The update signer (scripts/sign): the Tauri CLI and nothing else.
   - package-ecosystem: npm
-    directory: /
+    directory: /scripts/sign
     schedule:
       interval: weekly
-    groups:
-      npm:
-        patterns: ["*"]
-    # svelte-check only accepts TypeScript 5 or 6 so far.
-    ignore:
-      - dependency-name: typescript
-        update-types: ["version-update:semver-major"]
   # The workflows pin actions by commit; this keeps the pins current.
   - package-ecosystem: github-actions
     directory: /

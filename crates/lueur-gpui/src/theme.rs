@@ -70,7 +70,6 @@ pub struct Theme {
     pub active_soft: Hsla,
     /// The neutral ink of a target or a selection.
     pub select: Hsla,
-    pub select_soft: Hsla,
     pub ok: Hsla,
     pub danger: Hsla,
     pub danger_soft: Hsla,
@@ -106,7 +105,6 @@ impl Theme {
             active_text: oklch(0.5, 0.12, 60.0, 1.0),
             active_soft: oklch(0.76, 0.15, 70.0, 0.16),
             select: grey(0.34, 1.0),
-            select_soft: grey(0.0, 0.045),
             ok: oklch(0.58, 0.14, 150.0, 1.0),
             danger: oklch(0.55, 0.19, 27.0, 1.0),
             danger_soft: oklch(0.55, 0.19, 27.0, 0.1),
@@ -142,7 +140,6 @@ impl Theme {
             active_text: oklch(0.83, 0.13, 75.0, 1.0),
             active_soft: oklch(0.8, 0.14, 72.0, 0.14),
             select: grey(0.9, 1.0),
-            select_soft: grey(1.0, 0.06),
             ok: oklch(0.76, 0.13, 150.0, 1.0),
             danger: oklch(0.72, 0.16, 27.0, 1.0),
             danger_soft: oklch(0.72, 0.16, 27.0, 0.15),

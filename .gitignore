@@ -2,14 +2,8 @@
 /target
 **/*.rs.bk
 
-# Node / frontend
+# The update signer's tools (scripts/sign)
 node_modules
-/dist
-.vite
-
-# Tauri build output
-/src-tauri/target
-/src-tauri/gen
 
 # Release files gathered by the release workflow
 /release

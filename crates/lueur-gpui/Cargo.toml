@@ -7,11 +7,10 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
-# Its own binary name while the Tauri shell still builds `lueur` in the same
-# target folder. It takes that name when it replaces the Tauri one, since the
-# release and the updater ship `lueur` (see .github/workflows/release.yml).
+# The release and the updater ship `lueur` (see .github/workflows/release.yml);
+# Windows installs it as lueur-app.exe (lueur-shell's install.rs).
 [[bin]]
-name = "lueur-gpui"
+name = "lueur"
 path = "src/main.rs"
 
 # The executable's icon and version on Windows (build.rs), the crate

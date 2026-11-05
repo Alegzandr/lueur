@@ -526,7 +526,7 @@ mod tests {
         let mut files = Vec::new();
         walk(&root.join("src"), &mut files);
         walk(&root.join("../lueur-core/src"), &mut files);
-        walk(&root.join("../../src-tauri/src"), &mut files);
+        walk(&root.join("../lueur-gpui/src"), &mut files);
         assert!(files.len() > 20, "the sources were found");
 
         let mut calls = Vec::new();

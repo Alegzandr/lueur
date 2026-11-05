@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Produces the latest.json read by the Tauri updater.
+# Produces the latest.json every installed copy updates from: the app
+# (crates/lueur-shell/src/update.rs) and the Tauri versions up to 0.18, whose
+# updater reads the same format.
 # Usage: latest-json.sh <dir> <version> <owner/repo> <tag>
 set -euo pipefail
 dir=$1 version=$2 repo=$3 tag=$4

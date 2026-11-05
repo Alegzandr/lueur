@@ -11,7 +11,7 @@ use crate::theme::{Theme, size, theme};
 use crate::ui;
 use gpui::{
     AnyElement, App, Context, ElementId, FocusHandle, FontWeight, KeyDownEvent, Role, SharedString,
-    Window, anchored, deferred, div, prelude::*, px,
+    anchored, deferred, div, prelude::*, px,
 };
 use lueur_core::device::DiscoveredDevice;
 

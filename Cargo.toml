@@ -5,14 +5,13 @@
 # colour processing, the screen colour engine and config persistence).
 #
 # `lueur-shell` is the desktop service without a GUI: real screen capture,
-# the bulbs on the network, the background workers and the commands a window
-# calls. `src-tauri` puts it in a Tauri webview; `lueur-gpui` draws it with
-# GPUI and is replacing the Tauri one. Both front ends stay thin, so the
-# interesting, security-sensitive logic lives where it can be tested without
-# a display server.
+# the bulbs on the network, the background workers, the updates and the
+# commands a window calls. `lueur-gpui` draws the window and the tray with
+# GPUI and stays thin, so the interesting, security-sensitive logic lives
+# where it can be tested without a display server.
 [workspace]
 resolver = "2"
-members = ["crates/lueur-core", "crates/lueur-shell", "crates/lueur-gpui", "src-tauri"]
+members = ["crates/lueur-core", "crates/lueur-shell", "crates/lueur-gpui"]
 
 [workspace.package]
 version = "0.18.2"

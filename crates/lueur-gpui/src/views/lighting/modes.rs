@@ -11,7 +11,7 @@ use crate::state::View;
 use crate::theme::{Theme, size};
 use crate::ui::{self, choice};
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, Context, FontWeight, IntoElement, Role, SharedString,
+    Animation, AnimationExt, AnyElement, Context, FontWeight, IntoElement, Role, SharedString,
     Toggled, Window, div, ease_in_out, prelude::*, px,
 };
 use lueur_core::config::AudioSource;

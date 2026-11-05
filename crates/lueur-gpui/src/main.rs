@@ -8,10 +8,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 // The anti-cheat bans in `clippy.toml` are hard errors, not suggestions.
 #![deny(clippy::disallowed_methods, clippy::disallowed_types)]
-// While the pages are being ported from the Tauri interface, the shared
-// controls, tokens and strings run ahead of their uses. Remove once the
-// Tauri interface is gone.
-#![allow(dead_code, unused_imports)]
 
 mod app;
 mod assets;

@@ -5,7 +5,7 @@
 
 use super::model::{Room, kelvin_rgb, tint_rgb};
 use crate::theme::{Theme, oklch, size};
-use crate::ui::{icon, pressable};
+use crate::ui::pressable;
 use gpui::{
     AccessibleAction, AnyElement, App, Bounds, BoxShadow, Corners, Div, ElementId, FontWeight,
     Hsla, ImgResourceLoader, IntoElement, KeyDownEvent, MouseButton, Pixels, Resource, Rgba, Role,

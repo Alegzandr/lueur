@@ -78,22 +78,6 @@ pub enum Event {
     FocusMain,
 }
 
-impl Event {
-    /// The name the Tauri window listens to (see `src/lib/ipc.ts`).
-    pub fn name(&self) -> &'static str {
-        match self {
-            Event::EffectChanged(_) => "effect-changed",
-            Event::LightsChanged => "lights-changed",
-            Event::AutoStarted => "auto-started",
-            Event::DevicesUnverified(_) => "device-unverified",
-            Event::SleepChanged(_) => "sleep-changed",
-            Event::UpdateReady(_) => "update-ready",
-            Event::TrayStale { .. } => "tray-stale",
-            Event::FocusMain => "focus-main",
-        }
-    }
-}
-
 /// What a front end does with the shell's events. Called from any thread.
 pub trait Host: Send + Sync + 'static {
     fn emit(&self, event: Event);

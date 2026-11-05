@@ -11,7 +11,7 @@
 
 use super::colors::PlanColors;
 use super::plan::{self, Other};
-use super::{Axis, Now, RoomPage, corner_name, lamp};
+use super::{Now, RoomPage, corner_name, lamp};
 use crate::i18n::{Lang, fill, pct, t};
 use crate::state::View;
 use crate::theme::{Theme, size};

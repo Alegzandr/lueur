@@ -1,0 +1,8 @@
+{
+  "name": "lueur-update-signer",
+  "private": true,
+  "description": "The signer of Lueur's update files: the Tauri CLI, whose signatures every installed copy checks (see .github/workflows/release.yml). Nothing else of Tauri is used.",
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}

@@ -6,7 +6,7 @@ pub mod choice;
 pub mod input;
 pub mod slider;
 
-pub use choice::{Choice, choice, segmented, select};
+pub use choice::{choice, segmented, select};
 pub use input::{InputEvent, TextInput};
 pub use slider::slider;
 
