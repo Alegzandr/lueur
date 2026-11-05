@@ -15,7 +15,10 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
     for path in entries {
         if path.is_dir() {
             walk(root, &path, out);
-        } else if path.extension().is_some_and(|e| e == "svg" || e == "png") {
+        } else if path
+            .extension()
+            .is_some_and(|e| e == "svg" || e == "png" || e == "webp" || e == "ttf")
+        {
             let rel = path.strip_prefix(root).expect("under assets");
             out.push(rel.to_string_lossy().replace('\\', "/"));
         }

@@ -4391,6 +4391,7 @@ dependencies = [
  "serde_json",
  "sys-locale",
  "tray-icon",
+ "unicode-segmentation",
  "windows 0.62.2",
 ]
 

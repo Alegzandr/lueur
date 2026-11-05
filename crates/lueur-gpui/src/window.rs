@@ -1,19 +1,23 @@
-//! The main window: the sidebar and the page it shows, after `src/App.svelte`.
+//! The main window: the sidebar, the title bar and the page it shows, and
+//! the toasts over them, after `src/App.svelte`.
 
 use crate::app::{
     GoBulbs, GoLighting, GoRoom, GoSettings, NextControl, PreviousControl, ToggleEffect,
 };
 use crate::i18n::{self, t};
-use crate::state::{Lueur, View, model};
+use crate::state::{Lueur, Toast, View, model};
 use crate::theme::{Theme, size, theme};
+use crate::titlebar;
 use crate::ui;
+use crate::views::Pages;
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, FontWeight, IntoElement, Render, Role,
-    SharedString, Window, div, img, prelude::*, px,
+    SharedString, Window, WindowControlArea, div, img, prelude::*, px,
 };
 
 pub struct MainWindow {
     lueur: Entity<Lueur>,
+    pages: Pages,
     focus: FocusHandle,
 }
 
@@ -30,7 +34,11 @@ impl MainWindow {
         .detach();
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        MainWindow { lueur, focus }
+        MainWindow {
+            lueur,
+            pages: Pages::new(window, cx),
+            focus,
+        }
     }
 
     fn go(&mut self, view: View, cx: &mut Context<Self>) {
@@ -38,40 +46,70 @@ impl MainWindow {
     }
 
     fn sidebar(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let current = self.lueur.read(cx).view;
+        let l = self.lueur.read(cx);
+        let current = l.view;
+        // Lights drawn in the room with no bulb yet, counted on Bulbs.
+        let unbound = l
+            .config
+            .room
+            .lights
+            .iter()
+            .filter(|light| l.config.binding_for(&light.id).is_none())
+            .count();
         let mod_key = if cfg!(target_os = "macos") {
             "Meta"
         } else {
             "Control"
         };
+        let unbound_label = t(cx, "unbound_badge");
         let nav = View::ALL.iter().enumerate().map(|(i, &view)| {
             let selected = view == current;
             let label = t(cx, view.label_key());
+            let badge = (view == View::Bulbs && unbound > 0).then_some(unbound);
             let fg = if selected { theme.text } else { theme.text_2 };
+            // The current page's icon is amber, like the light it is about.
+            let icon_color = if selected { theme.active } else { fg };
             ui::pressable(
                 SharedString::from(format!("nav-{}", view.label_key())),
                 theme,
             )
             .role(Role::Tab)
-            .aria_label(label.clone())
+            .aria_label(match badge {
+                Some(n) => SharedString::from(format!("{label}, {unbound_label}: {n}")),
+                None => label.clone(),
+            })
             .aria_selected(selected)
             .aria_keyshortcuts(SharedString::from(format!("{mod_key}+{}", i + 1)))
-            .h(px(32.0))
+            .h(px(36.0))
             .px(px(size::S3))
             .flex()
             .items_center()
             .gap(px(size::S3))
-            .rounded(px(size::R_MD))
-            .when(selected, |d| d.bg(theme.select_soft))
-            .hover(|s| s.bg(theme.select_soft))
+            .rounded(px(7.0))
+            .when(selected, |d| {
+                d.bg(theme.surface)
+                    .shadow_sm()
+                    .border_1()
+                    .border_color(theme.separator)
+            })
+            .when(!selected, |d| d.hover(|s| s.bg(theme.surface_hover)))
             .text_color(fg)
             .text_size(px(size::T_MD))
-            .when(selected, |d| d.font_weight(FontWeight::SEMIBOLD))
-            .child(ui::icon(view.icon(), 18.0, selected, fg))
-            .child(label)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.lueur.update(cx, |l, cx| l.show(view, cx));
-            }))
+            .when(selected, |d| d.font_weight(FontWeight::MEDIUM))
+            .child(ui::icon(view.icon(), 18.0, selected, icon_color))
+            .child(div().flex_1().child(label))
+            .when_some(badge, |d, n| {
+                d.child(
+                    div()
+                        .px(px(6.0))
+                        .rounded_full()
+                        .bg(theme.surface_hover)
+                        .text_size(px(size::T_XS))
+                        .text_color(theme.text_2)
+                        .child(n.to_string()),
+                )
+            })
+            .on_click(cx.listener(move |this, _, _, cx| this.go(view, cx)))
         });
         div()
             .id("sidebar")
@@ -82,18 +120,26 @@ impl MainWindow {
             .flex()
             .flex_col()
             .gap(px(size::S1))
-            .p(px(size::S3))
+            .px(px(size::S3))
+            .pb(px(size::S3))
+            .pt(px(if titlebar::OWN { 6.0 } else { size::S3 }))
             .bg(theme.sidebar)
             .border_r_1()
-            .border_color(theme.line)
+            .border_color(theme.separator)
             .child(
                 div()
+                    .id("brand")
+                    // On Windows the brand is part of the bar the window is
+                    // dragged by.
+                    .when(titlebar::OWN, |d| {
+                        d.window_control_area(WindowControlArea::Drag)
+                    })
                     .flex()
                     .items_center()
                     .gap(px(size::S2))
                     .px(px(size::S2))
-                    .pt(px(size::S2))
-                    .pb(px(size::S5))
+                    .h(px(40.0))
+                    .mb(px(size::S3))
                     .child(img("logo-mark.svg").size(px(22.0)))
                     .child(
                         div()
@@ -115,250 +161,184 @@ impl MainWindow {
             .into_any_element()
     }
 
-    fn page(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let view = self.lueur.read(cx).view;
-        let title = ui::page_title("page-title", t(cx, view.label_key()), theme);
-        let body = match view {
-            View::Lighting => self.lighting(theme, cx),
-            // Not yet drawn in GPUI: the Tauri interface still has them.
-            View::Room | View::Bulbs | View::Settings => div().into_any_element(),
-        };
-        div()
-            .id("page")
-            .flex_1()
-            .h_full()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap(px(size::S5))
-            .px(px(size::S6 + size::S2))
-            .py(px(size::S6))
-            .child(title)
-            .child(body)
-            .into_any_element()
-    }
-
-    fn lighting(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let l = self.lueur.read(cx);
-        let running = l.status.running;
-        let has_lights = !l.config.bindings.is_empty();
-        let lights: Vec<(String, String, bool, bool, bool)> = l
-            .config
-            .room
-            .lights
-            .iter()
-            .map(|light| {
-                let bound = l.config.binding_for(&light.id).is_some();
-                let on = l.config.states.get(&light.id).is_none_or(|s| s.on);
-                let driven = l.status.light_ids.contains(&light.id);
-                (light.id.clone(), light.name.clone(), bound, on, driven)
-            })
-            .collect();
-
-        let toggle_label = t(
-            cx,
-            if running {
-                "stop_effects"
-            } else {
-                "start_ambilight"
-            },
-        );
-        let lueur = self.lueur.clone();
-        let mut page = div().flex().flex_col().gap(px(size::S5));
-        if has_lights || running {
-            page = page.child(div().flex().child(ui::button(
-                "toggle-effect",
-                toggle_label,
-                true,
-                theme,
-                move |_, _, cx| lueur.update(cx, |l, cx| l.toggle_effect(cx)),
-            )));
-        }
-
-        let heading = div()
-            .text_size(px(size::T_SM))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(theme.text_3)
-            .child(t(cx, "lights"));
-        let rows: Vec<AnyElement> = if lights.is_empty() {
-            vec![
-                div()
-                    .p(px(size::S4))
-                    .text_color(theme.text_2)
-                    .text_size(px(size::T_MD))
-                    .child(t(cx, "no_lights"))
-                    .into_any_element(),
-            ]
-        } else {
-            lights
-                .into_iter()
-                .enumerate()
-                .map(|(i, (id, name, bound, on, driven))| {
-                    self.light_row(i, id, name, bound, on, driven, theme, cx)
-                })
-                .collect()
-        };
-        page.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(size::S2))
-                .child(heading)
-                .child(ui::card(theme).children(rows)),
-        )
-        .into_any_element()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn light_row(
-        &self,
-        index: usize,
-        id: String,
-        name: String,
-        bound: bool,
-        on: bool,
-        driven: bool,
-        theme: &Theme,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let name = SharedString::from(name);
-        // What the light does, in words as well as by its switch: amber is
-        // never the only sign that it plays.
-        let state = if !bound {
-            t(cx, "no_bulb")
-        } else if driven {
-            t(cx, "mode_ambilight")
-        } else if on {
-            SharedString::default()
-        } else {
-            t(cx, "off")
-        };
-        let lueur = self.lueur.clone();
-        let switch_label = SharedString::from(format!(
-            "{name}: {}",
-            t(cx, if on { "turn_off" } else { "turn_on" })
+    /// The button that restarts into an installed update, when there is one.
+    fn update_button(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let version = self.lueur.read(cx).update_ready.clone()?;
+        let label = t(cx, "update_restart");
+        let tip = SharedString::from(i18n::fill(
+            &t(cx, "update_ready"),
+            &[("version", version.as_str())],
         ));
-        div()
-            .flex()
-            .items_center()
-            .gap(px(size::S3))
-            .h(px(48.0))
-            .px(px(size::S4))
-            .when(index > 0, |d| d.border_t_1().border_color(theme.separator))
-            .child(ui::icon(
-                "bulb",
-                18.0,
-                false,
-                if driven || (bound && on) {
-                    theme.active
-                } else {
-                    theme.text_3
-                },
-            ))
-            .child(
-                div()
-                    .flex_1()
-                    .text_size(px(size::T_MD))
-                    .text_color(theme.text)
-                    .child(name),
-            )
-            .child(
-                div()
-                    .text_size(px(size::T_SM))
-                    .text_color(if driven {
-                        theme.active_text
-                    } else {
-                        theme.text_3
-                    })
-                    .child(state),
-            )
-            .when(bound && !driven, |d| {
-                d.child(ui::switch(
-                    SharedString::from(format!("power-{id}")),
-                    switch_label,
-                    on,
-                    theme,
-                    move |_, _, cx| {
-                        let id = id.clone();
-                        lueur.update(cx, |l, cx| l.set_light_power(id, !on, cx));
-                    },
-                ))
-            })
-            .into_any_element()
-    }
-
-    fn notice(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let notice = self.lueur.read(cx).notice.clone()?;
-        let lueur = self.lueur.clone();
-        let close = i18n::t(cx, "dismiss");
         Some(
-            div()
-                .id("notice")
-                .role(if notice.error {
-                    Role::Alert
-                } else {
-                    Role::Status
-                })
-                .absolute()
-                .bottom(px(size::S5))
-                .right(px(size::S5))
-                .max_w(px(420.0))
+            ui::pressable("update", theme)
+                .role(Role::Button)
+                .aria_label(SharedString::from(format!("{label}. {tip}")))
+                .tooltip(ui::tip(tip))
+                .h(px(24.0))
+                .px(px(size::S3))
                 .flex()
                 .items_center()
-                .gap(px(size::S3))
-                .p(px(size::S3))
-                .rounded(px(size::R_MD))
-                .bg(theme.surface)
-                .border_1()
-                .border_color(if notice.error {
-                    theme.danger
-                } else {
-                    theme.line
-                })
-                .shadow_lg()
-                .child(ui::icon(
-                    if notice.error { "alert" } else { "info" },
-                    16.0,
-                    false,
-                    if notice.error {
-                        theme.danger
-                    } else {
-                        theme.text_2
-                    },
-                ))
-                .child(
-                    div()
-                        .flex_1()
-                        .text_size(px(size::T_MD))
-                        .text_color(theme.text)
-                        .child(notice.text),
-                )
-                .child(
-                    ui::pressable("notice-close", theme)
-                        .role(Role::Button)
-                        .aria_label(close)
-                        .p(px(size::S1))
-                        .rounded(px(size::R_SM))
-                        .hover(|s| s.bg(theme.surface_hover))
-                        .child(ui::icon("close", 14.0, false, theme.text_2))
-                        .on_click(move |_, _, cx| {
-                            lueur.update(cx, |l, cx| {
-                                l.notice = None;
-                                cx.notify();
-                            })
-                        }),
-                )
+                .gap(px(size::S2))
+                .rounded_full()
+                .bg(theme.active_soft)
+                .text_size(px(size::T_SM))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(theme.active_text)
+                .child(div().size(px(7.0)).rounded_full().bg(theme.glow))
+                .child(label)
+                .on_click(|_, _, cx| crate::app::restart_into_update(cx))
                 .into_any_element(),
         )
     }
+
+    fn page(&self, cx: &App) -> AnyElement {
+        match self.lueur.read(cx).view {
+            View::Lighting => self.pages.lighting.clone().into_any_element(),
+            View::Room => self.pages.room.clone().into_any_element(),
+            View::Bulbs => self.pages.bulbs.clone().into_any_element(),
+            View::Settings => self.pages.settings.clone().into_any_element(),
+        }
+    }
+
+    fn toasts(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let toasts = self.lueur.read(cx).toasts.clone();
+        let dismiss_label = t(cx, "dismiss");
+        let items = toasts
+            .into_iter()
+            .map(|toast| toast_view(toast, &dismiss_label, theme, &self.lueur));
+        div()
+            .id("toasts")
+            .absolute()
+            .bottom(px(size::S5))
+            .right(px(size::S5))
+            .w(px(380.0))
+            .flex()
+            .flex_col()
+            .gap(px(size::S2))
+            .children(items)
+            .into_any_element()
+    }
+}
+
+fn toast_view(
+    toast: Toast,
+    dismiss_label: &SharedString,
+    theme: &Theme,
+    lueur: &Entity<Lueur>,
+) -> AnyElement {
+    let id = toast.id;
+    let text = if toast.count > 1 {
+        SharedString::from(format!("{} (×{})", toast.text, toast.count))
+    } else {
+        toast.text.clone()
+    };
+    let hold = lueur.clone();
+    let close = lueur.clone();
+    div()
+        .id(("toast", id))
+        .role(if toast.error {
+            Role::Alert
+        } else {
+            Role::Status
+        })
+        .aria_label(text.clone())
+        .flex()
+        .items_start()
+        .gap(px(size::S3))
+        .p(px(size::S3))
+        .rounded(px(size::R_MD))
+        .bg(theme.surface)
+        .border_1()
+        .border_color(if toast.error {
+            theme.danger
+        } else {
+            theme.line
+        })
+        .shadow_lg()
+        // Pointed at, an information toast waits.
+        .on_hover(move |hovered, _, cx| {
+            hold.update(cx, |l, cx| l.hold_toast(id, *hovered, cx));
+        })
+        .child(ui::icon(
+            if toast.error { "alert" } else { "info" },
+            16.0,
+            false,
+            if toast.error {
+                theme.danger
+            } else {
+                theme.text_2
+            },
+        ))
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap(px(size::S1))
+                .child(
+                    div()
+                        .text_size(px(size::T_MD))
+                        .text_color(theme.text)
+                        .child(text),
+                )
+                .when_some(toast.detail.clone(), |d, detail| {
+                    d.child(
+                        div()
+                            .text_size(px(size::T_XS))
+                            .text_color(theme.text_3)
+                            .child(detail),
+                    )
+                })
+                .when_some(toast.action.clone(), |d, (label, run)| {
+                    let done = lueur.clone();
+                    d.child(
+                        div().flex().child(
+                            ui::pressable(("toast-action", id), theme)
+                                .role(Role::Button)
+                                .aria_label(label.clone())
+                                .text_size(px(size::T_SM))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.text)
+                                .child(label)
+                                .on_click(move |_, window, cx| {
+                                    run(window, cx);
+                                    done.update(cx, |l, cx| l.dismiss(id, cx));
+                                }),
+                        ),
+                    )
+                }),
+        )
+        .child(
+            ui::pressable(("toast-close", id), theme)
+                .role(Role::Button)
+                .aria_label(dismiss_label.clone())
+                .p(px(size::S1))
+                .rounded(px(size::R_SM))
+                .hover(|s| s.bg(theme.surface_hover))
+                .child(ui::icon("close", 14.0, false, theme.text_2))
+                .on_click(move |_, _, cx| close.update(cx, |l, cx| l.dismiss(id, cx))),
+        )
+        .into_any_element()
 }
 
 impl Render for MainWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *theme(cx);
         let sidebar = self.sidebar(&theme, cx);
-        let page = self.page(&theme, cx);
-        let notice = self.notice(&theme, cx);
+        let update = self.update_button(&theme, cx);
+        let toasts = self.toasts(&theme, cx);
+        let page = self.page(cx);
+        let top = if titlebar::OWN {
+            titlebar::bar(div().children(update), &theme, window).into_any_element()
+        } else {
+            div()
+                .flex()
+                .justify_end()
+                .px(px(size::S4))
+                .pt(px(size::S3))
+                .children(update)
+                .into_any_element()
+        };
         div()
             .id("root")
             .role(Role::Application)
@@ -379,10 +359,21 @@ impl Render for MainWindow {
             .flex()
             .bg(theme.bg)
             .text_color(theme.text)
-            .font_family(".SystemUIFont")
+            .font_family(crate::app::FONT)
             .child(sidebar)
-            .child(page)
-            .children(notice)
+            .child(
+                div().flex_1().h_full().flex().flex_col().child(top).child(
+                    div()
+                        .id("page")
+                        .flex_1()
+                        .overflow_y_scroll()
+                        .px(px(size::S6 + size::S2))
+                        .pt(px(size::S3))
+                        .pb(px(size::S6))
+                        .child(page),
+                ),
+            )
+            .child(toasts)
     }
 }
 

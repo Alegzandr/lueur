@@ -2,10 +2,18 @@
 //! with Enter or Space, draws an amber focus ring only for the keyboard, and
 //! tells assistive technology what it is and what state it is in.
 
-use crate::theme::{Theme, size};
+pub mod choice;
+pub mod input;
+pub mod slider;
+
+pub use choice::{Choice, choice, segmented, select};
+pub use input::{InputEvent, TextInput};
+pub use slider::slider;
+
+use crate::theme::{Theme, size, theme};
 use gpui::{
-    AnyElement, App, ClickEvent, Div, ElementId, FontWeight, Hsla, IntoElement, Role, SharedString,
-    Stateful, Svg, Window, div, prelude::*, px, svg,
+    AnyElement, AnyView, App, ClickEvent, Context, Div, ElementId, FontWeight, Hsla, IntoElement,
+    Render, Role, SharedString, Stateful, Svg, Window, div, prelude::*, px, svg,
 };
 
 /// A glyph from `assets/icons`, in the colour of the text around it unless
@@ -131,4 +139,82 @@ pub fn page_title(id: impl Into<ElementId>, text: SharedString, theme: &Theme) -
         .text_color(theme.text)
         .child(text)
         .into_any_element()
+}
+
+/// A floating explanation, for `.tooltip(tip(text))`.
+pub fn tip(text: SharedString) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    move |_, cx| cx.new(|_| Tip(text.clone())).into()
+}
+
+struct Tip(SharedString);
+
+impl Render for Tip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme(cx);
+        div()
+            .max_w(px(280.0))
+            .px(px(size::S3))
+            .py(px(size::S2))
+            .rounded(px(size::R_MD))
+            .bg(t.surface)
+            .border_1()
+            .border_color(t.line)
+            .shadow_lg()
+            .text_size(px(size::T_SM))
+            .text_color(t.text_2)
+            .child(self.0.clone())
+    }
+}
+
+/// One line of a preferences group, after `src/lib/ui/Row.svelte`: the
+/// label on the left, an info mark with its tip if it needs one, the control
+/// on the right.
+pub fn row(
+    index: usize,
+    label: SharedString,
+    tip_text: Option<SharedString>,
+    control: impl IntoElement,
+    theme: &Theme,
+) -> Div {
+    div()
+        .min_h(px(44.0))
+        .px(px(size::S4))
+        .py(px(size::S2))
+        .flex()
+        .items_center()
+        .gap(px(size::S5))
+        .when(index > 0, |d| d.border_t_1().border_color(theme.separator))
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .gap(px(size::S2))
+                .text_size(px(size::T_MD))
+                .text_color(theme.text)
+                .child(label.clone())
+                .when_some(tip_text, |d, text| {
+                    d.child(
+                        pressable(
+                            ElementId::Name(SharedString::from(format!("tip-{label}"))),
+                            theme,
+                        )
+                        .role(Role::Button)
+                        .aria_label(text.clone())
+                        .tooltip(tip(text))
+                        .rounded_full()
+                        .child(icon("info", 14.0, false, theme.text_3)),
+                    )
+                }),
+        )
+        .child(div().flex().justify_end().child(control))
+}
+
+/// A section's small heading over its card.
+pub fn section(title: SharedString, theme: &Theme) -> Div {
+    div()
+        .text_size(px(size::T_SM))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(theme.text_3)
+        .child(title)
 }

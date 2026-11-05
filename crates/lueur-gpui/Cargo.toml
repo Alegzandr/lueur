@@ -29,18 +29,24 @@ async-channel = "2.5"
 sys-locale = "0.3"
 # The tray icon's pixels.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Grapheme boundaries for the text field (src/ui/input.rs). Already in the
+# tree through GPUI.
+unicode-segmentation = "1.13"
 
 # The tray: the crate Tauri's own tray uses, without Tauri. On Linux it needs
 # a GTK loop of its own, which this shell does not run yet.
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 tray-icon = "0.25"
 
-# One instance at a time, recognised by the Tauri version too (src/single.rs).
+# One instance at a time, recognised by the Tauri version too (src/single.rs),
+# and the Windows version for the caption glyphs (src/titlebar.rs).
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
+    "Wdk_System_SystemServices",
     "Win32_Foundation",
     "Win32_System_DataExchange",
     "Win32_System_LibraryLoader",
+    "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }

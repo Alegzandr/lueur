@@ -5,10 +5,6 @@
 //! colours. Keep the two in step until the Tauri interface is gone. Amber
 //! only ever means light; what a choice applies to is neutral ink (`select`).
 
-// The whole stylesheet and catalog API, for the pages still being ported
-// from the Tauri interface; drop this once they all are.
-#![allow(dead_code)]
-
 use gpui::{App, Global, Hsla, Rgba, WindowAppearance};
 use lueur_core::config::Appearance;
 

@@ -34,6 +34,21 @@ actions!(
     ]
 );
 
+/// The interface face, built in (see `assets/fonts`).
+pub const FONT: &str = "Inter";
+
+/// Inter, from the binary: the same face on every system.
+fn load_fonts(cx: &mut App) {
+    let fonts = crate::assets::ASSETS
+        .iter()
+        .filter(|(path, _)| path.starts_with("fonts/") && path.ends_with(".ttf"))
+        .map(|(_, bytes)| std::borrow::Cow::Borrowed(*bytes))
+        .collect();
+    if let Err(e) = cx.text_system().add_fonts(fonts) {
+        log::error!("cannot load Inter: {e}");
+    }
+}
+
 /// Ctrl (⌘ on a Mac) and 1 to 4 switch page, and Enter starts or stops.
 #[cfg(target_os = "macos")]
 const KEYS: [&str; 5] = ["cmd-1", "cmd-2", "cmd-3", "cmd-4", "cmd-enter"];
@@ -70,9 +85,11 @@ pub fn run(started: Started, cx: &mut App) {
         instance,
     } = started;
     cx.set_quit_mode(QuitMode::Explicit);
+    load_fonts(cx);
     bind_keys(cx);
+    crate::ui::input::bind_keys(cx);
 
-    let lueur = cx.new(|_| Lueur::new(Arc::clone(&shell)));
+    let lueur = cx.new(|cx| Lueur::new(Arc::clone(&shell), cx));
     cx.set_global(Model(lueur.clone()));
     let (lang, appearance, behavior) = {
         let l = lueur.read(cx);
@@ -161,6 +178,8 @@ pub fn open_main(cx: &mut App) {
         window_min_size: Some(size(px(960.0), px(640.0))),
         titlebar: Some(TitlebarOptions {
             title: Some(window::title(cx)),
+            // On Windows the page draws the bar (see `titlebar.rs`).
+            appears_transparent: crate::titlebar::OWN,
             ..Default::default()
         }),
         app_id: Some("com.lueur.app".into()),
@@ -174,6 +193,14 @@ pub fn open_main(cx: &mut App) {
     if let Err(e) = opened {
         log::error!("cannot open the window: {e}");
     }
+}
+
+/// Restart into the update installed while the app ran, handing the bulbs
+/// back first.
+pub fn restart_into_update(cx: &mut App) {
+    let shell = Arc::clone(&model(cx).read(cx).shell);
+    lueur_shell::lights::suspend(&shell, false);
+    cx.restart();
 }
 
 /// The app's icon, for the window's frame and the taskbar.

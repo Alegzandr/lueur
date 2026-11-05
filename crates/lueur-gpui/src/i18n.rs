@@ -5,10 +5,6 @@
 //! placeholders are filled by `fill`. Counted strings are [one, other] pairs
 //! read with `tn(key, n)`: French treats 0 and 1 as singular, English only 1.
 
-// The whole stylesheet and catalog API, for the pages still being ported
-// from the Tauri interface; drop this once they all are.
-#![allow(dead_code)]
-
 use gpui::{App, Global, SharedString};
 use lueur_core::config::Language;
 use serde::Deserialize;
