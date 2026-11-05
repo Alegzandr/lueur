@@ -35,6 +35,7 @@ pub mod state;
 pub mod tray_model;
 pub mod tuya;
 pub mod tuya_cloud;
+pub mod update;
 pub mod vault;
 
 /// The capture benchmark, for `examples/capture_bench.rs` only.

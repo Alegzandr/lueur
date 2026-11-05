@@ -46,6 +46,7 @@ lueur/
 │   ├─ devices.rs         Dispatch between the core families and Tuya
 │   ├─ tuya.rs            Tuya LAN control (rustuya), discovery by key
 │   ├─ tuya_cloud.rs      Smart Life QR sign-in that imports local keys
+│   ├─ update.rs          Updates from GitHub releases, checked as the Tauri updater checks them
 │   ├─ service.rs         The commands a window calls, validated
 │   ├─ tray_model.rs      What the tray menu shows and what its items do
 │   ├─ secrets.rs         Credentials kept from the UI and from exports
@@ -451,6 +452,14 @@ strictly newer (`is_upgrade` in `updater.rs`), so the signed one is too.
 Releases signed before v0.8.0 carry no version and are refused by v0.8.0 and
 later, which is what we want: an update only ever goes forward.
 
+The GPUI build reads the same `latest.json` and signatures without the
+plugin, in `crates/lueur-shell/src/update.rs`: the same platform entry, the
+same key, the signed version required, only a newer version, and the same
+install per platform. So an installed Tauri version updates into it, and it
+keeps updating from releases made as they are today. Its tests check
+signatures made by `tauri signer sign`, and that its key and address are the
+ones in `tauri.conf.json`.
+
 ## Releasing
 
 Bump `version` in `Cargo.toml` (`[workspace.package]`) and `package.json` and
@@ -464,7 +473,8 @@ workflow" button.
 
 It needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY` and
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, from `npx tauri signer generate`, whose
-public key goes in `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
+public key goes in `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`
+and in `PUBKEY` in `crates/lueur-shell/src/update.rs`.
 
 ### Signing the Mac app
 
