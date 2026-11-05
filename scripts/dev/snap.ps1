@@ -1,8 +1,8 @@
 # Development aid for the GPUI interface: runs a debug build on a settings
 # folder of its own (never the real one, never the real bulbs) and saves a
 # picture of its window, to check a change by eye. Windows only.
-# Usage: snap.ps1 -Exe target/debug/lueur-gpui.exe -DataDir <folder> -Out shot.png
-param([string]$Exe, [string]$DataDir, [string]$Out, [int]$Wait = 5, [string]$Lang = "")
+# Usage: snap.ps1 -Exe target/debug/lueur-gpui.exe -DataDir <folder> -Out shot.png [-View settings]
+param([string]$Exe, [string]$DataDir, [string]$Out, [int]$Wait = 5, [string]$View = "lighting")
 # Starts the app on an empty data folder, captures only its window, stops it.
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
@@ -13,10 +13,12 @@ public static class W {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
 }
 "@
 [W]::SetProcessDPIAware() | Out-Null
 $env:LUEUR_DATA_DIR = $DataDir
+$env:LUEUR_START_VIEW = $View
 $p = Start-Process -FilePath $Exe -PassThru
 try {
   Start-Sleep -Seconds $Wait
@@ -30,7 +32,11 @@ try {
   $w = $r.R - $r.L; $hh = $r.B - $r.T
   $bmp = New-Object System.Drawing.Bitmap $w, $hh
   $g = [System.Drawing.Graphics]::FromImage($bmp)
-  $g.CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size)
+  # The window's own pixels (PW_RENDERFULLCONTENT), not the screen's: a
+  # window over it, or anything else on screen, stays out of the picture.
+  $dc = $g.GetHdc()
+  [W]::PrintWindow($h, $dc, 2) | Out-Null
+  $g.ReleaseHdc($dc)
   $bmp.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
   Write-Output "captured ${w}x${hh}"
 } finally {

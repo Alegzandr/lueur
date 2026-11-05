@@ -59,6 +59,21 @@ impl View {
 /// What a toast's button does.
 pub type ToastAction = Rc<dyn Fn(&mut Window, &mut App)>;
 
+/// The page the window opens on: Lighting, or in a development build the
+/// one `LUEUR_START_VIEW` names (lighting, room, bulbs, settings), to picture
+/// a page with `scripts/dev/snap.ps1`.
+fn start_view() -> View {
+    let wanted = cfg!(debug_assertions)
+        .then(|| std::env::var("LUEUR_START_VIEW").ok())
+        .flatten();
+    match wanted.as_deref() {
+        Some("room") => View::Room,
+        Some("bulbs") => View::Bulbs,
+        Some("settings") => View::Settings,
+        _ => View::Lighting,
+    }
+}
+
 /// A message the window shows for a moment, or until closed for an error.
 #[derive(Clone)]
 pub struct Toast {
@@ -146,7 +161,7 @@ impl Lueur {
             shell,
             config,
             status,
-            view: View::Lighting,
+            view: start_view(),
             sleep,
             unverified: Vec::new(),
             dismissed_devices: Vec::new(),
