@@ -256,31 +256,9 @@ pub fn fresh_name(lights: &[Light], name: impl Fn(usize) -> String) -> String {
         .unwrap_or_else(|| name(n))
 }
 
-/// A fresh light id. The ids only have to be unique within the config; the
-/// Tauri interface uses a random UUID, and this has the same shape.
+/// A fresh light id: a random UUID, as the Tauri interface makes them.
 pub fn new_light_id() -> String {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    let word = |salt: u64| {
-        let mut h = RandomState::new().build_hasher();
-        h.write_u128(nanos);
-        h.write_u64(salt);
-        h.finish()
-    };
-    let (a, b) = (word(1), word(2));
-    format!(
-        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
-        a >> 32,
-        (a >> 16) & 0xffff,
-        a & 0xfff,
-        0x8000 | (b >> 48) & 0x3fff,
-        b & 0xffff_ffff_ffff
-    )
+    uuid::Uuid::new_v4().to_string()
 }
 
 // --- Framing ---

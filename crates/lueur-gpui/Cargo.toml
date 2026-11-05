@@ -37,6 +37,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # Grapheme boundaries for the text field (src/ui/input.rs). Already in the
 # tree through GPUI.
 unicode-segmentation = "1.13"
+# Ids for new lights (src/views/room/plan.rs), as the Tauri interface makes
+# them. The version lueur-shell already uses.
+uuid = { version = "1.29.0", features = ["v4"] }
 
 # The tray: the crate Tauri's own tray uses, without Tauri. On Linux it needs
 # a GTK loop of its own, which this shell does not run yet.
