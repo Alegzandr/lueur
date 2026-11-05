@@ -328,6 +328,9 @@ impl Render for MainWindow {
         let update = self.update_button(&theme, cx);
         let toasts = self.toasts(&theme, cx);
         let page = self.page(cx);
+        // Under the page, the glow of the lights behind Lighting, the
+        // room's photograph behind the other pages.
+        let backdrop = self.pages.lighting.read(cx).backdrop(cx);
         let top = if titlebar::OWN {
             titlebar::bar(div().children(update), &theme, window).into_any_element()
         } else {
@@ -365,11 +368,13 @@ impl Render for MainWindow {
                 // `min_w_0`: the column takes the window's width, never the width
                 // of its longest line, which would push the caption buttons out.
                 div()
+                    .relative()
                     .flex_1()
                     .min_w_0()
                     .h_full()
                     .flex()
                     .flex_col()
+                    .child(backdrop)
                     .child(top)
                     .child(
                         div()
