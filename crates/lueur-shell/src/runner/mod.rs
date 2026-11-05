@@ -35,7 +35,6 @@ use lueur_core::device::lease::Leases;
 use lueur_core::device::relink::{Link, LinkState, Relink};
 use lueur_core::engine::EngineSettings;
 use lueur_core::geometry::LightMapping;
-use lueur_core::safety::SafetySettings;
 use lueur_core::show::{ShowKind, ShowSettings};
 use lueur_core::stage::Fixture;
 use lueur_core::yeelight::Effect;
@@ -56,8 +55,6 @@ pub struct LiveSettings {
     pub show: ShowSettings,
     /// The room's wall colour, which every output is corrected for.
     pub wall: Rgb,
-    /// The photosensitivity protection every output goes through.
-    pub safety: SafetySettings,
     /// The ambilight's updates per second.
     pub target_fps: u32,
     /// What the music show listens to.
@@ -72,7 +69,6 @@ impl LiveSettings {
             duration_ms: config.transition.duration_ms,
             show: config.show,
             wall: config.room.wall,
-            safety: config.safety,
             target_fps: config.capture.target_fps,
             audio: config.audio.clone(),
         }

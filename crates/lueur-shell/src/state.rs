@@ -59,7 +59,6 @@ impl AppState {
         let vault = Vault::open(&data_dir, &mut config);
         let migrate = plain && matches!(vault, Vault::Ready { .. });
         let manual = Manual::default();
-        manual.protect(config.safety.flash_guard);
         let state = AppState {
             data_dir,
             config: Mutex::new(config),

@@ -229,34 +229,52 @@ impl RoomPage {
                 };
                 let off = off(light.pos);
                 self.select_light(id.clone(), cx);
-                self.begin(Drag::Light { id, off });
+                self.begin(Drag::Light { id, off }, cx);
             }
             Some(Target::Corner(index)) => {
                 self.select_other(Other::Corner(index), cx);
-                self.begin(Drag::Corner {
-                    index,
-                    off: off(room.walls[index]),
-                });
+                self.begin(
+                    Drag::Corner {
+                        index,
+                        off: off(room.walls[index]),
+                    },
+                    cx,
+                );
             }
-            Some(Target::Width) => self.begin(Drag::Width),
+            Some(Target::Width) => self.begin(Drag::Width, cx),
             Some(Target::Screen) => {
                 self.select_other(Other::Screen, cx);
-                self.begin(Drag::Screen {
-                    off: off(room.screen.center),
-                });
+                self.begin(
+                    Drag::Screen {
+                        off: off(room.screen.center),
+                    },
+                    cx,
+                );
             }
-            Some(Target::Seat) => self.begin(Drag::Seat),
+            Some(Target::Seat) => self.begin(Drag::Seat, cx),
             Some(Target::Wall) if clicks >= 2 => self.insert_corner_at(p, cx),
             _ => self.clear_selection(false, cx),
         }
         cx.notify();
     }
 
-    fn begin(&mut self, drag: Drag) {
+    fn begin(&mut self, drag: Drag, cx: &mut Context<Self>) {
         // The view is held still during a drag, or the plan would slide
         // under the pointer.
         self.held = Some(self.drawn);
         self.drag = Some(drag);
+        self.arranging(true, cx);
+    }
+
+    /// Tell the app a drag started or ended: the effects restart on a
+    /// changed room only once it ends, not at every move.
+    fn arranging(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.lueur.update(cx, |l, cx| {
+            if l.arranging != on {
+                l.arranging = on;
+                cx.notify();
+            }
+        });
     }
 
     fn drag_to(&mut self, p: Vec2, shift: bool, cx: &mut Context<Self>) {
@@ -294,6 +312,7 @@ impl RoomPage {
             self.mark_arranged(cx);
         }
         self.held = None;
+        self.arranging(false, cx);
         let snap = super::history::Snap::of(&self.lueur.read(cx).config);
         self.observe_plan(&snap, cx);
         cx.notify();

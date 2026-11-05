@@ -121,6 +121,9 @@ pub struct Lueur {
     pub selected_light: Option<String>,
     /// Lights whose power is being switched.
     pub power_busy: Vec<String>,
+    /// True while something on the room's plan is being dragged. The
+    /// effects restart on a changed room only once the drag ends.
+    pub arranging: bool,
     save: Option<Task<()>>,
     _poll: Option<Task<()>>,
 }
@@ -172,6 +175,7 @@ impl Lueur {
             target: Vec::new(),
             selected_light: None,
             power_busy: Vec::new(),
+            arranging: false,
             save: None,
             _poll: Some(poll),
         }

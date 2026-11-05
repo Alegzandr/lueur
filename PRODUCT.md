@@ -81,8 +81,9 @@ Several things together, the first one leading:
 - No web view and nothing fetched to draw the window: the font, the icons
   and the photographs are built into the executable.
 - Light and dark appearance, chosen in Settings.
-- Undo for removing a light and undo/redo on the room plan; changes made
-  while effects play come with a one-click *Apply*.
+- Undo for removing a light and undo/redo on the room plan; a change to the
+  room while effects play restarts them on it once it rests, with nothing to
+  confirm.
 - Configuration export/import holds no password or key.
 - Hue, WiZ, LIFX, Govee and Nanoleaf are supported but not yet tested on
   hardware; only Yeelight Color and Smart Life / Tuya (v3.3) are tested.
@@ -128,8 +129,10 @@ Several things together, the first one leading:
 
 ## Accessibility & Inclusion
 
-- Photosensitivity guard on every mode's output (`crates/lueur-core/src/safety.rs`):
-  white flashes can be turned off and never exceed three per second.
+- Photosensitivity guard on every mode's output (`crates/lueur-core/src/safety.rs`),
+  always on with no setting to turn it off: no light, and not the room,
+  flashes more than three times a second. The music's white flashes can be
+  turned off.
 - The animated backdrop, the animated tiles and the spinners have a still
   form, used under reduced motion. On Windows it follows "Show animations in
   Windows"; macOS and Linux are not read yet.

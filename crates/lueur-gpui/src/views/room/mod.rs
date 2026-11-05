@@ -25,7 +25,7 @@ use gpui::{
 };
 use history::{History, Snap};
 use lueur_core::color::Rgb;
-use lueur_core::config::{AppConfig, CaptureSettings, DeviceBinding};
+use lueur_core::config::AppConfig;
 use lueur_core::geometry::{Room, Vec2, map_light};
 use lueur_shell::service;
 use plan::{Other, Target, ViewBox};
@@ -69,28 +69,6 @@ enum PendingFocus {
     List { key: Option<String>, index: usize },
 }
 
-/// What the running effect reads only when it starts: the room as drawn
-/// (not its paint), which bulb drives which light, and the capture (not its
-/// frame rate). Everything else is pushed live.
-#[derive(PartialEq)]
-struct Topology {
-    room: Room,
-    bindings: Vec<DeviceBinding>,
-    capture: CaptureSettings,
-}
-
-fn topology(c: &AppConfig) -> Topology {
-    let mut room = c.room.clone();
-    room.wall = Rgb::WHITE;
-    let mut capture = c.capture;
-    capture.target_fps = 0;
-    Topology {
-        room,
-        bindings: c.bindings.clone(),
-        capture,
-    }
-}
-
 /// The fields of the inspector, made for the object picked and remade when
 /// the pick changes.
 struct Fields {
@@ -115,8 +93,6 @@ impl Fields {
 struct Now {
     config: AppConfig,
     selected: Option<String>,
-    running: bool,
-    busy: bool,
 }
 
 pub struct RoomPage {
@@ -138,7 +114,6 @@ pub struct RoomPage {
     settle: Option<Task<()>>,
     /// True while the page is the one shown.
     shown: bool,
-    started_with: Option<Topology>,
     /// Where a light moved with the arrows went, for screen readers.
     announcement: SharedString,
     announce: Option<Task<()>>,
@@ -178,7 +153,6 @@ impl RoomPage {
             history,
             settle: None,
             shown,
-            started_with: None,
             announcement: SharedString::default(),
             announce: None,
             plan_focus: cx.focus_handle().tab_stop(true),
@@ -191,18 +165,12 @@ impl RoomPage {
         }
     }
 
-    /// The app's state changed: follow the effect, feed the history while
-    /// the page shows, and draw again.
+    /// The app's state changed: feed the history while the page shows, and
+    /// draw again.
     fn on_lueur(&mut self, cx: &mut Context<Self>) {
         let l = self.lueur.read(cx);
-        let running = l.status.running;
         let shown = l.view == View::Room;
         let snap = Snap::of(&l.config);
-        if !running {
-            self.started_with = None;
-        } else if self.started_with.is_none() {
-            self.started_with = Some(topology(&l.config));
-        }
         if shown {
             if !self.shown {
                 self.history.track(&snap);
@@ -238,8 +206,6 @@ impl RoomPage {
         Now {
             config: l.config.clone(),
             selected,
-            running: l.status.running,
-            busy: l.busy,
         }
     }
 
@@ -617,37 +583,6 @@ impl RoomPage {
                 move |s| service::test_device(s, b.endpoint(), Rgb::new(255, 190, 120)),
                 |_, _, _| {},
             )
-        });
-    }
-
-    /// Restart the effects so they read the room as drawn now.
-    fn restart(&mut self, cx: &mut Context<Self>) {
-        if self.lueur.read(cx).busy {
-            return;
-        }
-        // Taken again from the config once the effects run on it.
-        self.started_with = None;
-        self.lueur.update(cx, |l, cx| {
-            l.busy = true;
-            cx.notify();
-            let config = l.config.clone();
-            l.run_then(
-                cx,
-                move |s| {
-                    service::save_config(s, config)?;
-                    service::restart_effect(s)
-                },
-                |l, result, cx| {
-                    l.busy = false;
-                    match result {
-                        Ok(status) => l.status = status,
-                        Err(e) => {
-                            l.fail(&e, cx);
-                            l.refresh_status(cx);
-                        }
-                    }
-                },
-            );
         });
     }
 
@@ -1046,26 +981,6 @@ impl Render for RoomPage {
                     },
                 )
             });
-        let restart = (now.running
-            && self
-                .started_with
-                .as_ref()
-                .is_some_and(|s| *s != topology(&now.config)))
-        .then(|| {
-            let page = cx.entity().downgrade();
-            let busy = now.busy;
-            self.banner(
-                "room-restart",
-                t(cx, "restart_text"),
-                t(cx, "apply"),
-                &theme,
-                move |_, _, cx| {
-                    if !busy {
-                        let _ = page.update(cx, |p, cx| p.restart(cx));
-                    }
-                },
-            )
-        });
         let header = self.header(&theme, cx);
         let stage = self.plan(&now, &theme, &colors, cx);
         let side = if now.selected.is_some() || self.other.is_some() {
@@ -1094,7 +1009,6 @@ impl Render for RoomPage {
                             .flex_col()
                             .gap(px(size::S3))
                             .children(coach)
-                            .children(restart)
                             .child(stage),
                     )
                     .child(

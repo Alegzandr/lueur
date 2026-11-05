@@ -49,3 +49,21 @@ pub use geometry::{Light, LightMapping, Room, SampleZone, Screen, ScreenEdge, Ve
 pub(crate) fn default_true() -> bool {
     true
 }
+
+/// Serde helpers for a flag that older versions let the user turn off and
+/// that is now always on. Whatever a file says reads as on, and the flag is
+/// always written as on, so an older version reading this version's file
+/// keeps the behaviour on as well.
+pub(crate) mod always_on {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(crate) fn serialize<S: Serializer>(_: &bool, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_bool(true)
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+        // Read the value so a file of any shape still parses, then drop it.
+        serde::de::IgnoredAny::deserialize(d)?;
+        Ok(true)
+    }
+}

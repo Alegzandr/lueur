@@ -4,8 +4,8 @@
 //! page's head, and a getting-started card until the room is set up.
 //!
 //! The page also holds the two backdrops the window draws under itself
-//! (`backdrop.rs`) and the banner that offers to restart an effect whose
-//! room has changed, which the Room page shows too ([`restart_banner`]).
+//! (`backdrop.rs`), and restarts the running effects once the room they
+//! play has changed and rested ([`actions::follow_room`]).
 
 mod actions;
 mod backdrop;
@@ -17,8 +17,6 @@ mod modes;
 mod scenes;
 mod sleep;
 mod tune;
-
-pub use actions::needs_restart;
 
 use crate::i18n::{t, tn};
 use crate::state::{Lueur, View};
@@ -91,7 +89,7 @@ impl LightingPage {
         let room_photo = cx.new(|cx| RoomBackdrop::new(lueur.clone(), cx));
         let arranged = lueur.read(cx).config.interface.room_arranged;
         let watch = cx.observe(&lueur, |this, lueur, cx| {
-            actions::track_started(&lueur, cx);
+            actions::follow_room(&lueur, cx);
             let l = lueur.read(cx);
             let arranged = l.config.interface.room_arranged;
             if arranged && !this.arranged {
@@ -104,7 +102,7 @@ impl LightingPage {
                 this.last_step_pending = false;
             }
         });
-        actions::track_started(&lueur, cx);
+        actions::follow_room(&lueur, cx);
         // The sleep timer counts down by the second while one runs.
         let ticker = cx.spawn(async move |this, cx| {
             loop {
@@ -471,54 +469,6 @@ impl LightingPage {
     }
 }
 
-/// The banner that says the running effect still plays the room as it was
-/// drawn when it started, with the button that restarts it. Shown on this
-/// page and on the Room page.
-pub fn restart_banner(lueur: &Entity<Lueur>, theme: &Theme, cx: &App) -> Option<AnyElement> {
-    let l = lueur.read(cx);
-    if !needs_restart(l, cx) {
-        return None;
-    }
-    let busy = l.busy;
-    let text = crate::i18n::t(cx, "restart_text");
-    let label = crate::i18n::t(cx, "apply");
-    let lueur = lueur.clone();
-    Some(
-        div()
-            .id("restart-banner")
-            .role(Role::Status)
-            .aria_label(text.clone())
-            .flex()
-            .items_center()
-            .gap(px(size::S3))
-            .py(px(size::S2))
-            .pr(px(size::S2))
-            .pl(px(size::S4))
-            .rounded(px(size::R_LG))
-            .bg(theme.surface)
-            .border_1()
-            .border_color(theme.separator)
-            .shadow_sm()
-            .child(lamp(7.0, theme))
-            .child(
-                div()
-                    .flex_1()
-                    .text_size(px(size::T_MD))
-                    .text_color(theme.text)
-                    .child(text),
-            )
-            .child(
-                btn("restart-apply", Kind::Primary, true, busy, theme)
-                    .aria_label(label.clone())
-                    .child(label)
-                    .when(!busy, |b| {
-                        b.on_click(move |_, _, cx| lueur.update(cx, |l, cx| l.restart_effect(cx)))
-                    }),
-            )
-            .into_any_element(),
-    )
-}
-
 impl Render for LightingPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *theme(cx);
@@ -532,7 +482,6 @@ impl Render for LightingPage {
             (content, content)
         };
         let head = self.head(&theme, window, cx);
-        let banner = restart_banner(&self.lueur, &theme, cx);
         let setup = self.setup(&theme, cx);
         let lights = self.lights(left_w, &theme, cx);
         let scenes = (bound > 0).then(|| self.scenes(left_w, &theme, window, cx));
@@ -564,7 +513,6 @@ impl Render for LightingPage {
             .flex_col()
             .child(self.measure(cx))
             .child(head)
-            .children(banner.map(|b| div().mb(px(size::S5)).child(b)))
             .children(setup)
             .child(
                 div()

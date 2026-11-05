@@ -1,6 +1,6 @@
-//! The Settings page: how the
-//! ambilight reads the screen, what the music show listens to, the
-//! photosensitivity protection, and the app's own preferences.
+//! The Settings page: how the ambilight reads the screen, what the music
+//! show listens to, and the app's own preferences. The photosensitivity
+//! protection and the black-bar trim have no row: they are always on.
 
 mod actions;
 mod choices;
@@ -161,23 +161,6 @@ impl SettingsPage {
         ));
 
         let lueur = self.lueur.clone();
-        let crop = c.engine.crop_bars;
-        rows.push((
-            t(cx, "crop_bars"),
-            Some(t(cx, "crop_bars_tip")),
-            ui::switch(
-                "crop-bars",
-                t(cx, "crop_bars"),
-                crop,
-                theme,
-                move |_, _, cx| {
-                    lueur.update(cx, |l, cx| l.edit(cx, |x| x.engine.crop_bars = !crop))
-                },
-            )
-            .into_any_element(),
-        ));
-
-        let lueur = self.lueur.clone();
         let def = AppConfig::default().engine.saturation;
         rows.push((
             t(cx, "colour_strength"),
@@ -319,36 +302,6 @@ impl SettingsPage {
             ),
         ];
         rows_of(rows, theme)
-    }
-
-    fn accessibility(
-        &self,
-        c: &AppConfig,
-        theme: &Theme,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        let lueur = self.lueur.clone();
-        let on = c.safety.flash_guard;
-        // The person at the computer may turn the protection off here; only
-        // an imported file may not (see
-        // `service::import_config`).
-        rows_of(
-            vec![(
-                t(cx, "flash_guard"),
-                Some(t(cx, "flash_guard_tip")),
-                ui::switch(
-                    "flash-guard",
-                    t(cx, "flash_guard"),
-                    on,
-                    theme,
-                    move |_, _, cx| {
-                        lueur.update(cx, |l, cx| l.edit(cx, |x| x.safety.flash_guard = !on))
-                    },
-                )
-                .into_any_element(),
-            )],
-            theme,
-        )
     }
 
     fn application(&self, c: &AppConfig, theme: &Theme, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -537,7 +490,6 @@ impl Render for SettingsPage {
             .sound
             .clone()
             .map(|sound| self.music(&sound, &config, &theme, window, cx));
-        let accessibility = self.accessibility(&config, &theme, cx);
         let application = self.application(&config, &theme, cx);
         let unsealed = (!self.sealed).then(|| t(cx, "credentials_unsealed"));
         let version = SharedString::from(format!("Lueur {}", env!("CARGO_PKG_VERSION")));
@@ -551,7 +503,6 @@ impl Render for SettingsPage {
             .when_some(music, |d, rows| {
                 d.child(group(t(cx, "mode_music"), rows, &theme))
             })
-            .child(group(t(cx, "accessibility"), accessibility, &theme))
             .child(group(t(cx, "application"), application, &theme).when_some(
                 unsealed,
                 |d, text| {

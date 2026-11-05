@@ -394,7 +394,7 @@ fn a_loop_a_bulb_plays_by_itself_never_flashes() {
             let mut guard = crate::safety::FlashGuard::show(1);
             for (k, frame) in frames.iter().enumerate() {
                 let mut out = [*frame];
-                guard.apply(&mut out, 0.04, true);
+                guard.apply(&mut out, 0.04);
                 assert_eq!(
                     out[0], *frame,
                     "{kind:?} at {place}: held back at frame {k}"
