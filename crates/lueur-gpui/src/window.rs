@@ -328,6 +328,9 @@ impl Render for MainWindow {
         let update = self.update_button(&theme, cx);
         let toasts = self.toasts(&theme, cx);
         let page = self.page(cx);
+        // Under the page, the glow of the lights behind Lighting, the
+        // room's photograph behind the other pages.
+        let backdrop = self.pages.lighting.read(cx).backdrop(cx);
         let top = if titlebar::OWN {
             titlebar::bar(div().children(update), &theme, window).into_any_element()
         } else {
@@ -362,16 +365,24 @@ impl Render for MainWindow {
             .font_family(crate::app::FONT)
             .child(sidebar)
             .child(
-                div().flex_1().h_full().flex().flex_col().child(top).child(
-                    div()
-                        .id("page")
-                        .flex_1()
-                        .overflow_y_scroll()
-                        .px(px(size::S6 + size::S2))
-                        .pt(px(size::S3))
-                        .pb(px(size::S6))
-                        .child(page),
-                ),
+                div()
+                    .relative()
+                    .flex_1()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .child(backdrop)
+                    .child(top)
+                    .child(
+                        div()
+                            .id("page")
+                            .flex_1()
+                            .overflow_y_scroll()
+                            .px(px(size::S6 + size::S2))
+                            .pt(px(size::S3))
+                            .pb(px(size::S6))
+                            .child(page),
+                    ),
             )
             .child(toasts)
     }
