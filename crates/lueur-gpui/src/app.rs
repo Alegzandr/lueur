@@ -249,6 +249,14 @@ pub fn window_icon() -> Option<Arc<image::RgbaImage>> {
 /// timer runs (quitting would leave the lights on); otherwise it quits.
 /// The window closes either way.
 fn should_close(_window: &mut gpui::Window, cx: &mut App) -> bool {
+    // A drag on the plan cut short by the window closing ends here, or the
+    // room's changes would wait for its release forever.
+    model(cx).update(cx, |l, cx| {
+        if l.arranging {
+            l.arranging = false;
+            cx.notify();
+        }
+    });
     let shell = Arc::clone(&model(cx).read(cx).shell);
     let to_tray = shell
         .lock_config()
