@@ -5,8 +5,10 @@
 #[cfg(not(any(windows, target_os = "macos")))]
 use async_channel::Sender;
 
-/// What the tray asks of the app.
+/// What the tray asks of the app. Without a tray (Linux, for now) nothing
+/// asks it.
 #[derive(Debug, Clone)]
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
 pub enum Pick {
     /// A menu item, by its id in the model.
     Item(String),
