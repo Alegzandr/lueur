@@ -61,8 +61,8 @@ reads HDR screens without washing them out
 
 Lueur only reads the screen, the way OBS or Discord do, so it is safe to run
 next to anti-cheat ([details below](#competitive-games-and-anti-cheat)). It
-is a ~10 MB tray app that installs without admin rights and keeps itself up
-to date.
+is a tray app that installs without admin rights and keeps itself up to
+date.
 
 ## A look around
 
@@ -243,15 +243,16 @@ others in coarser steps.
 
 ## Everyday use
 
-- **Tray.** Closing the window keeps Lueur in the tray. Turn off *Keep
-  running when closed* in Settings and closing quits instead, while
-  minimising goes to the tray (on Windows and Linux; a Mac minimises to the
-  Dock). The tray menu says what the lights show, starts and stops Screen and
-  the effects and applies a mood, so you never have to leave a game.
-  Once an update is installed, it also restarts Lueur into it.
-- **Sleep timer.** While it runs, Lueur stays open even when closing the
-  window would quit it, and keeps the computer from going to sleep by itself
-  (on Windows and macOS). Shut the computer down and the lights stay on.
+- **Tray.** On Windows and macOS, closing the window keeps Lueur in the
+  tray. Turn off *Keep running when closed* in Settings and closing quits
+  instead. The tray menu says what the lights show, starts and stops Screen
+  and the effects and applies a mood, so you never have to leave a game.
+  Once an update is installed, it also restarts Lueur into it. Linux has no
+  tray yet: there, closing the window quits Lueur.
+- **Sleep timer.** While it runs, Lueur stays in the tray even when closing
+  the window would quit it, and keeps the computer from going to sleep by
+  itself (on Windows and macOS). Shut the computer down and the lights stay
+  on.
 - **Quitting.** A light playing Rainbow, Sunset, Ocean or Candle goes on
   playing it by itself until Lueur is back, the way its own app would: a
   Yeelight, a Tuya bulb or Nanoleaf panels play the show's colours in a
@@ -260,8 +261,9 @@ others in coarser steps.
   plays its colour loop for Rainbow. The rest settle on a warm white: the
   screen and the music need Lueur to see and hear, and a Govee light
   takes no loop over the network.
-- **At login.** *Open at login* and *Start hidden in the tray* in Settings;
-  each light picks up the effect it was left playing.
+- **At login.** *Open at login* and *Start hidden in the tray* in Settings
+  (on Linux, without a tray, Lueur opens its window); each light picks up
+  the effect it was left playing.
 - **Keyboard.** <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>1</kbd>–<kbd>4</kbd>
   switches page, <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> starts or
   stops. On the room plan, arrows nudge the selection (<kbd>Shift</kbd> for

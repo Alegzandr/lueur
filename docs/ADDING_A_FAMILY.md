@@ -8,9 +8,11 @@ controller.
 Read [DEVELOPMENT.md](DEVELOPMENT.md) first for the architecture. In short:
 a family lives in `crates/lueur-core/src/device/`, behind three operations
 (stream, power, identify) and one search, all dispatched on `DeviceKind` in
-`device/mod.rs`. The shell (`src-tauri`) only knows families through
-`devices.rs`, which hands everything to the core except Tuya, whose
-encrypted transport lives in the shell.
+`device/mod.rs`. The desktop service (`crates/lueur-shell`) only knows
+families through `devices.rs`, which hands everything to the core except
+Tuya, whose encrypted transport lives in the shell. The window
+(`crates/lueur-gpui`) uses the core's `DeviceKind` as it is, so a family
+has no type to repeat there, only its brand name and its words.
 
 ## Checklist
 
@@ -19,9 +21,8 @@ encrypted transport lives in the shell.
 | `device/<family>.rs` | Protocol, stream, power, discovery, tests |
 | `device/mod.rs` | `pub mod`, a `DeviceKind` variant, `family()`, `is_ready()`, the `Debug` impl, `open_stream`, `interval_of`, `set_power`, `discover` |
 | `lib.rs` (core) | The family in the crate doc's family list |
-| `src/lib/types.ts` | The variant in the `DeviceKind` union |
-| `src/lib/brands.ts` | The brand name in `FAMILY` (and the copy in `views/Bulbs.svelte`, while there is one) |
-| `src/lib/i18n.ts` | `first_text`, `tip_5`, and any family-specific hint, in English and French |
+| `crates/lueur-gpui/src/views/bulbs/brands.rs` | The brand name in `family_name()` |
+| `locales/en.json`, `locales/fr.json` | `first_text`, `tip_5`, and any family-specific hint, in both |
 | `README.md` | A row in *Supported bulbs*, "not yet tested on hardware" until it is |
 | `docs/DEVELOPMENT.md` | The family in the `device/` line of the architecture |
 
@@ -408,8 +409,9 @@ DEVELOPMENT.md):
 - **A pairing** in `device::Pairings` (`NanoleafPairing` is the model:
   the device's own id, the address it was granted at, the credential), and
   a `pair()` function that fails with `io::ErrorKind::WouldBlock` until the
-  user has pressed the button, which `commands::pair_device` turns into
-  `pair_waiting`. Add the family to the `Granted` enum there.
+  user has pressed the button, which `pair_device` in
+  `crates/lueur-shell/src/service.rs` turns into `pair_waiting`. Add the
+  family to `pair_device` and to the `Granted` enum there.
 - **Where the credential may go**: discovery hands it out according to
   `device::approach`, never on the id alone. The credential goes to the
   address it was granted at, or over TLS to a pinned certificate; anything
@@ -426,8 +428,11 @@ DEVELOPMENT.md):
   log call that formats a variable called `token`, `key`, `username` and
   the like; add the credential's field name to its list if it is a new
   one.
-- **The interface**: the field in `types.ts`, a `pair_<family>` hint in
-  `i18n.ts`, and the pairing branch in `views/Bulbs.svelte`.
+- **The interface**: a `pair_<family>` hint in `locales/en.json` and
+  `locales/fr.json`, and the family's branch in
+  `crates/lueur-gpui/src/views/bulbs/pairing.rs`, which today tells Hue
+  from Nanoleaf (`Pairing::hue()`) to pick the hint and the words around
+  it.
 
 ## Logs
 

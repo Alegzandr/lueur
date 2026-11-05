@@ -471,7 +471,10 @@ impl BulbsPage {
                 .child(text)
         };
         let (mark_bg, mark): (gpui::Hsla, AnyElement) = match &p.step {
-            PairStep::Waiting => (theme.glow_soft, spinner("pair-spin", 18.0, theme.glow_text)),
+            PairStep::Waiting => (
+                theme.glow_soft,
+                spinner("pair-spin", 18.0, theme.glow_text, cx.reduce_motion()),
+            ),
             PairStep::Paired => (
                 theme.ok.opacity(0.16),
                 ui::icon("check", 18.0, false, theme.ok).into_any_element(),
@@ -648,7 +651,7 @@ impl BulbsPage {
                                 .flex()
                                 .items_center()
                                 .gap(px(size::S2))
-                                .child(spinner("tuya-spin", 12.0, theme.text_3))
+                                .child(spinner("tuya-spin", 12.0, theme.text_3, cx.reduce_motion()))
                                 .child(note(t(cx, "tuya_waiting"), &theme)),
                         )
                         .child(div().flex().child(btn(
@@ -669,7 +672,7 @@ impl BulbsPage {
                         .flex()
                         .items_center()
                         .gap(px(size::S2))
-                        .child(spinner("tuya-spin", 12.0, theme.text_3))
+                        .child(spinner("tuya-spin", 12.0, theme.text_3, cx.reduce_motion()))
                         .child(t(cx, "tuya_adding")),
                 )
                 .into_any_element(),
@@ -861,7 +864,9 @@ impl BulbsPage {
                         Look::Primary,
                         false,
                         starting,
-                        starting.then(|| spinner("tuya-start-spin", 12.0, theme.text_3)),
+                        starting.then(|| {
+                            spinner("tuya-start-spin", 12.0, theme.text_3, cx.reduce_motion())
+                        }),
                         theme,
                         cx.listener(|this, _, _, cx| this.submit_code(cx)),
                     )),

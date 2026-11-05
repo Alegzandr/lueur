@@ -121,8 +121,19 @@ fn shell(
 
 /// "Working": a glyph turning. It turns for as long as the work goes on, so
 /// it never stops to look finished while it is not.
-pub fn spinner(id: impl Into<ElementId>, px_size: f32, color: Hsla) -> AnyElement {
-    ui::icon("refresh", px_size, false, color)
+pub fn spinner(
+    id: impl Into<ElementId>,
+    px_size: f32,
+    color: Hsla,
+    reduce_motion: bool,
+) -> AnyElement {
+    let glyph = ui::icon("refresh", px_size, false, color);
+    // Under reduced motion the glyph stands still: the words beside it say
+    // that something is under way.
+    if reduce_motion {
+        return glyph.into_any_element();
+    }
+    glyph
         .with_animation(
             id,
             Animation::new(Duration::from_millis(900)).repeat(),

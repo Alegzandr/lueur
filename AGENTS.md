@@ -7,34 +7,43 @@ changing something.
 
 ## Project at a glance
 
+Lueur is Rust only: three crates in one Cargo workspace, no web view and no
+npm step.
+
 - `crates/lueur-core/`: pure Rust, no GUI, fully unit-tested. Colour, room
   geometry, the engine, the music stage, the photosensitivity guard, and
   every bulb family behind one API.
 - `crates/lueur-shell/`: the desktop service, no GUI. Screen capture, the
-  live loops, the bulbs, secrets, the background workers and the commands a
-  window calls (`service.rs`), behind a `Host` each front end implements.
-- `src-tauri/`: the Tauri v2 window over `lueur-shell`: the IPC wrappers,
-  the tray, the splash and its updater.
-- `src/`: the interface, Svelte 5 (runes) and TypeScript. Views in
-  `src/lib/views/`, shared controls in `src/lib/ui/`, design tokens in
-  `src/styles/app.css`.
+  live loops, the bulbs, secrets, the background workers, the updates and
+  the commands a window calls (`service.rs`), behind a `Host` the window
+  implements.
+- `crates/lueur-gpui/`: the window and the tray, drawn with GPUI over
+  `lueur-shell`; it builds the `lueur` executable. Pages in
+  `src/views/`, shared controls in `src/ui/`, design tokens in
+  `src/theme.rs`, the splash and the hourly update check in `src/update.rs`.
+- `locales/en.json` and `locales/fr.json`: every string the window shows.
 - Adding a bulb family: follow [docs/ADDING_A_FAMILY.md](docs/ADDING_A_FAMILY.md).
 
 ## Commands
 
 ```bash
-npm install
-npm run tauri dev                  # the app, hot-reloading
-npm run dev                        # the UI alone in a browser: http://localhost:1420/?demo (or ?fresh)
-npm run build                      # svelte-check + vite build
-npm test                           # Vitest
+cargo run -p lueur-gpui                                 # the app
+LUEUR_DATA_DIR=/tmp/lueur-try cargo run -p lueur-gpui   # the app on a settings folder of its own
 cargo test --workspace --locked
 cargo fmt --all --check
 cargo clippy --workspace --locked --all-targets -- -D warnings
+cargo audit
+npm audit --prefix scripts/sign                         # the update signer, the only npm package left
 ```
 
-CI runs all of the above (and `npm audit --omit=dev`); a change is done when
-they pass.
+A development build started with `LUEUR_DATA_DIR` never touches your
+settings and skips the single-instance lock, so it runs beside the
+installed Lueur. `LUEUR_START_VIEW` (`lighting`, `room`, `bulbs`,
+`settings`) opens it on a page, and on Windows `scripts/dev/snap.ps1` saves
+a picture of its window; see *Develop* in
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+CI runs all of the checks above; a change is done when they pass.
 
 ## Rules that must hold
 
@@ -49,20 +58,28 @@ they pass.
 - **Privacy.** Bulbs are reached only at private addresses. The only outside
   traffic is the update check and the Smart Life sign-in. Credentials stay
   out of the UI and out of exported configurations (`crates/lueur-shell/src/secrets.rs`).
-- **Two languages.** Every user-facing string goes in `src/lib/i18n.ts`, in
-  both `en` and `fr`, with the same standing. Brand names don't translate.
-- **Both themes.** Any new design token is defined for light, OS dark and
-  forced dark in `src/styles/app.css`.
+- **Two languages.** Every user-facing string goes in `locales/en.json` and
+  `locales/fr.json`, under the same key, with the same standing. Brand
+  names don't translate.
+- **Both themes.** Any new design token is defined in both `Theme::light()`
+  and `Theme::dark()` in `crates/lueur-gpui/src/theme.rs`; the system, or
+  the appearance forced in Settings, picks between them. The room plan's
+  own colours follow the same rule in
+  `crates/lueur-gpui/src/views/room/colors.rs`.
 
 ## Interface and design
 
 - Who Lueur is for: [PRODUCT.md](PRODUCT.md). The visual system and its
   rules (amber only ever means light, nothing told by colour alone, a still
   alternative to every looping animation): [DESIGN.md](DESIGN.md).
-- Reuse the tokens in `src/styles/app.css` and the controls in
-  `src/lib/ui/` before writing new ones.
+- Reuse the tokens in `crates/lueur-gpui/src/theme.rs` and the controls in
+  `crates/lueur-gpui/src/ui/` before writing new ones.
 - A bulb is called by its name or brand where its light is shown, never by
-  its address (`src/lib/brands.ts`).
+  its address (`crates/lueur-gpui/src/views/bulbs/brands.rs`).
+- Every control is reachable with Tab and tells assistive technology what
+  it is, what it is called and what state it is in, through GPUI's
+  AccessKit integration (`.role()`, `.aria_label()` and the like). The
+  controls in `crates/lueur-gpui/src/ui/` already do; a new one must too.
 
 ## Writing style
 

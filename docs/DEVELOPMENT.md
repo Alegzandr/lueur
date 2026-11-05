@@ -59,21 +59,25 @@ lueur/
 │   ├─ install.rs         Windows: silent per-user install and uninstall
 │   ├─ state.rs, paths.rs Shared app state; where the data folder is
 │   └─ lib.rs             Shell, the events it raises and the Host that hears them
-├─ src-tauri/             The window, drawn by Tauri v2 over lueur-shell
-│   ├─ commands.rs        IPC wrappers over lueur_shell::service
-│   ├─ tray.rs            The tray, drawn from lueur_shell::tray_model
-│   ├─ titlebar.rs        Windows: the title bar drawn by the page
-│   ├─ updater.rs         Startup splash and updates from GitHub releases
-│   └─ lib.rs             Single-instance, window handling, events to the page
-└─ src/                   Svelte 5 (runes) + TypeScript frontend
-    ├─ lib/state.svelte.ts  App state and every action the UI can take
-    ├─ lib/state/           …split by concern: app, config, devices, effect,
-    │                       lights, pairing, toasts, derived
-    ├─ lib/i18n.ts          English and French strings
-    ├─ lib/views/           Lighting, Room, Bulbs, Settings
-    │                       (lighting/ and room/ hold their pieces)
-    ├─ lib/ui/              Shared controls (Slider, Switch, Segmented, Row…)
-    └─ styles/app.css       Design tokens, light and dark themes
+├─ crates/lueur-gpui/     The window and the tray, drawn with GPUI over
+│   │                     lueur-shell; builds the `lueur` executable
+│   ├─ main.rs, app.rs    Start-up, the shortcuts, the shell's events, what
+│   │                     closing the window does
+│   ├─ window.rs          The sidebar, the page shown, the toasts
+│   ├─ titlebar.rs        Windows: the title bar drawn by the app
+│   ├─ tray.rs            The tray (tray-icon), drawn from lueur_shell::tray_model
+│   ├─ single.rs          One instance at a time, under the Tauri plugin's names
+│   ├─ update.rs          Startup splash and the hourly check, over lueur_shell::update
+│   ├─ state.rs           What the window shows, the actions every page shares
+│   ├─ host.rs            The shell's events, carried to the window's thread
+│   ├─ theme.rs           Design tokens in OKLCH, light and dark
+│   ├─ i18n.rs            The strings of locales/, by key, in the current language
+│   ├─ ui/                Shared controls (button, switch, slider, segmented,
+│   │                     select, text field, row)
+│   ├─ views/             Lighting, Room, Bulbs, Settings, a folder each
+│   └─ assets/            Inter, the Phosphor icons, the mode photographs,
+│                         built into the binary by build.rs
+└─ locales/               en.json and fr.json: every string the window shows
 ```
 
 The security- and colour-critical logic lives in `lueur-core`, which has **no
@@ -87,10 +91,12 @@ The device layer is a small trait, so new bulb families slot in without
 touching the engine. [ADDING_A_FAMILY.md](ADDING_A_FAMILY.md) walks through
 everything a new family touches, with WLED as the example.
 
-The interface has its own tests (Vitest), run without the shell:
+The window crate keeps what its pages work out (what each light does, the
+plan's arithmetic, the choices Settings offers) in plain functions apart
+from drawing them, tested without a window:
 
 ```bash
-npm test
+cargo test -p lueur-gpui
 ```
 
 ### Capture
@@ -161,7 +167,8 @@ and mip chain per presented frame, but only a run with a frame-time overlay
 in a GPU-bound game would put a number on it.
 
 The anti-cheat rules in the README are enforced at build time: `clippy.toml`
-bans the APIs that would break them, and the app crate denies those lints.
+bans the APIs that would break them, and `lueur-shell` and `lueur-gpui` deny
+those lints.
 
 ### Smart Life sign-in
 
@@ -325,10 +332,12 @@ timer skip the bulbs another computer holds.
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) 1.90+ and [Node.js](https://nodejs.org/) 20.19+ or 22.12+.
-- Tauri CLI: `npm install` pulls it in as a dev dependency (`npm run tauri`).
+- [Rust](https://rustup.rs/) 1.90+. Lueur is Rust only: there is no npm step
+  to build or run it.
+- [Node.js](https://nodejs.org/) 22, only to audit or run the update signer
+  in `scripts/sign` (see [Releasing](#releasing)).
 
-**Linux** also needs the Tauri, GPUI, audio and capture system libraries. One
+**Linux** also needs the GPUI, audio and capture system libraries. One
 command installs them on Debian/Ubuntu (24.04 or later), Fedora and Arch, and
 is what the CI runs:
 
@@ -341,47 +350,62 @@ It installs exactly these:
 ```bash
 # Debian / Ubuntu
 sudo apt-get install build-essential file pkg-config clang libclang-dev \
-  libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
-  libsoup-3.0-dev libssl-dev libxdo-dev libxcb1-dev libxrandr-dev libdbus-1-dev \
-  libasound2-dev libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \n  libfontconfig-dev libxkbcommon-x11-dev libx11-xcb-dev libvulkan-dev
+  libssl-dev libxcb1-dev libxrandr-dev libdbus-1-dev libasound2-dev \
+  libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
+  libfontconfig-dev libxkbcommon-x11-dev libx11-xcb-dev libvulkan-dev
 # Fedora
 sudo dnf install gcc gcc-c++ make file pkgconf-pkg-config clang clang-devel \
-  webkit2gtk4.1-devel gtk3-devel libappindicator-gtk3-devel librsvg2-devel \
-  libsoup3-devel openssl-devel libxdo-devel libxcb-devel libXrandr-devel dbus-devel \
-  alsa-lib-devel pipewire-devel wayland-devel mesa-libEGL-devel mesa-libgbm-devel \n  fontconfig-devel libxkbcommon-x11-devel libX11-devel vulkan-loader-devel
+  openssl-devel libxcb-devel libXrandr-devel dbus-devel alsa-lib-devel \
+  pipewire-devel wayland-devel mesa-libEGL-devel mesa-libgbm-devel \
+  fontconfig-devel libxkbcommon-x11-devel libX11-devel vulkan-loader-devel
 # Arch
 sudo pacman -S --needed base-devel file pkgconf clang \
-  webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg libsoup3 openssl xdotool \
-  libxcb libxrandr dbus alsa-lib pipewire wayland libglvnd mesa \n  fontconfig libxkbcommon-x11 libx11 vulkan-icd-loader
+  openssl libxcb libxrandr dbus alsa-lib pipewire wayland libglvnd mesa \
+  fontconfig libxkbcommon-x11 libx11 vulkan-icd-loader
 ```
 
 At run time, Wayland capture needs `xdg-desktop-portal` and the desktop's
 portal backend (`-gnome`, `-kde`, `-wlr`…), which desktops install already.
 
+Linux has no tray yet: `tray-icon` needs a GTK loop of its own, which the
+app does not run. There, closing the window quits, and Lueur never starts
+hidden. One instance at a time still holds, over the session bus, under the
+D-Bus name the Tauri plugin used (`com.lueur.app.SingleInstance`, in
+`crates/lueur-gpui/src/single.rs`).
+
 ### Develop
-
-```bash
-npm install
-npm run tauri dev      # hot-reloading app window
-```
-
-The GPUI interface that is replacing the Tauri one runs on its own, with no
-npm step. It reads the same settings folder, so point it at another one to
-try it without touching your bulbs:
 
 ```bash
 cargo run -p lueur-gpui
 LUEUR_DATA_DIR=/tmp/lueur-try cargo run -p lueur-gpui
 ```
 
-The two never run at once: each recognises the other as Lueur already
-running and brings its window up instead.
+The first reads your settings folder and drives your bulbs. The second
+keeps its settings in a folder of its own, so a change can be tried without
+touching them; copy `scripts/dev/sample-config.json` there as `config.json`
+for a furnished sample room. A development build started with
+`LUEUR_DATA_DIR` skips the single-instance lock, so it runs beside the
+installed Lueur and beside other test runs. Without it, a second launch
+only brings the running Lueur's window up, the Tauri versions' included.
 
-The UI also runs in a plain browser for design work: `npm run dev`, then open
-`http://localhost:1420/?demo` for a furnished sample room (add `&shared` to
-see lights another computer drives), or `?fresh` for a
-first launch with bulbs waiting on the network. The README screenshots are
-taken from `?demo` at the app's default window size (1180×800, 2× scale).
+Two more variables work in development builds only:
+
+- `LUEUR_START_VIEW` opens the window on a page: `lighting`, `room`,
+  `bulbs` or `settings`.
+- `LUEUR_SPLASH_DEMO` shows the startup splash going through a pretend
+  update. It downloads and installs nothing.
+
+On Windows, `scripts/dev/snap.ps1` starts a development build on a settings
+folder of its own, saves a picture of its window and stops it, to check a
+change by eye:
+
+```powershell
+cargo build -p lueur-gpui
+./scripts/dev/snap.ps1 -Exe target/debug/lueur.exe -DataDir $env:TEMP\lueur-snap -Out shot.png -View room
+```
+
+The README screenshots are taken at the app's default window size
+(1180×800, 2× scale).
 
 ### Logs
 
@@ -395,10 +419,10 @@ logs from `info` up and its dependencies from `warn` up
 level replaces it. Addresses appear from `debug` down, never a credential.
 
 ```bash
-LUEUR_LOG=lueur=debug npm run tauri dev                  # Lueur in detail: searches, streams, power
-LUEUR_LOG=lueur_core::device=trace npm run tauri dev     # and every frame sent to a bulb
-LUEUR_LOG=lueur_core::device::wire=trace npm run tauri dev   # the frames, the rest as usual
-LUEUR_LOG=debug npm run tauri dev                        # everything, dependencies included
+LUEUR_LOG=lueur=debug cargo run -p lueur-gpui                  # Lueur in detail: searches, streams, power
+LUEUR_LOG=lueur_core::device=trace cargo run -p lueur-gpui     # and every frame sent to a bulb
+LUEUR_LOG=lueur_core::device::wire=trace cargo run -p lueur-gpui   # the frames, the rest as usual
+LUEUR_LOG=debug cargo run -p lueur-gpui                        # everything, dependencies included
 ```
 
 At trace level each frame a stream sends is logged with its family, the
@@ -412,12 +436,22 @@ and formats nothing. On PowerShell, set the variable first:
 ### Build a release
 
 ```bash
-npm run tauri build -- --no-bundle   # Windows: the self-installing .exe
-npm run tauri build                  # Linux: AppImage, macOS: .app
+cargo build --release --locked -p lueur-gpui   # target/release/lueur(.exe)
+./scripts/package-linux.sh <version> <out dir>  # Linux: the AppImage, from that build
+./scripts/package-macos.sh <version> <out dir>  # macOS: the universal Lueur.app and its archives
 ```
 
-The output lands in `target/release/`. Set `LUEUR_DATA_DIR` to keep settings
-somewhere other than the user config dir while testing.
+On Windows the executable is the release file as it is: it installs itself
+on first launch. `package-linux.sh` makes the AppImage with linuxdeploy,
+pinned to one release and checked against its checksum, and the desktop
+file and icon in `packaging/linux/`. `package-macos.sh` builds for Apple
+silicon and for Intel itself (`rustup target add aarch64-apple-darwin
+x86_64-apple-darwin` first), joins the two into one `Lueur.app` with
+`packaging/macos/Info.plist` and its icon, and makes the `.app.tar.gz` (the
+update file) and the `.zip` (the first download).
+
+Set `LUEUR_DATA_DIR` to keep settings somewhere other than the user config
+dir while testing.
 
 ## Install and updates, under the hood
 
@@ -434,47 +468,64 @@ keep Cargo's `lueur.exe`.
 **Updates.** Each launch shows a small window while Lueur checks the latest
 GitHub release; a new version is downloaded, its signature checked, installed,
 and the app restarts into it. Without network it gives up after a few seconds.
-While Lueur runs it checks again every hour, and a version found then waits
-behind a *Restart* button in the title bar and an entry in the tray menu.
-Development builds never update.
+While Lueur runs it checks again every hour; a version found then is
+installed and waits behind a *Restart* button at the top of the window and
+an entry in the tray menu. Development builds never update. The splash and
+the hourly check are `crates/lueur-gpui/src/update.rs`; the check, the
+download, the signature and the install per platform are
+`crates/lueur-shell/src/update.rs`.
 
-**No going back.** The Tauri updater verifies the minisign signature of the
-downloaded file against the public key in `tauri.conf.json`, and installs
-only a version newer than the running one. But the version it compares is
-the one `latest.json` announces, and `latest.json` is not signed: alone, a
-doctored manifest could pair `version: 99.0.0` with the URL and signature
-of an old, genuine release. So each signature carries the version it was
-made for in its trusted comment, which the signature covers
-(`tauri signer sign --app-version`, checked by the release workflow), and
-`plugins.updater.requireSignedVersion` makes the plugin refuse a file whose
-signed version differs from the announced one. The announced version must be
-strictly newer (`is_upgrade` in `updater.rs`), so the signed one is too.
-Releases signed before v0.8.0 carry no version and are refused by v0.8.0 and
-later, which is what we want: an update only ever goes forward.
+**No going back.** The minisign signature of the downloaded file is checked
+against the public key the release signs with (`PUBKEY` in
+`crates/lueur-shell/src/update.rs`), and only a version newer than the
+running one is installed. But the version compared is the one `latest.json`
+announces, and `latest.json` is not signed: alone, a doctored manifest could
+pair `version: 99.0.0` with the URL and signature of an old, genuine
+release. So each signature carries the version it was made for in its
+trusted comment, which the signature covers (`tauri signer sign
+--app-version`, checked by the release workflow), and a file whose signed
+version differs from the announced one is refused. The announced version
+must be strictly newer (`is_upgrade` in `update.rs`), so the signed one is
+too. Releases signed before v0.8.0 carry no version and are refused by
+v0.8.0 and later, which is what we want: an update only ever goes forward.
 
-The GPUI build reads the same `latest.json` and signatures without the
-plugin, in `crates/lueur-shell/src/update.rs`: the same platform entry, the
-same key, the signed version required, only a newer version, and the same
-install per platform. So an installed Tauri version updates into it, and it
-keeps updating from releases made as they are today. Its tests check
-signatures made by `tauri signer sign`, and that its key and address are the
-ones in `tauri.conf.json`.
+**From the Tauri versions.** Up to 0.18, Lueur was a Tauri app that
+updated itself with the Tauri updater plugin, which checks the same things
+(`requireSignedVersion` is its name for the signed version). `update.rs`
+reads the same `latest.json` at the same address, picks the same platform
+entry, checks the same key and installs the same files the same way, and
+the release keeps the names and shapes those versions expect: the Windows
+executable, the AppImage, a `Lueur.app` with the identifier
+`com.lueur.app`. So an installed Tauri version updates into this one, and
+this one keeps updating from releases made the same way. Its tests check
+signatures made by `tauri signer sign`. The single-instance lock
+(`crates/lueur-gpui/src/single.rs`) and the login entry
+(`crates/lueur-shell/src/autostart.rs`) also keep the Tauri plugins' names:
+the two versions recognise each other as one app, and the login entry an
+older version wrote still starts the new one.
 
 ## Releasing
 
-Bump `version` in `Cargo.toml` (`[workspace.package]`) and `package.json` and
-merge to `main`. When the version on `main` has no `v<version>` tag yet,
-`.github/workflows/release.yml` checks both versions agree, runs the CI, builds
-Windows, Linux and macOS, signs the update files in a job that compiles
-nothing, and publishes the GitHub release, which creates the tag, with the
-`latest.json` the updater reads and a `SHA256SUMS.txt` to check a first
-download against. A failed release is retried from the workflow's "Run
-workflow" button.
+Bump `version` in `Cargo.toml` (`[workspace.package]`) and merge to `main`.
+When the version on `main` has no `v<version>` tag yet,
+`.github/workflows/release.yml` runs the CI, builds Windows, Linux and
+macOS as under [Build a release](#build-a-release), signs the update files
+in a job that compiles nothing, and publishes the GitHub release, which
+creates the tag, with the `latest.json` the updater reads
+(`scripts/latest-json.sh`) and a `SHA256SUMS.txt` to check a first download
+against. A failed release is retried from the workflow's "Run workflow"
+button. The CI also makes the AppImage and the Mac app on every pull
+request, neither signed nor published, so a change to their packaging shows
+before a release depends on it.
 
-It needs two repository secrets, `TAURI_SIGNING_PRIVATE_KEY` and
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, from `npx tauri signer generate`, whose
-public key goes in `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`
-and in `PUBKEY` in `crates/lueur-shell/src/update.rs`.
+The update files are signed with the Tauri CLI's signer, whose signatures
+every installed copy checks. It is kept alone in `scripts/sign`, with its
+lockfile: the signing job installs it from there and runs nothing else of
+Tauri, and the CI audits it (`npm audit --prefix scripts/sign`). It needs
+two repository secrets, `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, made by `tauri signer generate`, whose
+public key is `PUBKEY` in `crates/lueur-shell/src/update.rs`. Changing that
+key would strand every installed copy.
 
 ### Signing the Mac app
 
@@ -497,7 +548,7 @@ The build job makes the app unsigned, as without them. With the first
 three, a `macos-sign` job then signs it on a fresh Mac, the only job that
 sees these secrets: it runs nothing from npm or the build, only Apple's
 `security`, `codesign`, `notarytool` and `stapler`. It signs with the
-hardened runtime and `src-tauri/Entitlements.plist` (the microphone, for
+hardened runtime and `packaging/macos/Entitlements.plist` (the microphone, for
 the Music effect); with all six it also notarizes and staples the ticket,
 then makes the two Mac archives again from the signed app, before the
 `sign` job signs the update files. Without them the release is built

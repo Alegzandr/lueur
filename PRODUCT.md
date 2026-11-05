@@ -4,10 +4,10 @@
 
 ## Platform
 
-web
+desktop
 
-Desktop app: Svelte 5 in a Tauri v2 webview, on Windows, macOS and Linux. The
-window is resizable with a 960 × 640 minimum; it is not a website and has no
+Desktop app written in Rust, its window drawn with GPUI (Zed's interface
+framework), on Windows, macOS and Linux. The window is resizable with a 960 × 640 minimum; it is not a website and has no
 mobile layout.
 
 ## Users
@@ -76,8 +76,10 @@ Several things together, the first one leading:
 
 ## Capabilities and Constraints
 
-- Tray app around 10 MB, installs without admin rights on Windows.
-- Strict CSP: no remote scripts, styles or fonts; assets ship with the app.
+- Tray app, installs without admin rights on Windows. Linux has no tray
+  yet: there, closing the window quits.
+- No web view and nothing fetched to draw the window: the font, the icons
+  and the photographs are built into the executable.
 - Light and dark appearance, chosen in Settings.
 - Undo for removing a light and undo/redo on the room plan; changes made
   while effects play come with a one-click *Apply*.
@@ -89,9 +91,10 @@ Several things together, the first one leading:
 
 ## Brand Commitments
 
-- Name: **Lueur**. Logo: `assets/logo.svg` (also `src/lib/ui/Logo.svelte`).
-- Interface in English and French (`src/lib/i18n.ts`); brand names stay the
-  same in every language.
+- Name: **Lueur**. Logo: `assets/logo.svg` (the mark the window shows:
+  `crates/lueur-gpui/assets/logo-mark.svg`).
+- Interface in English and French (`locales/en.json`, `locales/fr.json`);
+  brand names stay the same in every language.
 - Voice: plain, concrete sentences that say what happens ("the light around
   you follows what's on screen"); no jargon, no superlatives, no hype. A bulb
   is called by its name or brand where its light is shown, never by its
@@ -127,7 +130,10 @@ Several things together, the first one leading:
 
 - Photosensitivity guard on every mode's output (`crates/lueur-core/src/safety.rs`):
   white flashes can be turned off and never exceed three per second.
-- `prefers-reduced-motion` is honoured by the animated backdrop and the
-  animated tiles.
+- The animated backdrop, the animated tiles and the spinners have a still
+  form, used under reduced motion. On Windows it follows "Show animations in
+  Windows"; macOS and Linux are not read yet.
 - Full keyboard use, including on the room plan.
+- Every control tells screen readers what it is, its name and its state,
+  through GPUI's AccessKit integration.
 - English and French with equal standing.

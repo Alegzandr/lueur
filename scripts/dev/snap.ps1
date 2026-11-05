@@ -1,7 +1,7 @@
 # Development aid for the GPUI interface: runs a debug build on a settings
 # folder of its own (never the real one, never the real bulbs) and saves a
 # picture of its window, to check a change by eye. Windows only.
-# Usage: snap.ps1 -Exe target/debug/lueur-gpui.exe -DataDir <folder> -Out shot.png [-View settings]
+# Usage: snap.ps1 -Exe target/debug/lueur.exe -DataDir <folder> -Out shot.png [-View settings]
 param([string]$Exe, [string]$DataDir, [string]$Out, [int]$Wait = 5, [string]$View = "lighting")
 # Starts the app on an empty data folder, captures only its window, stops it.
 Add-Type -AssemblyName System.Drawing

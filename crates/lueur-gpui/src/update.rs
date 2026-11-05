@@ -47,6 +47,7 @@ enum Report {
 /// [`app::run`]. In a development build, starts it right away.
 pub fn launch(started: Started, cx: &mut App) {
     app::load_fonts(cx);
+    app::follow_reduced_motion(cx);
     // An AppImage runs from a folder that goes away with it: a restart must
     // start the AppImage itself, where the update was installed.
     #[cfg(target_os = "linux")]

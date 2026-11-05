@@ -232,7 +232,7 @@ impl BulbsPage {
                 if d.faster { Look::Plain } else { Look::Default },
                 true,
                 waiting,
-                this_one.then(|| spinner(key("pair-spin"), 12.0, theme.text_3)),
+                this_one.then(|| spinner(key("pair-spin"), 12.0, theme.text_3, cx.reduce_motion())),
                 theme,
                 cx.listener(move |this, _, _, cx| this.pair(device.clone(), cx)),
             )

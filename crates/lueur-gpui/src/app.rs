@@ -50,6 +50,35 @@ pub fn load_fonts(cx: &mut App) {
     }
 }
 
+/// Whether the system asks for less motion. GPUI does not read it, so the
+/// app does: on Windows, "Show animations in Windows" off. Read again each
+/// time the window opens, so a change made while Lueur sat in the tray
+/// counts. Elsewhere it stays off for now.
+pub fn follow_reduced_motion(cx: &mut App) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+        };
+        use windows::core::BOOL;
+        let mut animate = BOOL(1);
+        // SAFETY: the call writes one BOOL into the variable it is handed.
+        let read = unsafe {
+            SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION,
+                0,
+                Some(&mut animate as *mut BOOL as *mut _),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        };
+        if read.is_ok() {
+            cx.set_reduce_motion(!animate.as_bool());
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = cx;
+}
+
 /// Ctrl (⌘ on a Mac) and 1 to 4 switch page, and Enter starts or stops.
 #[cfg(target_os = "macos")]
 const KEYS: [&str; 5] = ["cmd-1", "cmd-2", "cmd-3", "cmd-4", "cmd-enter"];
@@ -172,6 +201,7 @@ pub fn open_main(cx: &mut App) {
         let _ = window.update(cx, |_, window, _| window.activate_window());
         return;
     }
+    follow_reduced_motion(cx);
     let bounds = Bounds::centered(None, size(px(1180.0), px(800.0)), cx);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),

@@ -337,7 +337,7 @@ impl BulbsPage {
             false,
             self.scanning,
             self.scanning
-                .then(|| spinner("search-spin", 12.0, theme.text_3)),
+                .then(|| spinner("search-spin", 12.0, theme.text_3, cx.reduce_motion())),
             &theme,
             cx.listener(|this, _, _, cx| this.scan(SEARCH_MS, false, cx)),
         );
