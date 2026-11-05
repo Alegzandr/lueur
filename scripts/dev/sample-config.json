@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "room": {
+    "walls": [
+      {
+        "x": 50.0,
+        "y": 50.0
+      },
+      {
+        "x": 950.0,
+        "y": 50.0
+      },
+      {
+        "x": 950.0,
+        "y": 700.0
+      },
+      {
+        "x": 50.0,
+        "y": 700.0
+      }
+    ],
+    "screen": {
+      "center": {
+        "x": 500.0,
+        "y": 160.0
+      },
+      "width": 300.0,
+      "facing_deg": 0.0
+    },
+    "lights": [
+      {
+        "id": "a",
+        "name": "Lampe du bureau",
+        "pos": {
+          "x": 0.2,
+          "y": 0.3
+        },
+        "height": 0.5,
+        "zone_override": null,
+        "enabled": true
+      },
+      {
+        "id": "b",
+        "name": "Ruban LED",
+        "pos": {
+          "x": 0.8,
+          "y": 0.3
+        },
+        "height": 0.5,
+        "zone_override": null,
+        "enabled": true
+      },
+      {
+        "id": "c",
+        "name": "Applique",
+        "pos": {
+          "x": 0.5,
+          "y": 0.3
+        },
+        "height": 0.5,
+        "zone_override": null,
+        "enabled": true
+      }
+    ],
+    "wall": {
+      "r": 255,
+      "g": 255,
+      "b": 255
+    }
+  },
+  "bindings": [
+    {
+      "light_id": "a",
+      "device_id": "yeelight:0x1",
+      "ip": "192.168.250.250",
+      "port": 55443,
+      "model": "",
+      "name": "",
+      "kind": {
+        "family": "yeelight"
+      }
+    },
+    {
+      "light_id": "b",
+      "device_id": "yeelight:0x2",
+      "ip": "192.168.250.251",
+      "port": 55443,
+      "model": "",
+      "name": "",
+      "kind": {
+        "family": "yeelight"
+      }
+    }
+  ],
+  "pairings": {
+    "hue": [],
+    "nanoleaf": [],
+    "tuya": []
+  },
+  "capture": {
+    "monitor_index": 0,
+    "target_fps": 45
+  },
+  "engine": {
+    "smoothing": 0.55,
+    "brightness": 1.0,
+    "saturation": 0.35,
+    "sample_step": 4,
+    "black_threshold": 6,
+    "white_threshold": 0.18,
+    "white_kelvin": 4000,
+    "crop_bars": true,
+    "brightness_curve": 1.0
+  },
+  "transition": {
+    "effect": "smooth",
+    "duration_ms": 80
+  },
+  "behavior": {
+    "run_on_startup": false,
+    "minimize_to_tray": true,
+    "start_minimized": false,
+    "auto_fullscreen": true
+  },
+  "interface": {
+    "appearance": "light",
+    "language": "fr",
+    "room_arranged": false
+  },
+  "states": {
+    "b": {
+      "on": false,
+      "bright": 80,
+      "tint": {
+        "mode": "white",
+        "kelvin": 2700
+      }
+    }
+  },
+  "show": {
+    "kind": "music",
+    "bright": 80,
+    "speed": 50,
+    "flashes": true,
+    "delay_ms": 0
+  },
+  "audio": {
+    "kind": "default"
+  },
+  "natural": [],
+  "natural_scale": {},
+  "modes": {},
+  "safety": {
+    "flash_guard": true
+  },
+  "scenes": []
+}

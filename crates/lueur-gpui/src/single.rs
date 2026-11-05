@@ -18,16 +18,25 @@ const ID: &str = "com.lueur.app";
 /// Held for as long as this is the instance that runs.
 pub struct Instance {
     #[cfg(windows)]
-    imp: windows_impl::Held,
+    imp: Option<windows_impl::Held>,
 }
 
 /// Become the instance that runs, calling `on_second_launch` each time
 /// another launch is turned away; or, if one already runs, bring it up and
 /// return None.
 pub fn acquire(on_second_launch: impl Fn() + Send + Sync + 'static) -> Option<Instance> {
+    // A development build pointed at a settings folder of its own is a test
+    // run: several may run side by side, and beside the installed app.
+    if cfg!(debug_assertions) && std::env::var_os("LUEUR_DATA_DIR").is_some() {
+        let _ = on_second_launch;
+        return Some(Instance {
+            #[cfg(windows)]
+            imp: None,
+        });
+    }
     #[cfg(windows)]
     {
-        windows_impl::acquire(Box::new(on_second_launch)).map(|imp| Instance { imp })
+        windows_impl::acquire(Box::new(on_second_launch)).map(|imp| Instance { imp: Some(imp) })
     }
     #[cfg(not(windows))]
     {
@@ -43,7 +52,9 @@ impl Instance {
     /// over at once.
     pub fn release(self) {
         #[cfg(windows)]
-        self.imp.release();
+        if let Some(imp) = self.imp {
+            imp.release();
+        }
     }
 }
 
