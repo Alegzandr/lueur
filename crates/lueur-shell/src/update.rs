@@ -995,6 +995,42 @@ mod tests {
     const SIGNED_0_19_0: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSWE14UlMyclZ6TVBoek13Q2VjT3Y5Nit6VlQ5SXFPT3hCOThOdE9HTEE0UllCUjJ2UHo5eXk3QXdoeGpxQnZqVnlack8zS3U2WmNvS3lzWGovN2F0WHZMVjB3bEpaSWdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzODcwMzcwCWZpbGU6cGF5bG9hZC5iaW4JdmVyc2lvbjowLjE5LjAKaEtTZmtNSGw4VTBmdEFHNW9ST0ZYMmYvNDQrRkZEQk1KL0ZENkhZNGxXdFpUTVRwWjJvcmJNcE9ORXNVZ3F5cjJHMmdHU2dNN3dQN085Nll6Zkc3RFE9PQo=";
     const SIGNED_NO_VERSION: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSWE14UlMyclZ6TUVNUUlSVGNPbnhKQ2lrUzRXeEJhVnEvSTlWSEw4LzVyWk9MZmhib094WGFPUDVqV3BqbENrK3U1QVE3MEtoTFFvV3FURmFIVWdOL0R5Z2xSOTFFSmdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzODcwMzcxCWZpbGU6cGF5bG9hZC5iaW4KTFIzRWFQdlBxdXZiUEhNSUFYdnhBdnpVblhMdzBiU1pHbmpXSzNPbDFPNUhPVTFFck5jN29LTWRKb3F1cEdsWW9qcmpOM1F3VUZRRlRkZmYySWU0QVE9PQo=";
 
+    // The same payload signed by `lueur-sign`, the release's signer since
+    // it left the Tauri CLI, with another key the Tauri CLI generated: the
+    // updater must take its signatures exactly as it took the CLI's.
+    const LUEUR_SIGN_PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1QTE1RTI0QjVCMUIzRTcKUldUbnM3RzFKRjZobFppYk1Hd0ZOanVUU0t6endoQ09aQkdXRklRN1U0NjJXUnF2VE5BNVpRbmYK";
+    const SIGNED_BY_LUEUR_SIGN: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUbnM3RzFKRjZobFE5MUVBVy9NQy9xQ05hZUg5M3pkNnJoeG1OeVFSK0pkenNjRTFOVU5ub1dKSnVSRkR4MldUcnczZ200NXdJemZxcFJQSFZUU1RZbkpSRklHcjRQV3dBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzODc3NDIzCWZpbGU6cGF5bG9hZC5iaW4JdmVyc2lvbjowLjE5LjAKMmcxVjE2ZlhNaVpqTUZmNlZrZmFBaEhyclF2MmNzSTlkeGdaZ3ZBNjkwTXQzanBRVU1FSUNZRE9zUmJiMmxXWXh4TndJU05nbmdaZVdjZWVWdXVERGc9PQo=";
+
+    #[test]
+    fn a_file_signed_by_lueur_sign_is_accepted_as_the_tauri_cli_s_were() {
+        let ok = verify(
+            PAYLOAD.to_vec(),
+            SIGNED_BY_LUEUR_SIGN,
+            LUEUR_SIGN_PUBKEY,
+            "0.19.0",
+        )
+        .unwrap();
+        assert_eq!(ok.version, "0.19.0");
+        assert!(
+            verify(
+                PAYLOAD.to_vec(),
+                SIGNED_BY_LUEUR_SIGN,
+                LUEUR_SIGN_PUBKEY,
+                "0.20.0"
+            )
+            .is_err()
+        );
+        assert!(
+            verify(
+                PAYLOAD.to_vec(),
+                SIGNED_BY_LUEUR_SIGN,
+                TEST_PUBKEY,
+                "0.19.0"
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn a_file_signed_by_the_tauri_cli_for_the_announced_version_is_accepted() {
         let ok = verify(PAYLOAD.to_vec(), SIGNED_0_19_0, TEST_PUBKEY, "0.19.0").unwrap();

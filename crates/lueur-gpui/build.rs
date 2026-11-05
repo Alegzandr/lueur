@@ -55,31 +55,53 @@ fn main() {
     }
 }
 
-/// The executable's icon and version, as tauri-build wrote them: Explorer,
-/// the taskbar and Installed apps show these, and the setup file is this
-/// very executable.
+/// The executable's icon and version, as the Tauri builds carried them:
+/// Explorer, the taskbar and Installed apps show these, and the setup file
+/// is this very executable. Written as a resource script and compiled with
+/// the toolchain's resource compiler.
 fn windows_resources(manifest: &str) {
     let version = std::env::var("CARGO_PKG_VERSION").expect("cargo sets it");
-    let mut res = tauri_winres::WindowsResource::new();
     let mut parts = version
         .split(['.', '-', '+'])
-        .map(|p| p.parse::<u64>().unwrap_or(0));
-    let packed = (0..4).fold(0u64, |acc, _| {
-        (acc << 16) | parts.next().unwrap_or(0).min(0xffff)
-    });
-    res.set_version_info(tauri_winres::VersionInfo::FILEVERSION, packed);
-    res.set_version_info(tauri_winres::VersionInfo::PRODUCTVERSION, packed);
-    res.set("FileVersion", &version);
-    res.set("ProductVersion", &version);
-    res.set("ProductName", "Lueur");
-    res.set("FileDescription", "Lueur");
-    // The second part of the identifier com.lueur.app, as tauri-build took it.
-    res.set("CompanyName", "lueur");
-    // 32512 is IDI_APPLICATION: the icon Windows shows for the executable.
+        .map(|p| p.parse::<u16>().unwrap_or(0));
+    let numbers: Vec<String> = (0..4)
+        .map(|_| parts.next().unwrap_or(0).to_string())
+        .collect();
+    let numbers = numbers.join(",");
     let icon = Path::new(manifest).join("assets").join("icon.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
-    res.set_icon_with_id(&icon.display().to_string(), "32512");
-    if let Err(e) = res.compile() {
+    // A resource script reads backslashes in a string as escapes.
+    let icon = icon.display().to_string().replace('\\', "\\\\");
+    // 32512 is IDI_APPLICATION: the icon Windows shows for the executable.
+    // CompanyName is the second part of the identifier com.lueur.app, as
+    // the Tauri builds had it.
+    let script = format!(
+        r#"32512 ICON "{icon}"
+1 VERSIONINFO
+FILEVERSION {numbers}
+PRODUCTVERSION {numbers}
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "CompanyName", "lueur"
+      VALUE "FileDescription", "Lueur"
+      VALUE "FileVersion", "{version}"
+      VALUE "ProductName", "Lueur"
+      VALUE "ProductVersion", "{version}"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
+"#
+    );
+    let out = Path::new(&std::env::var("OUT_DIR").expect("cargo sets it")).join("lueur.rc");
+    std::fs::write(&out, script).expect("OUT_DIR is writable");
+    if let Err(e) = embed_resource::compile(&out, embed_resource::NONE).manifest_optional() {
         panic!("cannot build the Windows resources: {e}");
     }
 }

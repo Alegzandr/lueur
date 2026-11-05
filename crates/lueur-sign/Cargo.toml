@@ -1,0 +1,16 @@
+[package]
+name = "lueur-sign"
+description = "Signs Lueur's update files the way installed copies check them."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+base64 = "0.23.1"
+minisign = "0.10.0"
+
+[dev-dependencies]
+minisign-verify = "0.3"

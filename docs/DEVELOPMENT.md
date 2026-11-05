@@ -333,9 +333,7 @@ timer skip the bulbs another computer holds.
 ### Prerequisites
 
 - [Rust](https://rustup.rs/) 1.90+. Lueur is Rust only: there is no npm step
-  to build or run it.
-- [Node.js](https://nodejs.org/) 22, only to audit or run the update signer
-  in `scripts/sign` (see [Releasing](#releasing)).
+  to build, run, sign or release it.
 
 **Linux** also needs the GPUI, audio and capture system libraries. One
 command installs them on Debian/Ubuntu (24.04 or later), Fedora and Arch, and
@@ -482,7 +480,7 @@ running one is installed. But the version compared is the one `latest.json`
 announces, and `latest.json` is not signed: alone, a doctored manifest could
 pair `version: 99.0.0` with the URL and signature of an old, genuine
 release. So each signature carries the version it was made for in its
-trusted comment, which the signature covers (`tauri signer sign
+trusted comment, which the signature covers (`lueur-sign
 --app-version`, checked by the release workflow), and a file whose signed
 version differs from the announced one is refused. The announced version
 must be strictly newer (`is_upgrade` in `update.rs`), so the signed one is
@@ -498,7 +496,8 @@ the release keeps the names and shapes those versions expect: the Windows
 executable, the AppImage, a `Lueur.app` with the identifier
 `com.lueur.app`. So an installed Tauri version updates into this one, and
 this one keeps updating from releases made the same way. Its tests check
-signatures made by `tauri signer sign`. The single-instance lock
+signatures made by `tauri signer sign` and by `lueur-sign`, which writes
+the very same thing. The single-instance lock
 (`crates/lueur-gpui/src/single.rs`) and the login entry
 (`crates/lueur-shell/src/autostart.rs`) also keep the Tauri plugins' names:
 the two versions recognise each other as one app, and the login entry an
@@ -518,14 +517,16 @@ button. The CI also makes the AppImage and the Mac app on every pull
 request, neither signed nor published, so a change to their packaging shows
 before a release depends on it.
 
-The update files are signed with the Tauri CLI's signer, whose signatures
-every installed copy checks. It is kept alone in `scripts/sign`, with its
-lockfile: the signing job installs it from there and runs nothing else of
-Tauri, and the CI audits it (`npm audit --prefix scripts/sign`). It needs
-two repository secrets, `TAURI_SIGNING_PRIVATE_KEY` and
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, made by `tauri signer generate`, whose
-public key is `PUBKEY` in `crates/lueur-shell/src/update.rs`. Changing that
-key would strand every installed copy.
+The update files are signed by `crates/lueur-sign`, which writes exactly
+what the Tauri CLI's signer wrote (a prehashed minisign signature, base64
+encoded, whose trusted comment names the version), so every installed copy,
+Tauri ones included, checks them as before. The signing job builds it from
+the lockfile before the key is in reach; only its signing step is handed
+the key. It reads two repository secrets, still named
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the
+key the Tauri CLI generated, whose public key is `PUBKEY` in
+`crates/lueur-shell/src/update.rs`. Changing that key would strand every
+installed copy.
 
 ### Signing the Mac app
 

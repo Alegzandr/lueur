@@ -2,9 +2,6 @@
 /target
 **/*.rs.bk
 
-# The update signer's tools (scripts/sign)
-node_modules
-
 # Release files gathered by the release workflow
 /release
 

@@ -7,11 +7,6 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
-  # The update signer (scripts/sign): the Tauri CLI and nothing else.
-  - package-ecosystem: npm
-    directory: /scripts/sign
-    schedule:
-      interval: weekly
   # The workflows pin actions by commit; this keeps the pins current.
   - package-ecosystem: github-actions
     directory: /

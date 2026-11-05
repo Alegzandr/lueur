@@ -7,8 +7,9 @@ changing something.
 
 ## Project at a glance
 
-Lueur is Rust only: three crates in one Cargo workspace, no web view and no
-npm step.
+Lueur is Rust only: four crates in one Cargo workspace (the fourth,
+`crates/lueur-sign`, signs the update files at release time), no web view
+and no npm step.
 
 - `crates/lueur-core/`: pure Rust, no GUI, fully unit-tested. Colour, room
   geometry, the engine, the music stage, the photosensitivity guard, and
@@ -33,7 +34,6 @@ cargo test --workspace --locked
 cargo fmt --all --check
 cargo clippy --workspace --locked --all-targets -- -D warnings
 cargo audit
-npm audit --prefix scripts/sign                         # the update signer, the only npm package left
 ```
 
 A development build started with `LUEUR_DATA_DIR` never touches your
