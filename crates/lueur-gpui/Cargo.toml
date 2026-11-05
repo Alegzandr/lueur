@@ -58,3 +58,6 @@ windows = { version = "0.62", features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui_platform = { workspace = true, features = ["wayland", "x11"] }
+# One instance at a time over the session bus, as the Tauri plugin does it
+# (src/single.rs). The version lueur-shell already uses.
+zbus = "5.17"

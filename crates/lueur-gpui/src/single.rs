@@ -10,15 +10,22 @@
 //! The hidden window belongs to the thread that creates it: `acquire` runs
 //! on the thread GPUI then runs its message loop on, which delivers the
 //! message.
+//!
+//! On Linux it speaks the plugin's D-Bus protocol (the well-known name
+//! `com.lueur.app.SingleInstance`), for the same reason. A Mac opens an app
+//! bundle once already.
 
 /// The app identifier the Tauri version used (`tauri.conf.json`).
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 const ID: &str = "com.lueur.app";
 
 /// Held for as long as this is the instance that runs.
 pub struct Instance {
     #[cfg(windows)]
     imp: Option<windows_impl::Held>,
+    /// The session bus connection that owns the name.
+    #[cfg(target_os = "linux")]
+    imp: Option<zbus::blocking::Connection>,
 }
 
 /// Become the instance that runs, calling `on_second_launch` each time
@@ -30,7 +37,7 @@ pub fn acquire(on_second_launch: impl Fn() + Send + Sync + 'static) -> Option<In
     if cfg!(debug_assertions) && std::env::var_os("LUEUR_DATA_DIR").is_some() {
         let _ = on_second_launch;
         return Some(Instance {
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             imp: None,
         });
     }
@@ -38,10 +45,12 @@ pub fn acquire(on_second_launch: impl Fn() + Send + Sync + 'static) -> Option<In
     {
         windows_impl::acquire(Box::new(on_second_launch)).map(|imp| Instance { imp: Some(imp) })
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
-        // A Mac opens an app bundle once already. Linux still needs its own
-        // lock: until then, a second launch runs beside the first.
+        linux_impl::acquire(Box::new(on_second_launch)).map(|imp| Instance { imp })
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
         let _ = on_second_launch;
         Some(Instance {})
     }
@@ -54,6 +63,10 @@ impl Instance {
         #[cfg(windows)]
         if let Some(imp) = self.imp {
             imp.release();
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(connection) = self.imp {
+            let _ = connection.release_name(linux_impl::NAME);
         }
     }
 }
@@ -216,5 +229,83 @@ mod windows_impl {
         }
         // SAFETY: the default handling for every other message.
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux_impl {
+    use super::ID;
+    use zbus::blocking::Connection;
+    use zbus::blocking::connection::Builder;
+
+    /// The plugin's names: the identifier with `.SingleInstance`, and the
+    /// same as a path.
+    pub const NAME: &str = "com.lueur.app.SingleInstance";
+    const PATH: &str = "/com/lueur/app/SingleInstance";
+    const INTERFACE: &str = "org.SingleInstance.DBus";
+
+    type Callback = Box<dyn Fn() + Send + Sync>;
+
+    struct Listener(Callback);
+
+    #[zbus::interface(name = "org.SingleInstance.DBus")]
+    impl Listener {
+        /// A second launch hands over its arguments and directory. They say
+        /// nothing Lueur acts on: any second launch brings the window up.
+        fn execute_callback(&self, _argv: Vec<String>, _cwd: String) {
+            (self.0)();
+        }
+    }
+
+    /// Take the name, or hand this launch to the instance that has it and
+    /// return None. Without a session bus there is no way to find the
+    /// others, so the app starts anyway, as the plugin does.
+    pub fn acquire(on_second_launch: Callback) -> Option<Option<Connection>> {
+        debug_assert!(NAME.starts_with(ID));
+        let builder = match Builder::session() {
+            Ok(b) => b,
+            Err(e) => {
+                log::warn!("single instance: no session bus ({e}); starting anyway");
+                return Some(None);
+            }
+        };
+        let built = builder
+            .name(NAME)
+            .and_then(|b| {
+                b.replace_existing_names(false)
+                    .allow_name_replacements(false)
+                    .serve_at(PATH, Listener(on_second_launch))
+            })
+            .and_then(|b| b.build());
+        match built {
+            Ok(connection) => Some(Some(connection)),
+            Err(zbus::Error::NameTaken) => {
+                let argv: Vec<String> = std::env::args_os()
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .collect();
+                let cwd = std::env::current_dir()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                let forwarded = Connection::session().and_then(|c| {
+                    c.call_method(
+                        Some(NAME),
+                        PATH,
+                        Some(INTERFACE),
+                        "ExecuteCallback",
+                        &(argv, cwd),
+                    )
+                    .map(drop)
+                });
+                if let Err(e) = forwarded {
+                    log::warn!("single instance: cannot reach the running Lueur: {e}");
+                }
+                None
+            }
+            Err(e) => {
+                log::warn!("single instance: session bus unavailable ({e}); starting anyway");
+                Some(None)
+            }
+        }
     }
 }
