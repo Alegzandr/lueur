@@ -10,8 +10,9 @@
 //!   that tells other computers running Lueur which bulbs this one drives
 //!   (`peers.rs`: device ids and the computer's name, nothing secret), the
 //!   Smart Life sign-in while the user is importing Tuya bulbs (Tuya's own
-//!   hosts only, see `tuya_cloud.rs`), and the update check in
-//!   `updater.rs`. No command can point any of them elsewhere.
+//!   hosts only, see `tuya_cloud.rs`), and the update check in `update.rs`
+//!   (`src-tauri/src/updater.rs` in the Tauri version), whose address is a
+//!   constant. No command can point any of them elsewhere.
 //! * The config export and import write and read only the file the user picks
 //!   in the system's own save and open dialogs, which the front end opens; a
 //!   page or a script never names the path.

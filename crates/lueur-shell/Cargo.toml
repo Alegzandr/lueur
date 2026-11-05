@@ -48,6 +48,12 @@ log = { version = "0.4.29", features = ["kv"] }
 # wraps, set up the same way, so both shells read and write the same login
 # item and an update from one to the other keeps the user's choice.
 auto-launch = "0.6"
+# Updates (src/update.rs), checked as the Tauri updater plugin checks them:
+# its minisign verifier, the version the Tauri version already builds, and
+# semver to compare versions as it does. Both already in the tree through
+# Tauri.
+minisign-verify = "0.3"
+semver = "1"
 
 # Desktop Duplication and GDI capture (see src/capture/dxgi.rs, gdi.rs) and
 # the SDR white of an HDR display, the capture benchmark's CPU time, the
@@ -85,9 +91,17 @@ windows-core = "0.62"
 self-replace = "1.5"
 winreg = "0.56"
 
-# The computer's name other computers running Lueur show (src/peers.rs).
+# The computer's name other computers running Lueur show (src/peers.rs),
+# and the bundle swap of a Mac update (src/update.rs).
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# An AppImage or a `.app` update is unpacked and swapped in as the Tauri
+# updater plugin does it (src/update.rs), with the crates it uses: a
+# private temporary folder beside the app, and the `.tar.gz` it ships in.
+# All three already in the tree through Tauri.
+tempfile = "3"
+flate2 = "1"
+tar = "0.4"
 
 # Wayland capture through the ScreenCast portal (see src/capture/screencast.rs):
 # the portal over D-Bus, its video over PipeWire. The versions xcap already

@@ -23,6 +23,7 @@ mod theme;
 mod titlebar;
 mod tray;
 mod ui;
+mod update;
 mod views;
 mod window;
 
@@ -55,7 +56,9 @@ fn main() {
     gpui_platform::application()
         .with_assets(assets::Assets)
         .run(move |cx| {
-            app::run(
+            // A release build checks for an update behind a splash first;
+            // then, or right away, `app::run` starts the app.
+            update::launch(
                 app::Started {
                     shell,
                     events,

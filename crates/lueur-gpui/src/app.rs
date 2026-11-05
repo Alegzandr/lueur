@@ -37,8 +37,9 @@ actions!(
 /// The interface face, built in (see `assets/fonts`).
 pub const FONT: &str = "Inter";
 
-/// Inter, from the binary: the same face on every system.
-fn load_fonts(cx: &mut App) {
+/// Inter, from the binary: the same face on every system. Loaded once, by
+/// `update::launch`, before the splash or the window draws a word.
+pub fn load_fonts(cx: &mut App) {
     let fonts = crate::assets::ASSETS
         .iter()
         .filter(|(path, _)| path.starts_with("fonts/") && path.ends_with(".ttf"))
@@ -85,7 +86,6 @@ pub fn run(started: Started, cx: &mut App) {
         instance,
     } = started;
     cx.set_quit_mode(QuitMode::Explicit);
-    load_fonts(cx);
     bind_keys(cx);
     crate::ui::input::bind_keys(cx);
 
@@ -204,7 +204,7 @@ pub fn restart_into_update(cx: &mut App) {
 }
 
 /// The app's icon, for the window's frame and the taskbar.
-fn window_icon() -> Option<Arc<image::RgbaImage>> {
+pub fn window_icon() -> Option<Arc<image::RgbaImage>> {
     let png = include_bytes!("../assets/icon-128.png");
     let image = image::load_from_memory(png).ok()?.into_rgba8();
     Some(Arc::new(image))
