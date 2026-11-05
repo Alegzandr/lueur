@@ -41,6 +41,12 @@ pub const SHRINK: f32 = 6.0;
 /// Where the bell meets zero: exp(-4.5), as the shader cut it.
 const EDGE: f32 = 0.011_109;
 
+/// How far, in page pixels, the glow fades out toward the page's left
+/// edge. The sidebar stands there, and light cut straight at its border
+/// reads as a shadow the sidebar casts; faded, the page's ground meets the
+/// sidebar as it does with the lights off.
+const LEFT_FADE: f32 = 140.0;
+
 /// How large the glow image is for a page of `w` × `h` pixels.
 pub fn image_size(w: f32, h: f32) -> (u32, u32) {
     let side = |v: f32| ((v / SHRINK).ceil() as u32).clamp(2, 1024);
@@ -99,8 +105,14 @@ pub fn render(
             }
         }
     }
+    let fade: Vec<f32> = (0..tw)
+        .map(|i| {
+            let t = ((i as f32 + 0.5) * sx / LEFT_FADE).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        })
+        .collect();
     let mut out = Vec::with_capacity(tw * th * 4);
-    for s in &sum {
+    for (k, s) in sum.iter().enumerate() {
         let a = s[3].min(1.0);
         if a <= 0.0 {
             out.extend_from_slice(&[0, 0, 0, 0]);
@@ -113,7 +125,7 @@ pub fn render(
         // From premultiplied to straight: the GPU lays it over the page by
         // its alpha, which gives the shader's `sum + background * (1 - a)`.
         let straight = lit.map(|c| ((c / a) * 255.0).round().clamp(0.0, 255.0) as u8);
-        let alpha = ((a * strength).clamp(0.0, 1.0) * 255.0).round() as u8;
+        let alpha = ((a * strength * fade[k % tw]).clamp(0.0, 1.0) * 255.0).round() as u8;
         out.extend_from_slice(&[straight[2], straight[1], straight[0], alpha]);
     }
     out
@@ -191,6 +203,23 @@ mod tests {
         let two = render(&[at(0.45), at(0.55)], (w, h), size, 1.0, 1.0);
         let mid = |img: &[u8]| pixel(img, size.0, size.0 / 2, size.1 / 2)[3];
         assert!(mid(&two) > mid(&one));
+    }
+
+    #[test]
+    fn a_pool_by_the_sidebar_fades_out_before_it() {
+        let pool = Pool {
+            x: 0.06,
+            y: 0.5,
+            rgb: [255.0, 255.0, 255.0],
+            level: 1.0,
+        };
+        let (w, h) = (960.0, 800.0);
+        let size = image_size(w, h);
+        let img = render(&[pool], (w, h), size, 1.0, 1.0);
+        let edge = pixel(&img, size.0, 0, size.1 / 2)[3];
+        let inside = pixel(&img, size.0, (LEFT_FADE / SHRINK) as u32 + 2, size.1 / 2)[3];
+        assert!(edge < 5, "the glow meets the sidebar at nothing: {edge}");
+        assert!(inside > 100, "past the fade the pool shows whole: {inside}");
     }
 
     #[test]
