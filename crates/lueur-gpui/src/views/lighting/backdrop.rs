@@ -24,8 +24,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-/// About a frame of a 60 Hz screen, between two steps of the pools.
-const FRAME: Duration = Duration::from_millis(16);
+/// Between two steps of the pools while Lueur is in front: 30 a second is
+/// plenty for soft, slowly eased light.
+const FRAME: Duration = Duration::from_millis(33);
+/// The same while another app is in front (a game, most often): the room
+/// still shows, at a tenth of the cost of a 60 Hz redraw.
+const FRAME_BEHIND: Duration = Duration::from_millis(100);
 
 /// What a zone's pool shows on screen, eased toward what its light shows.
 struct Pool {
@@ -79,7 +83,9 @@ impl GlowBackdrop {
         self.last = Instant::now();
         self.ticking = Some(cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor().timer(FRAME).await;
+                let behind = cx.update(|cx| cx.active_window().is_none());
+                let frame = if behind { FRAME_BEHIND } else { FRAME };
+                cx.background_executor().timer(frame).await;
                 let go_on = this
                     .update(cx, |this, cx| {
                         let moving = this.step(cx);
