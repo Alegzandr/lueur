@@ -214,6 +214,11 @@ pub fn open_main(cx: &mut App) {
         }),
         app_id: Some("com.lueur.app".into()),
         icon: window_icon(),
+        // GPUI holds a window that is not in front to 30 frames a second.
+        // Lueur's sits beside a game most of the time, its light moving
+        // with the screen: it keeps the screen's own rate. Battery saver
+        // and an overheating machine still slow it, as GPUI decides.
+        inactive_frame_interval: None,
         ..Default::default()
     };
     let opened = cx.open_window(options, |window, cx| {

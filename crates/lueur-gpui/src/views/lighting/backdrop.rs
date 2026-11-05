@@ -24,11 +24,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-/// About a frame of a 60 Hz screen, between two steps of the pools: the
-/// light behind the page moves as smoothly as the room, whatever is in
-/// front.
-const FRAME: Duration = Duration::from_millis(16);
-
 /// What a zone's pool shows on screen, eased toward what its light shows.
 struct Pool {
     rgb: [f32; 3],
@@ -45,8 +40,10 @@ pub struct GlowBackdrop {
     last: Instant,
     /// The backdrop's size at the last frame: the page's, not the window's.
     size: (f32, f32),
-    /// Steps the pools while something moves; None once they rest.
-    ticking: Option<Task<()>>,
+    /// True while something moves: each frame the screen shows steps the
+    /// pools and asks for the next one. Once they rest, nothing is drawn
+    /// until the lights change again.
+    animating: bool,
 }
 
 impl GlowBackdrop {
@@ -68,35 +65,18 @@ impl GlowBackdrop {
             born: Instant::now(),
             last: Instant::now(),
             size: (0.0, 0.0),
-            ticking: None,
+            animating: false,
         };
         this.wake(cx);
         this
     }
 
     fn wake(&mut self, cx: &mut Context<Self>) {
-        if self.ticking.is_some() {
-            return;
+        if !self.animating {
+            self.animating = true;
+            self.last = Instant::now();
         }
-        self.last = Instant::now();
-        self.ticking = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(FRAME).await;
-                let go_on = this
-                    .update(cx, |this, cx| {
-                        let moving = this.step(cx);
-                        cx.notify();
-                        if !moving {
-                            this.ticking = None;
-                        }
-                        moving
-                    })
-                    .unwrap_or(false);
-                if !go_on {
-                    break;
-                }
-            }
-        }));
+        cx.notify();
     }
 
     /// Ease every pool toward what its light shows. True while something
@@ -226,6 +206,16 @@ fn colour(rgb: [f32; 3], a: f32) -> Hsla {
 
 impl Render for GlowBackdrop {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // One step per frame the screen shows, at its own rate (60, 144,
+        // 240 Hz…), timed by what really elapsed; the next frame is asked
+        // for only while something still moves.
+        if self.animating {
+            if self.step(cx) {
+                window.request_animation_frame();
+            } else {
+                self.animating = false;
+            }
+        }
         let theme = *theme(cx);
         // Stronger and purer on paper, softer at night (`--backdrop`).
         let (strength, saturation) = if theme.dark { (0.7, 1.15) } else { (0.6, 1.5) };
