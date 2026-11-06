@@ -101,7 +101,10 @@ pub fn text(lang: Lang, key: &str) -> String {
             // Named apart: the log scan takes `key` for a credential.
             let id = key;
             log::error!("no string {id}");
-            debug_assert!(!cfg!(test), "no string {key}");
+            // The tests keep a missing string from shipping.
+            if cfg!(test) {
+                panic!("no string {key}");
+            }
             key.to_string()
         }
     }

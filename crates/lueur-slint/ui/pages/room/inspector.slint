@@ -91,13 +91,12 @@ component Item inherits Rectangle {
 }
 
 component Chevron inherits VerticalLayout {
-    in property <angle> turn;
+    in property <bool> open;
     alignment: center;
     Icon {
-        name: "chevron";
+        name: root.open ? "chevron-up" : "chevron-down";
         size: 12px;
         color: Theme.text-3;
-        transform-rotation: root.turn;
     }
 }
 
@@ -393,7 +392,7 @@ component ObjectList inherits VerticalLayout {
                     vertical-alignment: center;
                     accessible-role: none;
                 }
-                Chevron { turn: RoomState.corners-open ? -90deg : 90deg; }
+                Chevron { open: RoomState.corners-open; }
             }
             if RoomState.corners-open: VerticalLayout {
                 for row[i] in RoomState.corner-rows: VerticalLayout {
@@ -536,7 +535,7 @@ component Exact inherits VerticalLayout {
                     vertical-alignment: center;
                     accessible-role: none;
                 }
-                Chevron { turn: RoomState.exact-open ? -90deg : 90deg; }
+                Chevron { open: RoomState.exact-open; }
             }
         }
         FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: S.r-sm; }

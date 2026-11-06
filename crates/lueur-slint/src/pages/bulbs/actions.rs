@@ -6,12 +6,13 @@
 //! cannot clash with what the other pages add to it.
 
 use crate::i18n::{self, Lang, fill};
+use crate::pages::room::plan;
 use crate::rt;
 use crate::state::{Lueur, View};
 use lueur_core::color::Rgb;
 use lueur_core::config::{AppConfig, DeviceBinding};
 use lueur_core::device::{DiscoveredDevice, Endpoint};
-use lueur_core::geometry::{Light, Room, Vec2};
+use lueur_core::geometry::{Light, Vec2};
 use lueur_shell::service;
 use std::rc::Rc;
 
@@ -26,70 +27,14 @@ const IDENTIFY_RGB: Rgb = Rgb::new(255, 190, 120);
 /// light added after a removal never takes a name already in use.
 pub fn fresh_name(lang: Lang, config: &AppConfig) -> String {
     let template = i18n::text(lang, "light_n");
-    let name = |n: usize| fill(&template, &[("n", &n.to_string())]);
-    let lights = &config.room.lights;
-    let n = lights.len() + 1;
-    (1..=n)
-        .map(name)
-        .find(|candidate| lights.iter().all(|l| l.name != *candidate))
-        .unwrap_or_else(|| name(n))
-}
-
-fn dist(a: Vec2, b: Vec2) -> f32 {
-    (a.x - b.x).hypot(a.y - b.y)
-}
-
-/// Where new lights go: in a row just behind the screen, the usual
-/// ambilight setup, spread evenly across its width. A spot already taken is
-/// skipped, so lights never land on top of each other; the user drags them
-/// to their real places afterwards. The same placement as the Room page's.
-pub fn fresh_positions(room: &Room, count: usize) -> Vec<Vec2> {
-    let s = &room.screen;
-    let f = s.facing();
-    let r = s.right_axis();
-    let at = |u: f32, depth: f32| {
-        Vec2::new(
-            (s.center.x + r.x * u * s.width + f.x * depth)
-                .clamp(20.0, 980.0)
-                .round(),
-            (s.center.y + r.y * u * s.width + f.y * depth)
-                .clamp(20.0, 730.0)
-                .round(),
-        )
-    };
-    let mut taken: Vec<Vec2> = room.lights.iter().map(|l| l.pos).collect();
-    let mut out = Vec::with_capacity(count);
-    for i in 0..count {
-        // Even spread across 120% of the screen width, one row behind it.
-        let u = if count == 1 {
-            0.0
-        } else {
-            -0.6 + 1.2 * i as f32 / (count - 1) as f32
-        };
-        let mut p = at(u, -45.0);
-        // Taken: walk outwards along further rows until a free spot turns up.
-        let free = |p: Vec2, taken: &[Vec2]| taken.iter().all(|q| dist(p, *q) > 45.0);
-        let mut k = 0;
-        while !free(p, &taken) && k < 40 {
-            let u = ((k % 7) as f32 - 3.0) * 0.3;
-            let back = -45.0 - (k / 7) as f32 * 55.0 + if k >= 7 { 140.0 } else { 0.0 };
-            p = at(u, back);
-            k += 1;
-        }
-        taken.push(p);
-        out.push(p);
-    }
-    out
-}
-
-/// A fresh light id: a random UUID, as the Tauri versions made them.
-pub fn new_light_id() -> String {
-    uuid::Uuid::new_v4().to_string()
+    plan::fresh_name(&config.room.lights, |n| {
+        fill(&template, &[("n", &n.to_string())])
+    })
 }
 
 fn new_light(name: String, pos: Vec2) -> Light {
     Light {
-        id: new_light_id(),
+        id: plan::new_light_id(),
         name,
         pos,
         height: 0.5,
@@ -116,7 +61,7 @@ pub fn add_devices(l: &mut Lueur, devices: Vec<(DiscoveredDevice, String)>, anno
     if devices.is_empty() {
         return;
     }
-    let spots = fresh_positions(&l.config.room, devices.len());
+    let spots = plan::fresh_positions(&l.config.room, devices.len());
     let mut names = Vec::with_capacity(devices.len());
     l.edit(|c| {
         for ((d, name), pos) in devices.iter().zip(spots) {
@@ -238,7 +183,7 @@ mod tests {
 
     #[test]
     fn ids_are_fresh_and_shaped_like_uuids() {
-        let (a, b) = (new_light_id(), new_light_id());
+        let (a, b) = (plan::new_light_id(), plan::new_light_id());
         assert_ne!(a, b);
         assert_eq!(a.len(), 36);
         assert_eq!(a.as_bytes()[14], b'4');
@@ -263,11 +208,11 @@ mod tests {
     #[test]
     fn new_lights_never_land_on_each_other() {
         let mut c = AppConfig::default();
-        let first = fresh_positions(&c.room, 3);
+        let first = plan::fresh_positions(&c.room, 3);
         for p in &first {
             c.room.lights.push(new_light("x".into(), *p));
         }
-        let more = fresh_positions(&c.room, 3);
+        let more = plan::fresh_positions(&c.room, 3);
         for p in &more {
             assert!(
                 c.room

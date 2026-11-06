@@ -6,11 +6,11 @@ use super::plan::{self, Other};
 use super::{corner_name, selected_key, selected_light};
 use crate::i18n::{fill, pct, t};
 use crate::models::keep;
+use crate::pages::bulbs::brands::bulb_label;
 use crate::rt;
 use crate::state::Lueur;
 use crate::{ListRow, Paint, RoomState};
 use lueur_core::color::Rgb;
-use lueur_core::config::DeviceBinding;
 use lueur_core::geometry::{Light, ScreenEdge, map_light};
 use slint::{Color, ComponentHandle};
 
@@ -37,36 +37,6 @@ fn zone_words(edge: ScreenEdge) -> String {
             ("zone", &t(plan::kind_key(edge))),
         ],
     )
-}
-
-/// A family's brand name, the same in every language.
-fn family_name(family: &str) -> &'static str {
-    match family {
-        "yeelight" => "Yeelight",
-        "wiz" => "WiZ",
-        "lifx" => "LIFX",
-        "govee" => "Govee",
-        "hue" => "Philips Hue",
-        "nanoleaf" => "Nanoleaf",
-        "tuya" => "Smart Life",
-        _ => "",
-    }
-}
-
-/// A bound bulb as its light describes it: its own name when it says more
-/// than the light's, then its brand and model, never its address. The
-/// Bulbs page has the same words (`pages/bulbs`).
-pub fn bulb_label(b: &DeviceBinding, light_name: Option<&str>) -> String {
-    let brand = [family_name(b.kind.family()), b.model.as_str()]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    if !b.name.is_empty() && Some(b.name.as_str()) != light_name {
-        format!("{} · {brand}", b.name)
-    } else {
-        brand
-    }
 }
 
 /// The zone's colour and the ink of its letter, grey for a light left out.
@@ -326,6 +296,7 @@ fn screen_inspector(l: &Lueur, g: &RoomState<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lueur_core::config::DeviceBinding;
 
     #[test]
     fn a_bulb_is_named_by_its_name_and_brand_never_its_address() {

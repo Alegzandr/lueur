@@ -19,6 +19,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 type Done = Box<dyn FnOnce(Box<dyn Any + Send>)>;
+/// What brings the window up to date from the state.
+type Project = fn(&Lueur, &AppWindow);
 
 thread_local! {
     static STATE: RefCell<Option<Lueur>> = const { RefCell::new(None) };
@@ -26,12 +28,12 @@ thread_local! {
     static JOBS: RefCell<HashMap<u64, Done>> = RefCell::new(HashMap::new());
     static NEXT_JOB: Cell<u64> = const { Cell::new(0) };
     static REFRESH: Cell<bool> = const { Cell::new(false) };
-    static PROJECT: RefCell<Option<fn(&Lueur, &AppWindow)>> = const { RefCell::new(None) };
+    static PROJECT: RefCell<Option<Project>> = const { RefCell::new(None) };
 }
 
 /// Install the state and the window, and what brings the window up to
 /// date from the state.
-pub fn install(state: Lueur, ui: &AppWindow, project: fn(&Lueur, &AppWindow)) {
+pub fn install(state: Lueur, ui: &AppWindow, project: Project) {
     STATE.with_borrow_mut(|s| *s = Some(state));
     UI.with_borrow_mut(|u| *u = Some(ui.as_weak()));
     PROJECT.with_borrow_mut(|p| *p = Some(project));

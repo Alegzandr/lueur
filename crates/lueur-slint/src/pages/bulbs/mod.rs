@@ -8,7 +8,7 @@
 //! `bulbs.slint` draws what [`view`] words.
 
 mod actions;
-pub(crate) mod brands;
+pub mod brands;
 mod check;
 mod pairing;
 mod view;
