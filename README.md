@@ -459,3 +459,7 @@ see [docs/ADDING_A_FAMILY.md](docs/ADDING_A_FAMILY.md).
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+The window is drawn with [Slint](https://slint.dev), used under its
+royalty-free license for desktop apps, which asks for this credit:
+[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-light.svg)](https://slint.dev).

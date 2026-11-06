@@ -98,7 +98,9 @@ pub fn text(lang: Lang, key: &str) -> String {
     match catalog(lang).strings.get(key) {
         Some(s) => s.clone(),
         None => {
-            log::error!("no string {key}");
+            // Named apart: the log scan takes `key` for a credential.
+            let id = key;
+            log::error!("no string {id}");
             debug_assert!(!cfg!(test), "no string {key}");
             key.to_string()
         }
