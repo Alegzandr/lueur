@@ -13,7 +13,10 @@
 use slint::{Model, ModelRc, VecModel};
 
 /// Make `model`'s rows `rows`, touching only those that change.
-pub fn sync<T: Clone + PartialEq + 'static>(model: &VecModel<T>, rows: impl IntoIterator<Item = T>) {
+pub fn sync<T: Clone + PartialEq + 'static>(
+    model: &VecModel<T>,
+    rows: impl IntoIterator<Item = T>,
+) {
     let mut n = 0;
     for row in rows {
         if n < model.row_count() {

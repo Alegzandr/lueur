@@ -235,8 +235,8 @@ fn open_splash(shell: &Shell) -> Option<SplashWindow> {
             return None;
         }
     };
-    let dark = splash.global::<crate::Palette>().get_color_scheme()
-        == slint::language::ColorScheme::Dark;
+    let dark =
+        splash.global::<crate::Palette>().get_color_scheme() == slint::language::ColorScheme::Dark;
     Theme::resolve(interface.appearance, dark).apply(&splash.global::<crate::Theme>());
     splash
         .global::<SplashState>()

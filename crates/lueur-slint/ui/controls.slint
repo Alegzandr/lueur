@@ -88,6 +88,9 @@ export component Button inherits Rectangle {
     // What a screen reader says, when the words shown are not enough.
     in property <string> label: text;
     in property <string> tip;
+    // The icon turns: work under way (still under reduced motion, where the
+    // words beside it say so).
+    in property <bool> spinning;
     callback clicked;
     forward-focus: p;
     accessible-role: button;
@@ -127,6 +130,7 @@ export component Button inherits Rectangle {
                 name: root.icon;
                 size: root.small ? 12px : 14px;
                 color: root.fg;
+                transform-rotation: root.spinning && !Motion.reduce ? Math.mod(animation-tick() / 1ms, 900) / 900 * 360deg : 0deg;
             }
             if root.text != "": Text {
                 text: root.text;
@@ -726,6 +730,8 @@ export component TextField inherits Rectangle {
     callback edited(string);
     callback accepted(string);
     callback cancelled();
+    // The keyboard is in the field.
+    out property <bool> focused: input.has-focus;
     forward-focus: input;
     height: 28px;
     min-width: 80px;
@@ -816,4 +822,20 @@ export component Column inherits VerticalLayout {
     padding-bottom: S.s6;
     spacing: S.s6;
     alignment: start;
+}
+
+// "Working": a glyph turning for as long as the work goes on. Still under
+// reduced motion: the words beside it say that something is under way.
+export component Spinner inherits Rectangle {
+    in property <length> size: 12px;
+    in property <color> tint: Theme.text-3;
+    width: size;
+    height: size;
+    accessible-role: none;
+    Icon {
+        name: "refresh";
+        size: root.size;
+        color: root.tint;
+        transform-rotation: Motion.reduce ? 0deg : Math.mod(animation-tick() / 1ms, 900) / 900 * 360deg;
+    }
 }

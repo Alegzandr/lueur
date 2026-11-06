@@ -54,7 +54,11 @@ pub fn project(l: &Lueur, ui: &AppWindow) {
     let items = View::ALL.iter().map(|&view| NavItem {
         label: t(view.label_key()).into(),
         icon: view.icon().into(),
-        badge: if view == View::Bulbs { unbound as i32 } else { 0 },
+        badge: if view == View::Bulbs {
+            unbound as i32
+        } else {
+            0
+        },
     });
     keep(nav.get_items(), |m| nav.set_items(m), items);
 

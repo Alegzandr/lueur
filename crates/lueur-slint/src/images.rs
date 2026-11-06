@@ -34,11 +34,13 @@ fn decode(name: &str, sigma: u32) -> Option<slint::Image> {
         // Shrunk first: a blur of that size loses nothing a full-size copy
         // would keep, and costs a fraction of it.
         let (w, h) = rgba.dimensions();
-        let small = image::imageops::resize(&rgba, w / 4, h / 4, image::imageops::FilterType::Triangle);
+        let small =
+            image::imageops::resize(&rgba, w / 4, h / 4, image::imageops::FilterType::Triangle);
         rgba = image::imageops::blur(&small, sigma as f32 / 4.0);
     }
     let (w, h) = rgba.dimensions();
-    let buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(rgba.as_raw(), w, h);
+    let buffer =
+        slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(rgba.as_raw(), w, h);
     Some(slint::Image::from_rgba8(buffer))
 }
 
