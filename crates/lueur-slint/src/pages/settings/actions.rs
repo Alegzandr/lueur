@@ -24,7 +24,10 @@ pub fn open_with_system(path: &Path) -> std::io::Result<()> {
     } else {
         "xdg-open"
     };
-    std::process::Command::new(program).arg(path).spawn().map(drop)
+    std::process::Command::new(program)
+        .arg(path)
+        .spawn()
+        .map(drop)
 }
 
 /// Show a system dialog, then hand what it returned to `done` on the

@@ -31,12 +31,7 @@ pub fn oklch(l: f32, c: f32, h: f32, a: f32) -> Color {
         }
     };
     let byte = |x: f32| (x * 255.0).round().clamp(0.0, 255.0) as u8;
-    Color::from_argb_u8(
-        byte(a),
-        byte(encode(r)),
-        byte(encode(g)),
-        byte(encode(b)),
-    )
+    Color::from_argb_u8(byte(a), byte(encode(r)), byte(encode(g)), byte(encode(b)))
 }
 
 /// A neutral grey `oklch(l 0 0 / a)`.

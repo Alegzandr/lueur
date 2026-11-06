@@ -7,8 +7,8 @@
 //! `install` wires to [`text`].
 
 use lueur_core::config::Language;
-use std::cell::Cell;
 use serde::Deserialize;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 

@@ -59,7 +59,9 @@ impl View {
     }
 
     pub fn from_index(i: i32) -> Option<View> {
-        usize::try_from(i).ok().and_then(|i| View::ALL.get(i).copied())
+        usize::try_from(i)
+            .ok()
+            .and_then(|i| View::ALL.get(i).copied())
     }
 }
 

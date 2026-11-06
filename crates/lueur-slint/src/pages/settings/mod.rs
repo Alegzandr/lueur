@@ -449,5 +449,12 @@ pub fn project(l: &Lueur, ui: &AppWindow) {
     let g = ui.global::<SettingsState>();
     let groups = settle(&g.get_groups(), groups);
     keep(g.get_groups(), |m| g.set_groups(m), groups);
-    g.set_version(format!("Lueur {} · {}", env!("CARGO_PKG_VERSION"), t("made_with_slint")).into());
+    g.set_version(
+        format!(
+            "Lueur {} · {}",
+            env!("CARGO_PKG_VERSION"),
+            t("made_with_slint")
+        )
+        .into(),
+    );
 }
