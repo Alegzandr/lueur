@@ -1,0 +1,13 @@
+// The Lighting page. Ported from the GPUI version (crates/lueur-gpui/src/views/lighting).
+
+import { Theme, S } from "../theme.slint";
+import { Tr } from "../tr.slint";
+import { PageTitle } from "../controls.slint";
+import { PageScroll } from "../shell.slint";
+
+export global LightingState {
+}
+
+export component LightingPage inherits PageScroll {
+    PageTitle { text: Tr.t("nav_lighting"); }
+}

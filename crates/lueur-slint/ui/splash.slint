@@ -1,0 +1,68 @@
+// The splash a release build shows while it looks for an update (src/update.rs):
+// the app's name, what is happening, and a thin meter while a download runs.
+// Lit like the rest of Lueur: amber means light.
+
+import { Theme, S } from "theme.slint";
+
+export global SplashState {
+    in property <string> stage;
+    // 0 to 100 while a download runs, -1 otherwise.
+    in property <int> percent: -1;
+    in property <string> meter-label;
+}
+
+export component SplashWindow inherits Window {
+    title: "Lueur";
+    icon: @image-url("../assets/icon-128.png");
+    width: 300px;
+    height: 110px;
+    no-frame: true;
+    background: Theme.bg;
+    default-font-family: "Inter";
+    VerticalLayout {
+        padding-left: S.s5;
+        padding-right: S.s5;
+        spacing: S.s2;
+        alignment: center;
+        HorizontalLayout {
+            spacing: S.s2;
+            alignment: start;
+            Image {
+                width: 28px;
+                height: 28px;
+                source: @image-url("../assets/logo-mark.svg");
+                accessible-role: none;
+            }
+            Text {
+                text: "Lueur";
+                font-size: S.t-lg;
+                font-weight: 600;
+                color: Theme.text;
+                vertical-alignment: center;
+            }
+        }
+        Text {
+            text: SplashState.stage;
+            font-size: S.t-sm;
+            color: Theme.text-2;
+            accessible-role: text;
+            accessible-live-region: polite;
+        }
+        if SplashState.percent >= 0: Rectangle {
+            height: 3px;
+            border-radius: 1.5px;
+            background: Theme.line;
+            clip: true;
+            accessible-role: progress-indicator;
+            accessible-label: SplashState.meter-label;
+            accessible-value: SplashState.percent;
+            accessible-value-minimum: 0;
+            accessible-value-maximum: 100;
+            Rectangle {
+                x: 0;
+                width: parent.width * SplashState.percent / 100;
+                background: Theme.glow;
+            }
+        }
+    }
+}

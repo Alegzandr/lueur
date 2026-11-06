@@ -1,0 +1,82 @@
+// Lueur's window: the sidebar, the page shown over its backdrop, the
+// update button and the toasts. Everything a page shows comes from its
+// global (pages/*.slint), which Rust fills (src/pages/).
+
+import "../assets/fonts/Inter-Regular.ttf";
+import "../assets/fonts/Inter-Medium.ttf";
+import "../assets/fonts/Inter-SemiBold.ttf";
+import "../assets/fonts/Inter-Bold.ttf";
+
+import { Palette } from "std-widgets.slint";
+import { Theme, S, Motion } from "theme.slint";
+import { Tr } from "tr.slint";
+import { Nav, Backdrop, Sidebar, Toasts, BackdropView, NavItem, Toast, UpdateButton } from "shell.slint";
+import { LightingPage, LightingState } from "pages/lighting.slint";
+import { RoomPage, RoomState } from "pages/room.slint";
+import { BulbsPage, BulbsState } from "pages/bulbs.slint";
+import { SettingsPage, SettingsState } from "pages/settings.slint";
+import { SplashWindow, SplashState } from "splash.slint";
+
+export { Theme, Motion, Tr, Nav, Backdrop, NavItem, Toast }
+export { LightingState, RoomState, BulbsState, SettingsState }
+export { SplashWindow, SplashState, Palette }
+
+export component AppWindow inherits Window {
+    title: "Lueur";
+    icon: @image-url("../assets/icon-128.png");
+    min-width: 960px;
+    min-height: 640px;
+    preferred-width: 1180px;
+    preferred-height: 800px;
+    background: Theme.bg;
+    default-font-family: "Inter";
+    default-font-size: S.t-md;
+    forward-focus: keys;
+    accessible-role: none;
+
+    property <ColorScheme> scheme: Palette.color-scheme;
+    changed scheme => { Nav.scheme-changed(); }
+
+    // Ctrl (⌘ on a Mac) and 1 to 4 switch page, and Enter starts or stops.
+    keys := FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+        key-pressed(event) => {
+            if (Tr.mac ? event.modifiers.meta : event.modifiers.control) {
+                if (event.text == "1") { Nav.go(0); return accept; }
+                if (event.text == "2") { Nav.go(1); return accept; }
+                if (event.text == "3") { Nav.go(2); return accept; }
+                if (event.text == "4") { Nav.go(3); return accept; }
+                if (event.text == Key.Return) { Nav.toggle-effect(); return accept; }
+            }
+            reject
+        }
+
+        HorizontalLayout {
+            Sidebar { }
+            Rectangle {
+                accessible-role: main;
+                BackdropView { }
+                VerticalLayout {
+                    HorizontalLayout {
+                        alignment: end;
+                        padding-right: S.s4;
+                        padding-top: S.s3;
+                        height: Nav.update-ready != "" ? 24px + S.s3 : S.s3;
+                        if Nav.update-ready != "": UpdateButton { }
+                    }
+                    if Nav.view == 0: LightingPage { }
+                    if Nav.view == 1: RoomPage { }
+                    if Nav.view == 2: BulbsPage { }
+                    if Nav.view == 3: SettingsPage { }
+                }
+            }
+        }
+    }
+
+    Toasts {
+        x: parent.width - self.width - S.s5;
+        y: parent.height - self.preferred-height - S.s5;
+        height: self.preferred-height;
+    }
+}

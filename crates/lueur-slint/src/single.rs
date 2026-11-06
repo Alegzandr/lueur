@@ -8,7 +8,7 @@
 //! other and fights it for the bulbs, whichever was installed last.
 //!
 //! The hidden window belongs to the thread that creates it: `acquire` runs
-//! on the thread GPUI then runs its message loop on, which delivers the
+//! on the thread Slint then runs its message loop on, which delivers the
 //! message.
 //!
 //! On Linux it speaks the plugin's D-Bus protocol (the well-known name

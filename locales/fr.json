@@ -263,6 +263,7 @@
     "bulb_n": "Ampoule {n}",
     "labelled": "{name} : {what}",
     "about": "À propos de {name}",
+    "made_with_slint": "Fait avec Slint",
     "tuya_qr": "Code QR à scanner dans Smart Life",
     "tuya_missing": "Certaines ampoules n'ont pas répondu. Vérifiez qu'elles sont allumées, puis relancez la recherche.",
     "pair_checking": "Vérification…",

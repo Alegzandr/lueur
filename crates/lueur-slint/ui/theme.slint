@@ -1,0 +1,72 @@
+// The design tokens (see DESIGN.md). The colours are set from Rust
+// (src/theme.rs), which writes them in OKLCH, one set for light and one for
+// dark, and picks between them; the spaces, corners, type sizes and the
+// timing of motion are here.
+
+export global Theme {
+    in property <bool> dark;
+    in property <color> bg;
+    in property <color> sidebar;
+    in property <color> surface;
+    in property <color> surface-2;
+    in property <color> surface-hover;
+    in property <color> sunken;
+    in property <color> line;
+    in property <color> line-strong;
+    in property <color> text;
+    in property <color> text-2;
+    in property <color> text-3;
+    in property <color> ink;
+    in property <color> ink-hover;
+    in property <color> on-ink;
+    // Amber: light itself.
+    in property <color> glow;
+    in property <color> glow-text;
+    in property <color> glow-soft;
+    // The amber of something running.
+    in property <color> active;
+    in property <color> active-text;
+    in property <color> active-soft;
+    // The neutral ink of a target or a selection.
+    in property <color> select;
+    in property <color> ok;
+    in property <color> danger;
+    in property <color> danger-soft;
+    // The frosted cards over the room's light.
+    in property <color> material;
+    in property <color> material-hover;
+    in property <color> separator;
+    in property <color> focus;
+    in property <color> control-line;
+    // The soft shadow under raised controls, and the longer one of what floats.
+    in property <color> shadow;
+    in property <color> shadow-float;
+}
+
+// Spaces, corners and type sizes, in pixels (DESIGN.md).
+export global S {
+    out property <length> s1: 4px;
+    out property <length> s2: 8px;
+    out property <length> s3: 12px;
+    out property <length> s4: 16px;
+    out property <length> s5: 20px;
+    out property <length> s6: 28px;
+    out property <length> s7: 40px;
+    out property <length> r-sm: 5px;
+    out property <length> r-md: 8px;
+    out property <length> r-lg: 14px;
+    out property <length> t-xs: 11px;
+    out property <length> t-sm: 12px;
+    out property <length> t-md: 13px;
+    out property <length> t-lg: 15px;
+    out property <length> t-xl: 28px;
+}
+
+// Short, eased motion; none at all when the system asks for less of it
+// (set from Rust, src/app.rs).
+export global Motion {
+    in property <bool> reduce;
+    out property <duration> state: reduce ? 0ms : 140ms;
+    out property <duration> travel: reduce ? 0ms : 220ms;
+    out property <duration> enter: reduce ? 0ms : 200ms;
+}

@@ -1,0 +1,13 @@
+// The Bulbs page. Ported from the GPUI version (crates/lueur-gpui/src/views/bulbs).
+
+import { Theme, S } from "../theme.slint";
+import { Tr } from "../tr.slint";
+import { PageTitle } from "../controls.slint";
+import { PageScroll } from "../shell.slint";
+
+export global BulbsState {
+}
+
+export component BulbsPage inherits PageScroll {
+    PageTitle { text: Tr.t("nav_bulbs"); }
+}

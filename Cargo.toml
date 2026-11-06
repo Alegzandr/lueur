@@ -6,27 +6,23 @@
 #
 # `lueur-shell` is the desktop service without a GUI: real screen capture,
 # the bulbs on the network, the background workers, the updates and the
-# commands a window calls. `lueur-gpui` draws the window and the tray with
-# GPUI and stays thin, so the interesting, security-sensitive logic lives
+# commands a window calls. `lueur-slint` draws the window and the tray with
+# Slint and stays thin, so the interesting, security-sensitive logic lives
 # where it can be tested without a display server.
 [workspace]
 resolver = "2"
-members = ["crates/lueur-core", "crates/lueur-shell", "crates/lueur-gpui", "crates/lueur-sign"]
+members = ["crates/lueur-core", "crates/lueur-shell", "crates/lueur-slint", "crates/lueur-sign"]
 
 [workspace.package]
 version = "0.19.0"
 edition = "2024"
 license = "MIT"
 authors = ["Lueur contributors"]
-rust-version = "1.90"
+rust-version = "1.92"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# GPUI, Zed's UI framework, from Zed's own repository at one pinned commit:
-# it has no stable release, and its API moves. Bump both together.
-gpui = { git = "https://github.com/zed-industries/zed", rev = "2dcdc4f21629f7637777fe120e6dffb68dc22486" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "2dcdc4f21629f7637777fe120e6dffb68dc22486" }
 
 # Release builds optimise across crates: a smaller binary, and the frame loop
 # inlines through the core crate. Slower to link, which only CI pays.

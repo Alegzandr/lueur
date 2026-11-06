@@ -1,0 +1,13 @@
+// The Room page. Ported from the GPUI version (crates/lueur-gpui/src/views/room).
+
+import { Theme, S } from "../theme.slint";
+import { Tr } from "../tr.slint";
+import { PageTitle } from "../controls.slint";
+import { PageScroll } from "../shell.slint";
+
+export global RoomState {
+}
+
+export component RoomPage inherits PageScroll {
+    PageTitle { text: Tr.t("nav_room"); }
+}

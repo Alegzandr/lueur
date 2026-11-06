@@ -263,6 +263,7 @@
     "bulb_n": "Bulb {n}",
     "labelled": "{name}: {what}",
     "about": "About {name}",
+    "made_with_slint": "Made with Slint",
     "tuya_qr": "QR code to scan in Smart Life",
     "tuya_missing": "Some bulbs did not answer. Check that they are switched on, then search again.",
     "pair_checking": "Checking…",
