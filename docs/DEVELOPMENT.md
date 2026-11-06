@@ -59,22 +59,35 @@ lueur/
 │   ├─ install.rs         Windows: silent per-user install and uninstall
 │   ├─ state.rs, paths.rs Shared app state; where the data folder is
 │   └─ lib.rs             Shell, the events it raises and the Host that hears them
-├─ crates/lueur-gpui/     The window and the tray, drawn with GPUI over
+├─ crates/lueur-slint/    The window and the tray, drawn with Slint over
 │   │                     lueur-shell; builds the `lueur` executable
-│   ├─ main.rs, app.rs    Start-up, the shortcuts, the shell's events, what
-│   │                     closing the window does
-│   ├─ window.rs          The sidebar, the page shown, the toasts
-│   ├─ titlebar.rs        Windows: the title bar drawn by the app
-│   ├─ tray.rs            The tray (tray-icon), drawn from lueur_shell::tray_model
-│   ├─ single.rs          One instance at a time, under the Tauri plugin's names
-│   ├─ update.rs          Startup splash and the hourly check, over lueur_shell::update
-│   ├─ state.rs           What the window shows, the actions every page shares
-│   ├─ host.rs            The shell's events, carried to the window's thread
-│   ├─ theme.rs           Design tokens in OKLCH, light and dark
-│   ├─ i18n.rs            The strings of locales/, by key, in the current language
-│   ├─ ui/                Shared controls (button, switch, slider, segmented,
-│   │                     select, text field, row)
-│   ├─ views/             Lighting, Room, Bulbs, Settings, a folder each
+│   ├─ ui/                The interface, in .slint files compiled by build.rs:
+│   │  ├─ app.slint      The window: the sidebar, the page shown, the toasts,
+│   │  │                 Ctrl+1 to 4 and Ctrl+Enter
+│   │  ├─ shell.slint    The sidebar, the toasts, the backdrops, a page's column
+│   │  ├─ controls.slint Shared controls (button, switch, slider, segmented,
+│   │  │                 select, text field, row, card, tip)
+│   │  ├─ theme.slint    The tokens' names, spaces, type sizes, motion
+│   │  ├─ tr.slint       The words of locales/, through src/i18n.rs
+│   │  ├─ splash.slint   The update splash
+│   │  └─ pages/         Lighting, Room, Bulbs, Settings: each a global the
+│   │                    Rust fills, and the page that draws it
+│   ├─ src/main.rs, app.rs Start-up, the shell's events, the tray's picks,
+│   │                     what closing the window does, restarting
+│   ├─ src/rt.rs          The window's thread: the state, jobs sent off it,
+│   │                     one refresh per turn of the loop
+│   ├─ src/state.rs       What the window shows, the actions every page shares
+│   ├─ src/window.rs      The sidebar, the update button, the toasts
+│   ├─ src/pages/         A module per page: fills its global, answers its
+│   │                     callbacks, keeps what only it needs
+│   ├─ src/models.rs      Lists changed in place, so rows keep focus and hover
+│   ├─ src/tray.rs        The tray (tray-icon), drawn from lueur_shell::tray_model
+│   ├─ src/single.rs      One instance at a time, under the Tauri plugin's names
+│   ├─ src/update.rs      Startup splash and the hourly check, over lueur_shell::update
+│   ├─ src/host.rs        The shell's events, carried to the window's thread
+│   ├─ src/theme.rs       Design tokens in OKLCH, light and dark
+│   ├─ src/i18n.rs        The strings of locales/, by key, in the current language
+│   ├─ src/images.rs      The room's photographs (WebP), decoded and blurred once
 │   └─ assets/            Inter, the Phosphor icons, the mode photographs,
 │                         built into the binary by build.rs
 └─ locales/               en.json and fr.json: every string the window shows

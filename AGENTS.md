@@ -18,18 +18,22 @@ and no npm step.
   live loops, the bulbs, secrets, the background workers, the updates and
   the commands a window calls (`service.rs`), behind a `Host` the window
   implements.
-- `crates/lueur-gpui/`: the window and the tray, drawn with GPUI over
-  `lueur-shell`; it builds the `lueur` executable. Pages in
-  `src/views/`, shared controls in `src/ui/`, design tokens in
-  `src/theme.rs`, the splash and the hourly update check in `src/update.rs`.
+- `crates/lueur-slint/`: the window and the tray, drawn with Slint over
+  `lueur-shell`; it builds the `lueur` executable. The interface is
+  described in `ui/` (`.slint` files: the window in `app.slint` and
+  `shell.slint`, shared controls in `controls.slint`, a page each in
+  `ui/pages/`), and the Rust in `src/` fills it: each page's module in
+  `src/pages/` words what its `.slint` global shows and answers its
+  callbacks. Colours in `src/theme.rs`, the window thread and its jobs in
+  `src/rt.rs`, the splash and the hourly update check in `src/update.rs`.
 - `locales/en.json` and `locales/fr.json`: every string the window shows.
 - Adding a bulb family: follow [docs/ADDING_A_FAMILY.md](docs/ADDING_A_FAMILY.md).
 
 ## Commands
 
 ```bash
-cargo run -p lueur-gpui                                 # the app
-LUEUR_DATA_DIR=/tmp/lueur-try cargo run -p lueur-gpui   # the app on a settings folder of its own
+cargo run -p lueur-slint                                # the app
+LUEUR_DATA_DIR=/tmp/lueur-try cargo run -p lueur-slint  # the app on a settings folder of its own
 cargo test --workspace --locked
 cargo fmt --all --check
 cargo clippy --workspace --locked --all-targets -- -D warnings
@@ -62,24 +66,28 @@ CI runs all of the checks above; a change is done when they pass.
   `locales/fr.json`, under the same key, with the same standing. Brand
   names don't translate.
 - **Both themes.** Any new design token is defined in both `Theme::light()`
-  and `Theme::dark()` in `crates/lueur-gpui/src/theme.rs`; the system, or
-  the appearance forced in Settings, picks between them. The room plan's
-  own colours follow the same rule in
-  `crates/lueur-gpui/src/views/room/colors.rs`.
+  and `Theme::dark()` in `crates/lueur-slint/src/theme.rs` (and declared
+  in the `Theme` global of `ui/theme.slint`); the system, or the appearance
+  forced in Settings, picks between them. The room plan's own colours
+  follow the same rule in `crates/lueur-slint/src/pages/room/colors.rs`.
 
 ## Interface and design
 
 - Who Lueur is for: [PRODUCT.md](PRODUCT.md). The visual system and its
   rules (amber only ever means light, nothing told by colour alone, a still
   alternative to every looping animation): [DESIGN.md](DESIGN.md).
-- Reuse the tokens in `crates/lueur-gpui/src/theme.rs` and the controls in
-  `crates/lueur-gpui/src/ui/` before writing new ones.
+- Reuse the tokens in `crates/lueur-slint/ui/theme.slint` and the controls
+  in `crates/lueur-slint/ui/controls.slint` before writing new ones.
 - A bulb is called by its name or brand where its light is shown, never by
-  its address (`crates/lueur-gpui/src/views/bulbs/brands.rs`).
+  its address (`crates/lueur-slint/src/pages/bulbs/brands.rs`).
 - Every control is reachable with Tab and tells assistive technology what
-  it is, what it is called and what state it is in, through GPUI's
-  AccessKit integration (`.role()`, `.aria_label()` and the like). The
-  controls in `crates/lueur-gpui/src/ui/` already do; a new one must too.
+  it is, what it is called and what state it is in, through Slint's
+  AccessKit integration (`accessible-role`, `accessible-label`,
+  `accessible-checked` and the like). The controls in
+  `crates/lueur-slint/ui/controls.slint` already do; a new one must too.
+- Lists handed to the window change in place (`models::keep`, and
+  `models::reuse` for a list inside a row), so a refresh never remakes a
+  card under the pointer, the focus or a drag.
 
 ## Writing style
 

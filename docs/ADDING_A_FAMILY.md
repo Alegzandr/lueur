@@ -11,7 +11,7 @@ a family lives in `crates/lueur-core/src/device/`, behind three operations
 `device/mod.rs`. The desktop service (`crates/lueur-shell`) only knows
 families through `devices.rs`, which hands everything to the core except
 Tuya, whose encrypted transport lives in the shell. The window
-(`crates/lueur-gpui`) uses the core's `DeviceKind` as it is, so a family
+(`crates/lueur-slint`) uses the core's `DeviceKind` as it is, so a family
 has no type to repeat there, only its brand name and its words.
 
 ## Checklist
@@ -21,7 +21,7 @@ has no type to repeat there, only its brand name and its words.
 | `device/<family>.rs` | Protocol, stream, power, discovery, tests |
 | `device/mod.rs` | `pub mod`, a `DeviceKind` variant, `family()`, `is_ready()`, the `Debug` impl, `open_stream`, `interval_of`, `set_power`, `discover` |
 | `lib.rs` (core) | The family in the crate doc's family list |
-| `crates/lueur-gpui/src/views/bulbs/brands.rs` | The brand name in `family_name()` |
+| `crates/lueur-slint/src/pages/bulbs/brands.rs` | The brand name in `family_name()` |
 | `locales/en.json`, `locales/fr.json` | `first_text`, `tip_5`, and any family-specific hint, in both |
 | `README.md` | A row in *Supported bulbs*, "not yet tested on hardware" until it is |
 | `docs/DEVELOPMENT.md` | The family in the `device/` line of the architecture |
@@ -430,7 +430,7 @@ DEVELOPMENT.md):
   one.
 - **The interface**: a `pair_<family>` hint in `locales/en.json` and
   `locales/fr.json`, and the family's branch in
-  `crates/lueur-gpui/src/views/bulbs/pairing.rs`, which today tells Hue
+  `crates/lueur-slint/src/pages/bulbs/pairing.rs`, which today tells Hue
   from Nanoleaf (`Pairing::hue()`) to pick the hint and the words around
   it.
 

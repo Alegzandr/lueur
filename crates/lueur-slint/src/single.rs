@@ -3,7 +3,7 @@
 //!
 //! On Windows this speaks the protocol of Tauri's single-instance plugin
 //! (a named mutex, a hidden window that takes the second launch's arguments
-//! by `WM_COPYDATA`), under the same names, so the Tauri and the GPUI
+//! by `WM_COPYDATA`), under the same names, so the Tauri and the later
 //! versions of Lueur recognise each other. Neither ever runs beside the
 //! other and fights it for the bulbs, whichever was installed last.
 //!
