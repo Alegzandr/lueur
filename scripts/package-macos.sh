@@ -15,7 +15,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 
 for target in aarch64-apple-darwin x86_64-apple-darwin; do
-  cargo build --release --locked -p lueur-gpui --target "$target"
+  cargo build --release --locked -p lueur-slint --target "$target"
 done
 
 work=$(mktemp -d)
@@ -28,8 +28,8 @@ lipo -create -output "$app/Contents/MacOS/lueur" \
 cp packaging/macos/icon.icns "$app/Contents/Resources/icon.icns"
 
 # The keys the Tauri bundler wrote, then those of packaging/macos/Info.plist
-# (why the Music effect asks for the microphone). GPUI draws with Metal,
-# which wants macOS 10.15.
+# (why the Music effect asks for the microphone). macOS 10.15 at least, as
+# the earlier versions asked.
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

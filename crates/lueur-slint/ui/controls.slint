@@ -487,10 +487,9 @@ export component Select inherits Rectangle {
             }
             Icon {
                 y: (parent.height - self.height) / 2;
-                name: "chevron";
+                name: "chevron-down";
                 size: 12px;
                 color: Theme.text-2;
-                transform-rotation: 90deg;
             }
         }
     }
@@ -649,8 +648,10 @@ export component Slider inherits Rectangle {
                         y: (parent.height - self.height) / 2;
                         border-radius: self.width / 2;
                         background: white;
-                        border-width: 0.5px;
-                        border-color: #0002;
+                        // An edge of its own: on paper a white knob would
+                        // melt into the page without its shadow.
+                        border-width: 1px;
+                        border-color: Theme.dark ? #0000 : Theme.line-strong;
                         drop-shadow-blur: 3px;
                         drop-shadow-offset-y: 1px;
                         drop-shadow-color: #0004;

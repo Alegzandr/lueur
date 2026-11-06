@@ -208,6 +208,19 @@ impl Theme {
     }
 }
 
+/// The window's frame (its title bar) in the appearance the settings
+/// force, or the system's.
+pub fn frame(ui: &crate::AppWindow, appearance: Appearance) {
+    use slint::ComponentHandle;
+    use slint::winit_030::{WinitWindowAccessor, winit};
+    let theme = match appearance {
+        Appearance::System => None,
+        Appearance::Light => Some(winit::window::Theme::Light),
+        Appearance::Dark => Some(winit::window::Theme::Dark),
+    };
+    ui.window().with_winit_window(|w| w.set_theme(theme));
+}
+
 /// Whether the system shows its windows dark, as Slint reads it.
 pub fn system_dark() -> bool {
     use slint::ComponentHandle;

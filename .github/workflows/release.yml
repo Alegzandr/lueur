@@ -112,7 +112,7 @@ jobs:
         if: matrix.name == 'windows'
         shell: bash
         run: |
-          cargo build --release --locked -p lueur-gpui
+          cargo build --release --locked -p lueur-slint
           mkdir -p release
           cp target/release/lueur.exe "release/Lueur_${VERSION}_windows_x64_setup.exe"
 
@@ -120,7 +120,7 @@ jobs:
       - name: Linux, AppImage
         if: matrix.name == 'linux'
         run: |
-          cargo build --release --locked -p lueur-gpui
+          cargo build --release --locked -p lueur-slint
           ./scripts/package-linux.sh "$VERSION" release
 
       # The update file is the .app folder at the top of a gzipped tar,

@@ -8,7 +8,7 @@
 use crate::single::Instance;
 use crate::state::{self, Lueur};
 use crate::tray::{self, Pick};
-use crate::{AppWindow, Backdrop, Motion, Nav, Tr, i18n, rt, theme, window};
+use crate::{AppWindow, Backdrop, Motion, Nav, Tr, i18n, rt, window};
 use lueur_shell::tray_model::{self, Outcome};
 use lueur_shell::{Event, MINIMIZED_ARG, Shell};
 use slint::{CloseRequestResponse, ComponentHandle};
@@ -87,7 +87,7 @@ pub fn run(started: Started) {
     rt::install(lueur, &ui, project);
     i18n::set_current(lang, &ui);
     state::apply_language(lang, &shell);
-    theme::Theme::resolve(appearance, theme::system_dark()).apply(&ui.global::<crate::Theme>());
+    state::apply_theme(appearance);
     ui.global::<Motion>().set_reduce(reduced_motion());
 
     window::bind(&ui);

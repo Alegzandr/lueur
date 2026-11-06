@@ -1,4 +1,4 @@
-# Development aid for the GPUI interface: runs a debug build on a settings
+# Development aid for the Slint interface: runs a debug build on a settings
 # folder of its own (never the real one, never the real bulbs) and saves a
 # picture of its window, to check a change by eye. Windows only.
 # Usage: snap.ps1 -Exe target/debug/lueur.exe -DataDir <folder> -Out shot.png [-View settings]
@@ -18,6 +18,9 @@ public static class W {
 "@
 [W]::SetProcessDPIAware() | Out-Null
 $env:LUEUR_DATA_DIR = $DataDir
+# Drawn on the CPU: the window's own pixels of an OpenGL window read back
+# white.
+$env:SLINT_BACKEND = "winit-software"
 $env:LUEUR_START_VIEW = $View
 $p = Start-Process -FilePath $Exe -PassThru
 try {

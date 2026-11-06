@@ -96,7 +96,7 @@ plan's arithmetic, the choices Settings offers) in plain functions apart
 from drawing them, tested without a window:
 
 ```bash
-cargo test -p lueur-gpui
+cargo test -p lueur-slint
 ```
 
 ### Capture
@@ -167,7 +167,7 @@ and mip chain per presented frame, but only a run with a frame-time overlay
 in a GPU-bound game would put a number on it.
 
 The anti-cheat rules in the README are enforced at build time: `clippy.toml`
-bans the APIs that would break them, and `lueur-shell` and `lueur-gpui` deny
+bans the APIs that would break them, and `lueur-shell` and `lueur-slint` deny
 those lints.
 
 ### Smart Life sign-in
@@ -332,10 +332,10 @@ timer skip the bulbs another computer holds.
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) 1.90+. Lueur is Rust only: there is no npm step
+- [Rust](https://rustup.rs/) 1.92+. Lueur is Rust only: there is no npm step
   to build, run, sign or release it.
 
-**Linux** also needs the GPUI, audio and capture system libraries. One
+**Linux** also needs the Slint, audio and capture system libraries. One
 command installs them on Debian/Ubuntu (24.04 or later), Fedora and Arch, and
 is what the CI runs:
 
@@ -350,16 +350,16 @@ It installs exactly these:
 sudo apt-get install build-essential file pkg-config clang libclang-dev \
   libssl-dev libxcb1-dev libxrandr-dev libdbus-1-dev libasound2-dev \
   libpipewire-0.3-dev libwayland-dev libegl-dev libgbm-dev \
-  libfontconfig-dev libxkbcommon-x11-dev libx11-xcb-dev libvulkan-dev
+  libfontconfig-dev libxkbcommon-x11-dev libx11-xcb-dev
 # Fedora
 sudo dnf install gcc gcc-c++ make file pkgconf-pkg-config clang clang-devel \
   openssl-devel libxcb-devel libXrandr-devel dbus-devel alsa-lib-devel \
   pipewire-devel wayland-devel mesa-libEGL-devel mesa-libgbm-devel \
-  fontconfig-devel libxkbcommon-x11-devel libX11-devel vulkan-loader-devel
+  fontconfig-devel libxkbcommon-x11-devel libX11-devel
 # Arch
 sudo pacman -S --needed base-devel file pkgconf clang \
   openssl libxcb libxrandr dbus alsa-lib pipewire wayland libglvnd mesa \
-  fontconfig libxkbcommon-x11 libx11 vulkan-icd-loader
+  fontconfig libxkbcommon-x11 libx11
 ```
 
 At run time, Wayland capture needs `xdg-desktop-portal` and the desktop's
@@ -369,13 +369,13 @@ Linux has no tray yet: `tray-icon` needs a GTK loop of its own, which the
 app does not run. There, closing the window quits, and Lueur never starts
 hidden. One instance at a time still holds, over the session bus, under the
 D-Bus name the Tauri plugin used (`com.lueur.app.SingleInstance`, in
-`crates/lueur-gpui/src/single.rs`).
+`crates/lueur-slint/src/single.rs`).
 
 ### Develop
 
 ```bash
-cargo run -p lueur-gpui
-LUEUR_DATA_DIR=/tmp/lueur-try cargo run -p lueur-gpui
+cargo run -p lueur-slint
+LUEUR_DATA_DIR=/tmp/lueur-try cargo run -p lueur-slint
 ```
 
 The first reads your settings folder and drives your bulbs. The second
@@ -395,10 +395,11 @@ Two more variables work in development builds only:
 
 On Windows, `scripts/dev/snap.ps1` starts a development build on a settings
 folder of its own, saves a picture of its window and stops it, to check a
-change by eye:
+change by eye. It draws that window on the CPU (`SLINT_BACKEND=winit-software`):
+the pixels of an OpenGL window read back white.
 
 ```powershell
-cargo build -p lueur-gpui
+cargo build -p lueur-slint
 ./scripts/dev/snap.ps1 -Exe target/debug/lueur.exe -DataDir $env:TEMP\lueur-snap -Out shot.png -View room
 ```
 
@@ -417,10 +418,10 @@ logs from `info` up and its dependencies from `warn` up
 level replaces it. Addresses appear from `debug` down, never a credential.
 
 ```bash
-LUEUR_LOG=lueur=debug cargo run -p lueur-gpui                  # Lueur in detail: searches, streams, power
-LUEUR_LOG=lueur_core::device=trace cargo run -p lueur-gpui     # and every frame sent to a bulb
-LUEUR_LOG=lueur_core::device::wire=trace cargo run -p lueur-gpui   # the frames, the rest as usual
-LUEUR_LOG=debug cargo run -p lueur-gpui                        # everything, dependencies included
+LUEUR_LOG=lueur=debug cargo run -p lueur-slint                 # Lueur in detail: searches, streams, power
+LUEUR_LOG=lueur_core::device=trace cargo run -p lueur-slint    # and every frame sent to a bulb
+LUEUR_LOG=lueur_core::device::wire=trace cargo run -p lueur-slint  # the frames, the rest as usual
+LUEUR_LOG=debug cargo run -p lueur-slint                       # everything, dependencies included
 ```
 
 At trace level each frame a stream sends is logged with its family, the
@@ -434,7 +435,7 @@ and formats nothing. On PowerShell, set the variable first:
 ### Build a release
 
 ```bash
-cargo build --release --locked -p lueur-gpui   # target/release/lueur(.exe)
+cargo build --release --locked -p lueur-slint  # target/release/lueur(.exe)
 ./scripts/package-linux.sh <version> <out dir>  # Linux: the AppImage, from that build
 ./scripts/package-macos.sh <version> <out dir>  # macOS: the universal Lueur.app and its archives
 ```
@@ -469,7 +470,7 @@ and the app restarts into it. Without network it gives up after a few seconds.
 While Lueur runs it checks again every hour; a version found then is
 installed and waits behind a *Restart* button at the top of the window and
 an entry in the tray menu. Development builds never update. The splash and
-the hourly check are `crates/lueur-gpui/src/update.rs`; the check, the
+the hourly check are `crates/lueur-slint/src/update.rs`; the check, the
 download, the signature and the install per platform are
 `crates/lueur-shell/src/update.rs`.
 
@@ -498,7 +499,7 @@ executable, the AppImage, a `Lueur.app` with the identifier
 this one keeps updating from releases made the same way. Its tests check
 signatures made by `tauri signer sign` and by `lueur-sign`, which writes
 the very same thing. The single-instance lock
-(`crates/lueur-gpui/src/single.rs`) and the login entry
+(`crates/lueur-slint/src/single.rs`) and the login entry
 (`crates/lueur-shell/src/autostart.rs`) also keep the Tauri plugins' names:
 the two versions recognise each other as one app, and the login entry an
 older version wrote still starts the new one.

@@ -24,7 +24,7 @@
 //! * [`config`]: persisted settings, read from and written to the data
 //!   directory the shell picks.
 //!
-//! The desktop crates (`lueur-shell`, `lueur-gpui`) supply real screen capture
+//! The desktop crates (`lueur-shell`, `lueur-slint`) supply real screen capture
 //! and the window; everything colour- and protocol-critical lives here so it
 //! can be unit-tested without a display server.
 

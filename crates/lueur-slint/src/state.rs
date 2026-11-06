@@ -481,7 +481,8 @@ pub fn apply_language(lang: Lang, shell: &Arc<Shell>) {
 pub fn apply_theme(appearance: lueur_core::config::Appearance) {
     use slint::ComponentHandle;
     if let Some(ui) = rt::ui() {
-        crate::theme::Theme::resolve(appearance, crate::theme::system_dark())
-            .apply(&ui.global::<crate::Theme>());
+        let theme = crate::theme::Theme::resolve(appearance, crate::theme::system_dark());
+        theme.apply(&ui.global::<crate::Theme>());
+        crate::theme::frame(&ui, appearance);
     }
 }
