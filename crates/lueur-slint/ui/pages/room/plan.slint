@@ -1,0 +1,323 @@
+// The plan: the room drawn from above (walls, screen, seat and lights),
+// each dragged into place. Rust works out every shape in the stage's pixels
+// (src/pages/room/draw.rs); this lays them out. The pointer is caught over
+// the whole stage and hit-tested in Rust in plan units. Each light also has
+// a focusable pin, so the keyboard and screen readers reach every light by
+// its name and its zone, and the arrows move it.
+
+import { Theme, S } from "../../theme.slint";
+import { Tr } from "../../tr.slint";
+import { RoomState } from "state.slint";
+
+// A shape of the plan, in the stage's pixels.
+component Shape inherits Path {
+    x: 0;
+    y: 0;
+    width: RoomState.stage-width;
+    height: RoomState.stage-height;
+    viewbox-x: 0;
+    viewbox-y: 0;
+    viewbox-width: RoomState.stage-width / 1px;
+    viewbox-height: RoomState.stage-height / 1px;
+    fit: fill;
+    accessible-role: none;
+}
+
+// A label of the plan, centred on its point, with a halo of the floor so it
+// reads over lines and pools.
+component Label inherits Text {
+    in property <length> cx;
+    in property <length> cy;
+    x: self.cx - self.preferred-width / 2;
+    y: self.cy - self.preferred-height / 2;
+    font-size: 12px;
+    font-weight: 500;
+    stroke: RoomState.floor;
+    stroke-width: 3px;
+    stroke-style: outside;
+    accessible-role: none;
+}
+
+component PinFocus inherits FocusScope {
+    in property <string> id;
+    in property <string> label;
+    in property <bool> selected;
+    property <bool> by-keyboard;
+    width: 30px;
+    height: 30px;
+    focus-on-click: false;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-item-selectable: true;
+    accessible-item-selected: selected;
+    accessible-action-default => { RoomState.pin-picked(id); }
+    focus-gained(reason) => {
+        by-keyboard = reason != FocusReason.pointer-click;
+        RoomState.pin-focused(id);
+    }
+    key-pressed(event) => {
+        if (event.text == " " || event.text == Key.Return) {
+            RoomState.pin-picked(id);
+            return accept;
+        }
+        // The arrows move the light the focus is on: it becomes the
+        // selection first, then the page moves it.
+        if (event.text == Key.LeftArrow || event.text == Key.RightArrow || event.text == Key.UpArrow || event.text == Key.DownArrow) {
+            if (!selected) { RoomState.pin-picked(id); }
+        }
+        reject
+    }
+    Rectangle {
+        border-radius: 15px;
+        border-width: root.has-focus && root.by-keyboard ? 2px : 0px;
+        border-color: Theme.focus;
+    }
+}
+
+export component Plan inherits Rectangle {
+    min-height: 240px;
+    border-radius: S.r-lg;
+    background: RoomState.plan-bg;
+    border-width: 1px;
+    border-color: Theme.separator;
+    clip: true;
+    accessible-role: groupbox;
+    accessible-label: Tr.t("plan_label");
+
+    stage := Rectangle {
+        changed width => {
+            RoomState.stage-width = self.width;
+            RoomState.resized();
+        }
+        changed height => {
+            RoomState.stage-height = self.height;
+            RoomState.resized();
+        }
+        init => {
+            RoomState.stage-width = self.width;
+            RoomState.stage-height = self.height;
+            RoomState.resized();
+        }
+
+        // The dotted grid, every 25 units, anchored to the plan.
+        Shape {
+            commands: RoomState.grid-commands;
+            fill: RoomState.grid;
+        }
+        // The floor with a faint shadow under it, then the light falling
+        // on it, then the walls on top.
+        Shape {
+            commands: RoomState.shadow-commands;
+            fill: #0000000f;
+        }
+        Shape {
+            commands: RoomState.floor-commands;
+            fill: RoomState.floor;
+        }
+        for pool in RoomState.pools: Rectangle {
+            x: pool.x - pool.r;
+            y: pool.y - pool.r;
+            width: pool.r * 2;
+            height: pool.r * 2;
+            border-radius: pool.r;
+            // The gradient's 100% is the square's corner: the pool fades out
+            // at its edge, 70.7% of the way there.
+            background: @radial-gradient(circle,
+                pool.color.with-alpha(0.55 * pool.opacity) 0%,
+                pool.color.with-alpha(0.16 * pool.opacity) 39%,
+                pool.color.with-alpha(0) 70.7%);
+        }
+        Shape {
+            commands: RoomState.cone-commands;
+            fill: Theme.text.with-alpha(0.04);
+        }
+        Shape {
+            commands: RoomState.walls-commands;
+            stroke: RoomState.wall;
+            stroke-width: 5px;
+            stroke-line-join: round;
+        }
+        // Which part of the screen each light looks at.
+        for dash in RoomState.dashes: Shape {
+            commands: dash.commands;
+            stroke: dash.color;
+            stroke-width: 1.5px;
+        }
+        // The seat: dragged around, it turns the screen.
+        Shape {
+            commands: RoomState.seat-line-commands;
+            stroke: Theme.text-3;
+            stroke-width: 1.25px;
+        }
+        Rectangle {
+            x: RoomState.seat-x - 8px;
+            y: RoomState.seat-y - 8px;
+            width: 16px;
+            height: 16px;
+            border-radius: 8px;
+            background: RoomState.floor;
+            border-width: 2px;
+            border-color: RoomState.seat-hovered ? Theme.text : Theme.text-2;
+        }
+        Label {
+            cx: RoomState.seat-x;
+            cy: RoomState.seat-y + 18px;
+            text: Tr.t("plan_you");
+            color: Theme.text-3;
+        }
+        // The screen, amber while selected: the plan's selection is the one
+        // place amber marks something other than light (see DESIGN.md).
+        Shape {
+            commands: RoomState.screen-commands;
+            stroke: RoomState.screen-selected ? Theme.active : RoomState.wall;
+            stroke-width: 7px;
+            stroke-line-cap: round;
+        }
+        if RoomState.screen-selected: Rectangle {
+            x: RoomState.screen-left-x - 7px;
+            y: RoomState.screen-left-y - 7px;
+            width: 14px;
+            height: 14px;
+            border-radius: 7px;
+            background: Theme.surface;
+            border-width: 2px;
+            border-color: Theme.active;
+        }
+        if RoomState.screen-selected: Rectangle {
+            x: RoomState.screen-right-x - 7px;
+            y: RoomState.screen-right-y - 7px;
+            width: 14px;
+            height: 14px;
+            border-radius: 7px;
+            background: Theme.surface;
+            border-width: 2px;
+            border-color: Theme.active;
+        }
+        Label {
+            cx: RoomState.screen-label-x;
+            cy: RoomState.screen-label-y;
+            text: Tr.t("plan_screen");
+            color: Theme.text-3;
+        }
+        // Corners.
+        for corner in RoomState.corners: Rectangle {
+            x: corner.x - 5.75px;
+            y: corner.y - 5.75px;
+            width: 11.5px;
+            height: 11.5px;
+            border-radius: 2.5px;
+            border-width: 1.5px;
+            background: corner.selected ? Theme.active : corner.hovered ? Theme.surface-hover : RoomState.floor;
+            border-color: corner.selected ? Theme.active : RoomState.wall;
+        }
+        // The lights on top: a ring when selected (fainter under the
+        // pointer), the pin in its zone's colour with the zone's letter on
+        // it, and the name.
+        for pin in RoomState.pins: Rectangle {
+            x: pin.x;
+            y: pin.y;
+            width: 0;
+            height: 0;
+            if pin.selected || pin.hovered: Rectangle {
+                x: -16px;
+                y: -16px;
+                width: 32px;
+                height: 32px;
+                border-radius: 16px;
+                border-width: 2px;
+                border-color: Theme.active.with-alpha(pin.selected ? 1 : 0.35);
+            }
+            Rectangle {
+                x: -12px;
+                y: -11px;
+                width: 24px;
+                height: 24px;
+                border-radius: 12px;
+                background: RoomState.pin-shadow;
+            }
+            Rectangle {
+                x: -10.75px;
+                y: -10.75px;
+                width: 21.5px;
+                height: 21.5px;
+                border-radius: 10.75px;
+                background: pin.color;
+                border-width: 2.5px;
+                border-color: RoomState.floor;
+            }
+            Text {
+                x: -self.preferred-width / 2;
+                y: -self.preferred-height / 2;
+                text: pin.letter;
+                font-size: 10.5px;
+                font-weight: 700;
+                color: pin.ink;
+                accessible-role: none;
+            }
+            Label {
+                cx: 0;
+                cy: pin.name-dy;
+                text: pin.name;
+                font-size: 12.5px;
+                color: pin.name-color;
+            }
+        }
+
+        touch := TouchArea {
+            mouse-cursor: RoomState.cursor == 1 ? MouseCursor.grab
+                : RoomState.cursor == 2 ? MouseCursor.grabbing
+                : RoomState.cursor == 3 ? MouseCursor.ew-resize
+                : RoomState.cursor == 4 ? MouseCursor.crosshair
+                : MouseCursor.default;
+            pointer-event(e) => {
+                if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+                    RoomState.press(self.mouse-x, self.mouse-y);
+                } else if (e.button == PointerEventButton.left && e.kind == PointerEventKind.up) {
+                    RoomState.release();
+                } else if (e.kind == PointerEventKind.cancel) {
+                    RoomState.release();
+                } else if (e.kind == PointerEventKind.move) {
+                    if (self.pressed) {
+                        RoomState.drag(self.mouse-x, self.mouse-y, e.modifiers.shift);
+                    } else {
+                        RoomState.hover(self.mouse-x, self.mouse-y);
+                    }
+                }
+            }
+            double-clicked => {
+                RoomState.double(self.mouse-x, self.mouse-y);
+            }
+            changed has-hover => {
+                if (!self.has-hover) { RoomState.leave(); }
+            }
+        }
+
+        // Over the pointer's catch, the pins the keyboard reaches.
+        for pin in RoomState.pins: PinFocus {
+            x: pin.x - 15px;
+            y: pin.y - 15px;
+            id: pin.id;
+            label: pin.label;
+            selected: pin.selected;
+        }
+    }
+
+    // The help line under the plan.
+    Rectangle {
+        y: parent.height - self.height - S.s3;
+        x: (parent.width - self.width) / 2;
+        width: help.preferred-width + 20px;
+        height: help.preferred-height + 6px;
+        border-radius: self.height / 2;
+        background: Theme.surface.with-alpha(0.85);
+        border-width: 1px;
+        border-color: Theme.separator;
+        help := Text {
+            text: Tr.t("plan_help");
+            font-size: S.t-xs;
+            color: Theme.text-3;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
