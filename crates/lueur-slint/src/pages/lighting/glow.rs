@@ -4,8 +4,8 @@
 //! light does, the sum is made more saturated, as coloured light on a wall
 //! looks, and laid over the page with the theme's strength.
 //!
-//! It is drawn into a small image, a sixth of the page across, which the GPU
-//! stretches over the page with bilinear filtering: a bell this wide changes
+//! It is drawn into a small image, a sixth of the page across, which the
+//! renderer stretches over the page with bilinear filtering: a bell this wide changes
 //! too slowly for the stretch to show, and working the pixels out costs a
 //! fraction of a millisecond, even at 240 frames a second. A bell is the
 //! product of a bell across and a bell down, so each pool only costs one
@@ -53,7 +53,7 @@ pub fn image_size(w: f32, h: f32) -> (u32, u32) {
     (side(w), side(h))
 }
 
-/// The glow for a page of `w` × `h` pixels, as `tw` × `th` BGRA pixels with
+/// The glow for a page of `w` × `h` pixels, as `tw` × `th` RGBA pixels with
 /// straight alpha: drawn over the page, it gives what the shader drew.
 /// `strength` is the theme's (and the glow's arrival), `saturation` how
 /// much purer the light shows than it is sent.
@@ -122,11 +122,11 @@ pub fn render(
         let grey = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
         // Saturated, then kept within what the pools' light can give.
         let lit = rgb.map(|c| (grey + (c - grey) * saturation).clamp(0.0, a));
-        // From premultiplied to straight: the GPU lays it over the page by
+        // From premultiplied to straight: Slint lays it over the page by
         // its alpha, which gives the shader's `sum + background * (1 - a)`.
         let straight = lit.map(|c| ((c / a) * 255.0).round().clamp(0.0, 255.0) as u8);
         let alpha = ((a * strength * fade[k % tw]).clamp(0.0, 1.0) * 255.0).round() as u8;
-        out.extend_from_slice(&[straight[2], straight[1], straight[0], alpha]);
+        out.extend_from_slice(&[straight[0], straight[1], straight[2], alpha]);
     }
     out
 }
@@ -185,8 +185,8 @@ mod tests {
         let far = pixel(&img, size.0, size.0 - 1, size.1 / 2);
         assert!(centre[3] > near[3] && near[3] > 0, "{centre:?} {near:?}");
         assert_eq!(far[3], 0, "past the reach the page shows plain");
-        // BGRA, the colour itself where the pool is.
-        assert!(centre[2] > centre[1] && centre[1] > centre[0]);
+        // RGBA, the colour itself where the pool is.
+        assert!(centre[0] > centre[1] && centre[1] > centre[2]);
     }
 
     #[test]

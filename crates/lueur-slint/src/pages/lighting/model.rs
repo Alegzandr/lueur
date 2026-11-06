@@ -155,6 +155,12 @@ pub fn picture_of(id: &str) -> &'static str {
     }
 }
 
+/// The name `crate::images` knows a photograph by: `modes/relax.webp` is
+/// `relax`.
+pub fn photo_name(path: &str) -> &str {
+    path.trim_start_matches("modes/").trim_end_matches(".webp")
+}
+
 /// What a light does now.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Doing {
@@ -170,7 +176,7 @@ pub enum Doing {
 impl Doing {
     /// What it is, in a few words.
     pub fn name(&self, lang: Lang) -> String {
-        let t = |key: &str| i18n::text(lang, key).to_string();
+        let t = |key: &str| i18n::text(lang, key);
         match self {
             Doing::Mode(m) => t(&format!("mode_{m}")),
             Doing::Mood(m) => t(&format!("mood_{m}")),
@@ -398,7 +404,7 @@ impl<'a> Room<'a> {
     pub fn summary(&self, ids: &[String], lang: Lang) -> Option<(String, bool)> {
         let first = self.doing_of(ids.first()?);
         if !ids.iter().all(|id| self.doing_of(id).same(&first)) {
-            return Some((i18n::text(lang, "mode_several").to_string(), false));
+            return Some((i18n::text(lang, "mode_several"), false));
         }
         Some((first.name(lang), matches!(first, Doing::Mode(_))))
     }
@@ -578,7 +584,7 @@ mod tests {
         let all = ["a".to_string(), "b".to_string()];
         assert_eq!(
             room.summary(&all, Lang::En).unwrap().0,
-            i18n::text(Lang::En, "mode_several").to_string()
+            i18n::text(Lang::En, "mode_several")
         );
         assert!(room.summary(&["c".into()], Lang::En).unwrap().1);
     }
@@ -637,6 +643,7 @@ mod tests {
         assert_eq!(looks.len(), 2);
         assert_eq!(picture_of("ambilight"), "modes/screen.webp");
         assert_eq!(picture_of("nothing"), "modes/off.webp");
+        assert_eq!(photo_name(picture_of("relax")), "relax");
     }
 
     #[test]

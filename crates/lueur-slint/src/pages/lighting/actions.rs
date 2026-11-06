@@ -7,16 +7,27 @@
 
 use super::model::{Room, dimmed_only, scene_named};
 use crate::i18n::{self, t};
-use crate::state::{Lueur, model};
-use gpui::{App, Context, Entity, Global, SharedString, Task};
+use crate::rt;
+use crate::state::Lueur;
 use lueur_core::color::Rgb;
 use lueur_core::config::{AppConfig, SavedScene, SceneLight};
 use lueur_core::scene::{LightState, NATURAL};
 use lueur_shell::lights::PowerResult;
 use lueur_shell::service::{self, EffectStatus};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+thread_local! {
+    static SENDING: RefCell<Sending> = RefCell::new(Sending::default());
+    static STARTED: RefCell<Started> = RefCell::new(Started::default());
+}
+
+/// Whether a wish for this light is on its way or queued.
+fn sending_has(id: &str) -> bool {
+    SENDING.with_borrow(|s| s.has(id))
+}
 
 /// Warm white: an identify flash should read as "this one", never as a
 /// colour the effect could have picked.
@@ -30,8 +41,6 @@ struct Sending {
     in_flight: HashSet<String>,
     waiting: HashMap<String, LightState>,
 }
-
-impl Global for Sending {}
 
 impl Sending {
     /// True while a wish for this light is on its way or queued, so the
@@ -59,73 +68,67 @@ struct Started {
     /// being tried again until the room changes once more.
     planned: Option<String>,
     /// The restart waiting for the room to rest. Dropping it cancels it.
-    waiting: Option<Task<()>>,
+    waiting: Option<slint::Timer>,
 }
-
-impl Global for Started {}
 
 /// Follow what plays and the room as drawn: note the room when an effect is
 /// first seen playing, forget it when nothing plays, and restart the
 /// effects once a change to the room has rested. Never while a drag on the
 /// plan lasts: its release brings the call that plans the restart.
-pub fn follow_room(lueur: &Entity<Lueur>, cx: &mut App) {
-    let l = lueur.read(cx);
+pub fn follow_room(l: &Lueur) {
     let running = l.status.running;
     let arranging = l.arranging;
     let room = Room::of(l).topology();
-    let started = cx.default_global::<Started>();
-    if !running {
-        *started = Started::default();
-        return;
-    }
-    let Some(playing) = &started.playing else {
-        started.playing = Some(room);
-        return;
-    };
-    if *playing == room || arranging {
-        // Back as the effects play it, or still being dragged: nothing to
-        // restart yet.
-        started.planned = None;
-        started.waiting = None;
-        return;
-    }
-    if started.planned.as_ref() == Some(&room) {
-        return;
-    }
-    started.planned = Some(room);
-    let waiting = lueur.update(cx, |_, cx| {
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(RESTART_AFTER).await;
-            let _ = this.update(cx, |l, cx| l.restart_on_room(cx));
-        })
+    STARTED.with_borrow_mut(|started| {
+        if !running {
+            *started = Started::default();
+            return;
+        }
+        let Some(playing) = &started.playing else {
+            started.playing = Some(room);
+            return;
+        };
+        if *playing == room || arranging {
+            // Back as the effects play it, or still being dragged: nothing
+            // to restart yet.
+            started.planned = None;
+            started.waiting = None;
+            return;
+        }
+        if started.planned.as_ref() == Some(&room) {
+            return;
+        }
+        started.planned = Some(room);
+        let waiting = slint::Timer::default();
+        waiting.start(slint::TimerMode::SingleShot, RESTART_AFTER, || {
+            rt::with(Lueur::restart_on_room);
+        });
+        started.waiting = Some(waiting);
     });
-    cx.global_mut::<Started>().waiting = Some(waiting);
 }
 
 impl Lueur {
     /// Take the lights' states the shell recorded. Lights being set by hand
     /// keep their value, which is newer.
-    fn take_lights(&mut self, config: AppConfig, cx: &mut Context<Self>) {
-        let sending = cx.default_global::<Sending>();
+    fn take_lights(&mut self, config: AppConfig) {
         let mut states = config.states;
         for (id, s) in &self.config.states {
-            if sending.has(id) {
+            if sending_has(id) {
                 states.insert(id.clone(), *s);
             }
         }
         let natural = config
             .natural
             .into_iter()
-            .filter(|id| !sending.has(id))
+            .filter(|id| !sending_has(id))
             .collect();
         self.config.states = states;
         self.config.natural = natural;
         self.config.modes = config.modes;
-        cx.notify();
     }
 
     /// Say which bulbs did not answer, when some did not.
-    fn report_partial(&mut self, res: &PowerResult, cx: &mut Context<Self>) {
+    fn report_partial(&mut self, res: &PowerResult) {
         if res.failures.is_empty() {
             return;
         }
@@ -137,32 +140,30 @@ impl Lueur {
                 ("names", &res.failures.join(", ")),
             ],
         );
-        self.inform(text, cx);
+        self.inform(text);
     }
 
     /// Every bound bulb on or off. Off also stops the effects (the shell
     /// does it).
-    pub fn set_all_power(&mut self, on: bool, cx: &mut Context<Self>) {
+    pub fn set_all_power(&mut self, on: bool) {
         if self.busy {
             return;
         }
         self.busy = true;
-        cx.notify();
         self.run_then(
-            cx,
             move |s| {
                 let res = service::set_all_power(s, on)?;
                 Ok((res, service::get_config(s)?, service::effect_status(s)))
             },
-            |this, result, cx| {
+            |this, result| {
                 this.busy = false;
                 match result {
                     Ok((res, config, status)) => {
-                        this.take_lights(config, cx);
+                        this.take_lights(config);
                         this.status = status;
-                        this.report_partial(&res, cx);
+                        this.report_partial(&res);
                     }
-                    Err(e) => this.fail(&e, cx),
+                    Err(e) => this.fail(&e),
                 }
             },
         );
@@ -170,29 +171,27 @@ impl Lueur {
 
     /// A built-in mood, or the natural light, on the lights picked or the
     /// whole room. Stops the effects playing on them.
-    pub fn apply_mood(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub fn apply_mood(&mut self, id: &str) {
         if self.pending.is_some() {
             return;
         }
         self.pending = Some(id.to_string());
-        cx.notify();
         let picked = Room::of(self).picked();
         let id = id.to_string();
         self.run_then(
-            cx,
             move |s| {
                 let res = service::apply_scene(s, &id, picked.as_deref())?;
                 Ok((res, service::get_config(s)?, service::effect_status(s)))
             },
-            |this, result, cx| {
+            |this, result| {
                 this.pending = None;
                 match result {
                     Ok((res, config, status)) => {
-                        this.take_lights(config, cx);
+                        this.take_lights(config);
                         this.status = status;
-                        this.report_partial(&res, cx);
+                        this.report_partial(&res);
                     }
-                    Err(e) => this.fail(&e, cx),
+                    Err(e) => this.fail(&e),
                 }
             },
         );
@@ -200,7 +199,7 @@ impl Lueur {
 
     /// The ambilight or a show on the lights picked, or on the whole room.
     /// Picking one they all play already stops it on them.
-    pub fn choose_mode(&mut self, mode: &'static str, cx: &mut Context<Self>) {
+    pub fn choose_mode(&mut self, mode: &'static str) {
         if self.busy || self.pending.is_some() {
             return;
         }
@@ -211,9 +210,7 @@ impl Lueur {
             !targets.is_empty() && targets.iter().all(|id| room.mode_of(id) == Some(mode));
         self.pending = Some(mode.to_string());
         self.busy = true;
-        cx.notify();
         self.run_then(
-            cx,
             move |s| {
                 let mut silent = false;
                 if all_play {
@@ -230,21 +227,21 @@ impl Lueur {
                 }
                 Ok((silent, service::get_config(s)?, service::effect_status(s)))
             },
-            |this, result, cx| {
+            |this, result| {
                 this.busy = false;
                 this.pending = None;
                 match result {
                     Ok((silent, config, status)) => {
-                        this.take_lights(config, cx);
+                        this.take_lights(config);
                         this.status = status;
                         if silent {
                             let text = this.t("started_silent");
-                            this.inform(text, cx);
+                            this.inform(text);
                         }
                     }
                     Err(e) => {
-                        this.fail(&e, cx);
-                        this.refresh_status(cx);
+                        this.fail(&e);
+                        this.refresh_status();
                     }
                 }
             },
@@ -253,15 +250,14 @@ impl Lueur {
 
     /// Take a light's bulb back from whatever else drives it, so the effect
     /// playing on it here drives it again.
-    pub fn take_light(&mut self, id: String, cx: &mut Context<Self>) {
+    pub fn take_light(&mut self, id: String) {
         self.run_then(
-            cx,
             move |s| service::take_light(s, &id),
-            |this, result: Result<EffectStatus, _>, cx| match result {
+            |this, result: Result<EffectStatus, _>| match result {
                 Ok(status) => this.status = status,
                 Err(e) => {
-                    this.fail(&e, cx);
-                    this.refresh_status(cx);
+                    this.fail(&e);
+                    this.refresh_status();
                 }
             },
         );
@@ -269,11 +265,11 @@ impl Lueur {
 
     /// Save the room and restart the effects on it. A failure shows as an
     /// error toast, like any other.
-    fn restart_on_room(&mut self, cx: &mut Context<Self>) {
+    fn restart_on_room(&mut self) {
         if self.busy {
             // An effect is being started or stopped. Once it is, the window
             // hears of it and plans the restart again.
-            cx.global_mut::<Started>().planned = None;
+            STARTED.with_borrow_mut(|s| s.planned = None);
             return;
         }
         if !self.status.running {
@@ -281,26 +277,25 @@ impl Lueur {
         }
         let room = Room::of(self).topology();
         self.busy = true;
-        cx.notify();
         let config = self.config.clone();
         self.run_then(
-            cx,
             move |s| {
                 service::save_config(s, config)?;
                 service::restart_effect(s)
             },
-            move |this, result, cx| {
+            move |this, result| {
                 this.busy = false;
                 match result {
                     Ok(status) => {
                         this.status = status;
-                        let started = cx.default_global::<Started>();
-                        started.playing = Some(room);
-                        started.planned = None;
+                        STARTED.with_borrow_mut(|started| {
+                            started.playing = Some(room);
+                            started.planned = None;
+                        });
                     }
                     Err(e) => {
-                        this.fail(&e, cx);
-                        this.refresh_status(cx);
+                        this.fail(&e);
+                        this.refresh_status();
                     }
                 }
             },
@@ -308,37 +303,35 @@ impl Lueur {
     }
 
     /// Set the sleep timer, or cancel it with None.
-    pub fn set_sleep(&mut self, minutes: Option<u32>, cx: &mut Context<Self>) {
+    pub fn set_sleep(&mut self, minutes: Option<u32>) {
         self.run(
-            cx,
             move |s| service::set_sleep_timer(s, minutes),
-            |this, status, _| this.sleep = status.map(|s| (s, Instant::now())),
+            |this, status| this.sleep = status.map(|s| (s, Instant::now())),
         );
     }
 
     /// Flash a light's bulb so the user can tell which one it is.
-    pub fn identify_light(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub fn identify_light(&mut self, id: &str) {
         let Some(endpoint) = self.config.binding_for(id).map(|b| b.endpoint()) else {
             let text = self.t("no_bulb_yet");
-            self.inform(text, cx);
+            self.inform(text);
             return;
         };
         self.run(
-            cx,
             move |s| service::test_device(s, endpoint, IDENTIFY),
-            |_, (), _| {},
+            |_, ()| {},
         );
     }
 
     /// The light on the room's plan, picked there.
-    pub fn show_on_plan(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub fn show_on_plan(&mut self, id: &str) {
         self.selected_light = Some(id.to_string());
-        self.show(crate::state::View::Room, cx);
+        self.show(crate::state::View::Room);
     }
 
     /// Pick a light for effects and moods, or put it back. Picking them all
     /// is the same as the whole room.
-    pub fn toggle_target(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub fn toggle_target(&mut self, id: &str) {
         let mut ids = self.target.clone();
         if let Some(i) = ids.iter().position(|t| t == id) {
             ids.remove(i);
@@ -351,23 +344,17 @@ impl Lueur {
             .iter()
             .all(|b| ids.contains(&b.light_id));
         self.target = if all { Vec::new() } else { ids };
-        cx.notify();
     }
 
     /// Change part of a light's state (brightness, white, colour), show it
     /// and send it. Touching a light that is off turns it on.
-    pub fn adjust_light(
-        &mut self,
-        id: &str,
-        patch: impl FnOnce(&mut LightState),
-        cx: &mut Context<Self>,
-    ) {
+    pub fn adjust_light(&mut self, id: &str, patch: impl FnOnce(&mut LightState)) {
         let now = Room::of(self).state(id);
         let mut next = now;
         next.on = true;
         patch(&mut next);
         let key = id.to_string();
-        self.edit(cx, |c| {
+        self.edit(|c| {
             c.states.insert(key.clone(), next);
             // The shell takes it off the natural light too, unless only its
             // brightness changed: then it keeps following, that much dimmer
@@ -376,34 +363,39 @@ impl Lueur {
                 c.natural.remove(&key);
             }
         });
-        self.send_state(id.to_string(), next, cx);
+        self.send_state(id.to_string(), next);
     }
 
-    fn send_state(&mut self, id: String, state: LightState, cx: &mut Context<Self>) {
-        let sending = cx.default_global::<Sending>();
-        if sending.in_flight.contains(&id) {
-            sending.waiting.insert(id, state);
+    fn send_state(&mut self, id: String, state: LightState) {
+        let queued = SENDING.with_borrow_mut(|sending| {
+            if sending.in_flight.contains(&id) {
+                sending.waiting.insert(id.clone(), state);
+                return true;
+            }
+            sending.in_flight.insert(id.clone());
+            false
+        });
+        if queued {
             return;
         }
-        sending.in_flight.insert(id.clone());
         let light = id.clone();
         self.run_then(
-            cx,
             move |s| service::set_light_state(s, &light, state),
-            move |this, result, cx| {
-                let sending = cx.global_mut::<Sending>();
-                sending.in_flight.remove(&id);
+            move |this, result| {
+                let next = SENDING.with_borrow_mut(|sending| {
+                    sending.in_flight.remove(&id);
+                    sending.waiting.remove(&id)
+                });
                 match result {
                     Ok(()) => {
-                        if let Some(next) = sending.waiting.remove(&id) {
-                            this.send_state(id, next, cx);
+                        if let Some(next) = next {
+                            this.send_state(id, next);
                         }
                     }
                     Err(e) => {
                         // One toast per failure, not one per slider step.
-                        sending.waiting.remove(&id);
-                        this.fail(&e, cx);
-                        this.revert(id, cx);
+                        this.fail(&e);
+                        this.revert(id);
                     }
                 }
             },
@@ -412,14 +404,13 @@ impl Lueur {
 
     /// Show what the shell recorded for a light the bulb refused, rather
     /// than a value it never got.
-    fn revert(&mut self, id: String, cx: &mut Context<Self>) {
+    fn revert(&mut self, id: String) {
         self.run_then(
-            cx,
             |s| service::get_config(s),
-            move |this, result, cx| {
+            move |this, result| {
                 let Ok(config) = result else { return };
                 // Moved again meanwhile: that newer wish wins.
-                if cx.default_global::<Sending>().has(&id) {
+                if sending_has(&id) {
                     return;
                 }
                 match config.states.get(&id) {
@@ -438,7 +429,7 @@ impl Lueur {
     /// Set the brightness of `ids`, 1..=100: of each light set by hand, and
     /// of each effect one of them plays (an effect has one brightness, for
     /// every light playing it). Lights off are turned on.
-    pub fn set_brightness(&mut self, ids: &[String], bright: u8, cx: &mut Context<Self>) {
+    pub fn set_brightness(&mut self, ids: &[String], bright: u8) {
         let room = Room::of(self);
         let modes: Vec<Option<&str>> = ids.iter().map(|id| room.mode_of(id)).collect();
         let by_hand: Vec<String> = ids
@@ -450,21 +441,21 @@ impl Lueur {
         let screen = modes.contains(&Some("ambilight"));
         let show = modes.iter().any(|m| m.is_some_and(|m| m != "ambilight"));
         if screen {
-            self.edit(cx, |c| {
+            self.edit(|c| {
                 c.engine.brightness = (f32::from(bright) / 100.0).max(0.05);
             });
         }
         if show {
-            self.edit(cx, |c| c.show.bright = bright.max(5));
+            self.edit(|c| c.show.bright = bright.max(5));
         }
         for id in by_hand {
-            self.adjust_light(&id, |s| s.bright = bright, cx);
+            self.adjust_light(&id, |s| s.bright = bright);
         }
     }
 
     /// Save what every light with a bulb does now as `name`, replacing the
     /// scene of that name if there is one.
-    pub fn save_scene(&mut self, name: &str, cx: &mut Context<Self>) {
+    pub fn save_scene(&mut self, name: &str) {
         let room = Room::of(self);
         let lights: BTreeMap<String, SceneLight> = self
             .config
@@ -474,7 +465,7 @@ impl Lueur {
             .collect();
         let same = scene_named(&self.config.scenes, name).map(|s| s.id.clone());
         let name = name.trim().to_string();
-        self.edit(cx, move |c| match same {
+        self.edit(move |c| match same {
             Some(id) => {
                 if let Some(s) = c.scenes.iter_mut().find(|s| s.id == id) {
                     s.lights = lights;
@@ -494,29 +485,29 @@ impl Lueur {
     }
 
     /// Delete a scene, with an undo in the toast that says so.
-    pub fn delete_scene(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub fn delete_scene(&mut self, id: &str) {
         let Some(index) = self.config.scenes.iter().position(|s| s.id == id) else {
             return;
         };
         let scene = self.config.scenes[index].clone();
-        self.edit(cx, |c| c.scenes.retain(|s| s.id != scene.id));
+        self.edit(|c| c.scenes.retain(|s| s.id != scene.id));
         let text = i18n::fill(&self.t("scene_deleted"), &[("name", &scene.name)]);
-        let label: SharedString = t(cx, "undo");
-        let undo = Rc::new(move |_: &mut gpui::Window, cx: &mut App| {
+        let label = t("undo");
+        let undo = Rc::new(move || {
             let scene = scene.clone();
-            model(cx).update(cx, |l, cx| {
-                l.edit(cx, |c| {
+            rt::with(|l| {
+                l.edit(|c| {
                     let at = index.min(c.scenes.len());
                     c.scenes.insert(at, scene);
                 });
             });
         });
-        self.inform_with(text, label, undo, cx);
+        self.inform_with(text, label, undo);
     }
 
     /// Bring a scene back: each light plays, follows or shows what it did
     /// when the scene was saved. Lights added since are left as they are.
-    pub fn recall_scene(&mut self, scene: SavedScene, cx: &mut Context<Self>) {
+    pub fn recall_scene(&mut self, scene: SavedScene) {
         if self.busy || self.pending.is_some() {
             return;
         }
@@ -558,9 +549,7 @@ impl Lueur {
             .collect();
         self.pending = Some(scene.id);
         self.busy = true;
-        cx.notify();
         self.run_then(
-            cx,
             move |s| {
                 if !freed.is_empty() {
                     service::set_lights_mode(s, &freed, None)?;
@@ -597,20 +586,20 @@ impl Lueur {
                 });
                 Ok((reports, service::get_config(s)?, service::effect_status(s)))
             },
-            |this, result, cx| {
+            |this, result| {
                 this.busy = false;
                 this.pending = None;
                 match result {
                     Ok((reports, config, status)) => {
-                        this.take_lights(config, cx);
+                        this.take_lights(config);
                         this.status = status;
                         for r in &reports {
-                            this.report_partial(r, cx);
+                            this.report_partial(r);
                         }
                     }
                     Err(e) => {
-                        this.fail(&e, cx);
-                        this.refresh_status(cx);
+                        this.fail(&e);
+                        this.refresh_status();
                     }
                 }
             },
