@@ -8,7 +8,7 @@
 use crate::single::Instance;
 use crate::state::{self, Lueur};
 use crate::tray::{self, Pick};
-use crate::{AppWindow, Backdrop, Motion, Nav, Tr, i18n, rt, window};
+use crate::{AppWindow, Motion, Nav, Tr, i18n, rt, window};
 use lueur_shell::tray_model::{self, Outcome};
 use lueur_shell::{Event, MINIMIZED_ARG, Shell};
 use slint::{CloseRequestResponse, ComponentHandle};
@@ -98,7 +98,6 @@ pub fn run(started: Started) {
         let appearance = rt::read(|l| l.config.interface.appearance);
         state::apply_theme(appearance);
     });
-    ui.global::<Backdrop>().on_resized(|| rt::with(|_| {}));
 
     let close_shell = Arc::clone(&shell);
     ui.window().on_close_requested(move || {

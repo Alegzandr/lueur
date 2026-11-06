@@ -41,7 +41,7 @@ export struct DeviceRow {
 }
 
 // A light of the room as its card shows it.
-export struct LightCard {
+export struct BulbCard {
     id: string,
     name: string,
     // Its bulb, or what it waits for.
@@ -112,7 +112,7 @@ export global BulbsState {
     in property <[string]> use-choices;
     in property <bool> tips-open;
     in property <bool> has-lights;
-    in property <[LightCard]> lights;
+    in property <[BulbCard]> lights;
 
     callback search();
     callback add-all();
@@ -833,7 +833,7 @@ component NetworkColumn inherits VerticalLayout {
 }
 
 component LightView inherits Rectangle {
-    in property <LightCard> c;
+    in property <BulbCard> c;
     property <bool> editing;
     min-height: 60px;
     border-radius: S.r-lg;

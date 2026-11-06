@@ -8,7 +8,7 @@ use super::{Local, check, device_name, first_visit, unbound, waiting_lights};
 use crate::i18n::{fill, t, tn};
 use crate::models::{keep, reuse};
 use crate::state::Lueur;
-use crate::{AppWindow, BulbsState, CheckBanner, DeviceRow, LightCard, PairPanel, TuyaPanel};
+use crate::{AppWindow, BulbCard, BulbsState, CheckBanner, DeviceRow, PairPanel, TuyaPanel};
 use lueur_core::device::common::kelvin_to_rgb;
 use lueur_core::scene::{LightState, Tint};
 use lueur_shell::tuya_cloud::normalize_code;
@@ -265,7 +265,7 @@ fn device_rows(l: &Lueur) -> Vec<DeviceRow> {
         .collect()
 }
 
-fn light_cards(l: &Lueur, active: Color) -> Vec<LightCard> {
+fn light_cards(l: &Lueur, active: Color) -> Vec<BulbCard> {
     let c = &l.config;
     let labels: Vec<String> = c
         .bindings
@@ -296,7 +296,7 @@ fn light_cards(l: &Lueur, active: Color) -> Vec<LightCard> {
                 None => t("pick_above"),
             };
             let (dot, dot_from, dot_to, dot_halo) = light_dot(l, &light.id, active);
-            LightCard {
+            BulbCard {
                 id: light.id.as_str().into(),
                 name: light.name.as_str().into(),
                 meta: meta.into(),

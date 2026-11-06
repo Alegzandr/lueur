@@ -77,6 +77,34 @@ export component Pressable inherits FocusScope {
 
 export enum ButtonKind { normal, primary, plain, danger }
 
+// A floating explanation, opened over everything by `show()`.
+export component TipBubble inherits PopupWindow {
+    in property <string> text;
+    close-policy: close-on-click-outside;
+    Rectangle {
+        background: Theme.surface;
+        border-radius: S.r-md;
+        border-width: 1px;
+        border-color: Theme.line;
+        drop-shadow-blur: 12px;
+        drop-shadow-offset-y: 4px;
+        drop-shadow-color: Theme.shadow-float;
+        VerticalLayout {
+            padding-left: S.s3;
+            padding-right: S.s3;
+            padding-top: S.s2;
+            padding-bottom: S.s2;
+            Text {
+                text: root.text;
+                font-size: S.t-sm;
+                color: Theme.text-2;
+                wrap: word-wrap;
+                max-width: 280px - 2 * S.s3;
+            }
+        }
+    }
+}
+
 // A button: `primary` is the ink one a page leads with, `plain` has no
 // fill until pointed at, `danger` destroys something.
 export component Button inherits Rectangle {
@@ -144,6 +172,28 @@ export component Button inherits Rectangle {
         transform-origin: { x: self.width / 2, y: self.height / 2 };
     }
     FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: root.border-radius; }
+    // Pointed at for a moment, the tip floats under the button.
+    out property <bool> hovered: p.hovered;
+    property <bool> tip-shown;
+    changed hovered => {
+        if (!hovered) {
+            tip-shown = false;
+            bubble.close();
+        }
+    }
+    Timer {
+        interval: 600ms;
+        running: root.hovered && root.tip != "" && !root.tip-shown;
+        triggered => {
+            root.tip-shown = true;
+            bubble.show();
+        }
+    }
+    bubble := TipBubble {
+        x: 0;
+        y: root.height + 6px;
+        text: root.tip;
+    }
 }
 
 // An on/off switch. On is amber: a light that is on is light. The state is
@@ -226,34 +276,6 @@ export component PageTitle inherits Text {
     letter-spacing: -0.67px;
     color: Theme.text;
     accessible-role: text;
-}
-
-// A floating explanation, opened over everything by `show()`.
-export component TipBubble inherits PopupWindow {
-    in property <string> text;
-    close-policy: close-on-click-outside;
-    Rectangle {
-        background: Theme.surface;
-        border-radius: S.r-md;
-        border-width: 1px;
-        border-color: Theme.line;
-        drop-shadow-blur: 12px;
-        drop-shadow-offset-y: 4px;
-        drop-shadow-color: Theme.shadow-float;
-        VerticalLayout {
-            padding-left: S.s3;
-            padding-right: S.s3;
-            padding-top: S.s2;
-            padding-bottom: S.s2;
-            Text {
-                text: root.text;
-                font-size: S.t-sm;
-                color: Theme.text-2;
-                wrap: word-wrap;
-                max-width: 280px - 2 * S.s3;
-            }
-        }
-    }
 }
 
 // The ⓘ mark of a row: its tip opens on hover, focus or a click, and a
