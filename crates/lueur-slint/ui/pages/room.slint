@@ -1,13 +1,147 @@
-// The Room page. Ported from the GPUI version (crates/lueur-gpui/src/views/room).
+// The Room page: the plan of the room on the left, and beside it the list
+// of what it holds or, once something is picked, that thing's inspector.
+// It breaks the page's column: the plan takes the width, the inspector a
+// column of 296px on its right that scrolls on its own, its edge fading
+// where more is hidden (DESIGN.md, "Layout").
 
 import { Theme, S } from "../theme.slint";
 import { Tr } from "../tr.slint";
-import { PageTitle } from "../controls.slint";
-import { PageScroll } from "../shell.slint";
+import { PageTitle, Button, ButtonKind, Card, LampDot } from "../controls.slint";
+import { RoomState } from "room/state.slint";
+import { Plan } from "room/plan.slint";
+import { Side } from "room/inspector.slint";
 
-export global RoomState {
-}
+export { RoomState }
 
-export component RoomPage inherits PageScroll {
-    PageTitle { text: Tr.t("nav_room"); }
+export component RoomPage inherits FocusScope {
+    focus-on-click: false;
+    focus-on-tab-navigation: false;
+    key-pressed(event) => {
+        if (RoomState.key(event.text, event.modifiers.shift, event.modifiers.control || event.modifiers.meta, event.modifiers.alt)) {
+            return accept;
+        }
+        reject
+    }
+
+    VerticalLayout {
+        padding-left: S.s7;
+        padding-right: S.s7;
+        padding-top: S.s3;
+        padding-bottom: S.s6;
+        spacing: S.s3;
+
+        HorizontalLayout {
+            min-height: 34px;
+            spacing: S.s4;
+            PageTitle {
+                text: Tr.t("nav_room");
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+            HorizontalLayout {
+                spacing: S.s1;
+                alignment: end;
+                VerticalLayout {
+                    alignment: center;
+                    Button {
+                        icon: "undo";
+                        label: Tr.t("undo");
+                        tip: Tr.t("undo") + (Tr.mac ? " (⌘Z)" : " (Ctrl+Z)");
+                        enabled: RoomState.can-undo;
+                        width: 32px;
+                        height: 32px;
+                        clicked => { RoomState.undo(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Button {
+                        icon: "redo";
+                        label: Tr.t("redo");
+                        tip: Tr.t("redo") + (Tr.mac ? " (⇧⌘Z)" : " (Ctrl+Y)");
+                        enabled: RoomState.can-redo;
+                        width: 32px;
+                        height: 32px;
+                        clicked => { RoomState.redo(); }
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: S.s5;
+            vertical-stretch: 1;
+            min-height: 440px;
+            VerticalLayout {
+                spacing: S.s3;
+                horizontal-stretch: 1;
+                // The first-run guide: a lamp dot (it waits on you), the
+                // words and one button.
+                if RoomState.coach: Card {
+                    HorizontalLayout {
+                        padding-top: S.s2;
+                        padding-bottom: S.s2;
+                        padding-left: S.s4;
+                        padding-right: S.s2;
+                        spacing: S.s4;
+                        VerticalLayout {
+                            alignment: center;
+                            LampDot { }
+                        }
+                        Text {
+                            text: Tr.t("coach");
+                            font-size: S.t-md;
+                            color: Theme.text;
+                            wrap: word-wrap;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Button {
+                                kind: ButtonKind.primary;
+                                text: Tr.t("coach_done");
+                                clicked => { RoomState.coach-done(); }
+                            }
+                        }
+                    }
+                }
+                Plan { vertical-stretch: 1; }
+            }
+            side := Rectangle {
+                width: 296px;
+                clip: true;
+                flick := Flickable {
+                    content-height: max(self.height, column.preferred-height);
+                    column := Side {
+                        width: flick.width;
+                    }
+                }
+                // The edges where more is hidden fade out; no bar.
+                if flick.content-y < 0: Rectangle {
+                    y: 0;
+                    height: 24px;
+                    background: @linear-gradient(180deg, Theme.bg 0%, Theme.bg.with-alpha(0) 100%);
+                }
+                if flick.content-y + flick.content-height > flick.height + 1px: Rectangle {
+                    y: parent.height - self.height;
+                    height: 24px;
+                    background: @linear-gradient(0deg, Theme.bg 0%, Theme.bg.with-alpha(0) 100%);
+                }
+            }
+        }
+    }
+
+    // Where a light moved with the arrows went, read out by screen readers.
+    Text {
+        x: 0;
+        y: 0;
+        width: 1px;
+        height: 1px;
+        text: RoomState.announcement;
+        color: transparent;
+        accessible-role: AccessibleRole.text;
+        accessible-label: RoomState.announcement;
+        accessible-live-region: polite;
+    }
 }

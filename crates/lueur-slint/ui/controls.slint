@@ -720,6 +720,8 @@ export component TextField inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> invalid;
     in property <InputType> input-type: InputType.text;
+    // Whether the field holds the keyboard: what it says is the user's then.
+    out property <bool> has-focus: input.has-focus;
     callback edited(string);
     callback accepted(string);
     callback cancelled();

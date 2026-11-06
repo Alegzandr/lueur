@@ -1,0 +1,907 @@
+// The column beside the plan: the list of what the room holds, the
+// inspector of what is selected, its exact position, and the zone badges.
+//
+// With nothing selected it lists what the room holds, in the order it is
+// set up: the lights first, each saying which part of the picture it
+// mirrors, so the letters on the plan read without a legend; then the
+// screen; then the walls, their paint and, folded away, their corners.
+// Once something is picked it shows that thing: what is set by hand first,
+// in one card; the exact position, which the plan already gives by
+// dragging, folded under it.
+
+import { Theme, S, Motion } from "../../theme.slint";
+import { Tr } from "../../tr.slint";
+import { Icon, Pressable, FocusRing, Card, Section, Badge, Switch, Slider, Button, ButtonKind, TextField, LampDot } from "../../controls.slint";
+import { RoomState, ListRow } from "state.slint";
+
+// The mark of a screen zone: its colour with its letter on it, so the zone
+// reads without telling colours apart. A light left out of effects is
+// grey, the letter still there.
+export component ZoneBadge inherits Rectangle {
+    in property <string> letter;
+    in property <color> tint;
+    in property <color> ink;
+    in property <length> diameter: 18px;
+    width: diameter;
+    height: diameter;
+    border-radius: diameter / 2;
+    background: tint;
+    accessible-role: none;
+    Text {
+        text: root.letter;
+        color: root.ink;
+        font-size: root.diameter * 0.6;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// The hairline between rows, from their text, not the card's edge.
+component Rule inherits Rectangle {
+    in property <length> inset: 40px;
+    height: 1px;
+    Rectangle {
+        x: root.inset;
+        width: parent.width - root.inset - 8px;
+        background: Theme.separator;
+    }
+}
+
+// The small square that holds a row's mark.
+component Mark inherits Rectangle {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: Theme.surface-2;
+    border-width: 1px;
+    border-color: Theme.separator;
+    @children
+}
+
+// A row of a list card: pressed, it opens what it names.
+component Item inherits Rectangle {
+    in property <string> label;
+    in property <string> key;
+    in property <length> left-pad: 6px;
+    callback clicked;
+    min-height: 44px;
+    border-radius: S.r-lg - 3px;
+    background: p.hovered ? Theme.surface-hover : transparent;
+    forward-focus: p;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => { clicked(); }
+    property <int> seq: RoomState.focus-row-seq;
+    changed seq => {
+        if (RoomState.focus-row == root.key && root.key != "") { p.focus(); }
+    }
+    p := Pressable {
+        clicked => { root.clicked(); }
+        HorizontalLayout {
+            padding-left: root.left-pad;
+            padding-right: 8px;
+            padding-top: 5px;
+            padding-bottom: 5px;
+            spacing: 10px;
+            @children
+        }
+    }
+    FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: root.border-radius; }
+}
+
+component Chevron inherits VerticalLayout {
+    in property <angle> turn;
+    alignment: center;
+    Icon {
+        name: "chevron";
+        size: 12px;
+        color: Theme.text-3;
+        transform-rotation: root.turn;
+    }
+}
+
+// The name and the line under it.
+component TwoLines inherits VerticalLayout {
+    in property <string> name;
+    in property <string> meta;
+    in property <color> name-color: Theme.text;
+    alignment: center;
+    spacing: 1px;
+    horizontal-stretch: 1;
+    Text {
+        text: root.name;
+        color: root.name-color;
+        font-weight: 500;
+        font-size: S.t-md;
+        overflow: elide;
+        accessible-role: none;
+    }
+    Text {
+        text: root.meta;
+        color: Theme.text-3;
+        font-size: S.t-sm;
+        overflow: elide;
+        accessible-role: none;
+    }
+}
+
+// A group's small title over its card, with a count.
+component GroupTitle inherits HorizontalLayout {
+    in property <string> text;
+    in property <int> count: -1;
+    spacing: 6px;
+    padding-left: S.s1;
+    padding-bottom: S.s2;
+    height: 24px + S.s2;
+    alignment: start;
+    Section { text: root.text; vertical-alignment: center; }
+    if root.count > 0: VerticalLayout {
+        alignment: center;
+        Badge { text: root.count; }
+    }
+}
+
+component Hint inherits Text {
+    font-size: S.t-xs;
+    color: Theme.text-3;
+    wrap: word-wrap;
+}
+
+component FieldHead inherits Text {
+    font-size: S.t-sm;
+    font-weight: 500;
+    color: Theme.text-2;
+}
+
+// The paints are a radio group: Tab lands on it, the arrows move the
+// choice (the page is told -2 for the next paint, -3 for the one before).
+component Paints inherits Rectangle {
+    height: 30px;
+    forward-focus: p;
+    accessible-role: radio-group;
+    accessible-label: Tr.t("walls");
+    p := Pressable {
+        focus-on-click: false;
+        key-pressed(event) => {
+            if (event.text == Key.RightArrow || event.text == Key.DownArrow) { RoomState.paint(-2); return accept; }
+            if (event.text == Key.LeftArrow || event.text == Key.UpArrow) { RoomState.paint(-3); return accept; }
+            if (event.text == Key.Home) { RoomState.paint(0); return accept; }
+            if (event.text == Key.End) { RoomState.paint(5); return accept; }
+            reject
+        }
+        HorizontalLayout {
+            alignment: space-between;
+            for paint[i] in RoomState.paints: Rectangle {
+                width: 30px;
+                height: 30px;
+                border-radius: 15px;
+                border-width: paint.picked ? 2px : 0px;
+                border-color: Theme.select;
+                accessible-role: radio-button;
+                accessible-label: paint.label;
+                accessible-checkable: true;
+                accessible-checked: paint.picked;
+                accessible-action-default => { if (i < 6) { RoomState.paint(i); } }
+                Rectangle {
+                    width: paint.picked ? 21px : 24px;
+                    height: self.width;
+                    border-radius: self.width / 2;
+                    background: paint.color;
+                    border-width: 1px;
+                    border-color: #00000029;
+                }
+                TouchArea {
+                    mouse-cursor: i < 6 ? pointer : default;
+                    clicked => { if (i < 6) { RoomState.paint(i); } }
+                }
+            }
+        }
+    }
+    FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: S.r-md; }
+}
+
+// A quiet, small button with an icon.
+component PlainButton inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <color> ink: Theme.text-2;
+    callback clicked;
+    height: 28px;
+    border-radius: S.r-md;
+    background: p.hovered ? Theme.surface-hover : transparent;
+    forward-focus: p;
+    accessible-role: button;
+    accessible-label: text;
+    accessible-action-default => { clicked(); }
+    p := Pressable {
+        clicked => { root.clicked(); }
+        HorizontalLayout {
+            padding-left: S.s2;
+            padding-right: S.s2;
+            spacing: 6px;
+            Icon {
+                y: (parent.height - self.height) / 2;
+                name: root.icon;
+                size: 13px;
+                color: root.ink;
+            }
+            Text {
+                text: root.text;
+                font-size: S.t-sm;
+                font-weight: 500;
+                color: root.ink;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+        }
+    }
+    FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: S.r-md; }
+}
+
+component ObjectList inherits VerticalLayout {
+    GroupTitle {
+        text: Tr.t("lights");
+        count: RoomState.lights.length;
+    }
+    Card {
+        VerticalLayout {
+            padding: 3px;
+            for row[i] in RoomState.lights: VerticalLayout {
+                if i > 0: Rule { }
+                Item {
+                    key: row.key;
+                    label: row.label;
+                    clicked => { RoomState.pick(row.key); }
+                    VerticalLayout {
+                        alignment: center;
+                        Mark {
+                            ZoneBadge { letter: row.letter; tint: row.color; ink: row.ink; }
+                        }
+                    }
+                    TwoLines {
+                        name: row.name;
+                        meta: row.meta;
+                        name-color: row.off ? Theme.text-2 : Theme.text;
+                    }
+                    if row.no-bulb: HorizontalLayout {
+                        spacing: 6px;
+                        horizontal-stretch: 0;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 6px;
+                                height: 6px;
+                                border-radius: 3px;
+                                background: Theme.glow;
+                            }
+                        }
+                        Text {
+                            text: Tr.t("no_bulb");
+                            font-size: S.t-xs;
+                            font-weight: 600;
+                            color: Theme.glow-text;
+                            vertical-alignment: center;
+                        }
+                    }
+                    Chevron { }
+                }
+            }
+            if RoomState.lights.length == 0: Text {
+                text: Tr.t("no_lights");
+                font-size: S.t-sm;
+                color: Theme.text-3;
+                wrap: word-wrap;
+                x: 42px;
+                width: parent.width - 42px - S.s3;
+                height: self.preferred-height + S.s3 + S.s2;
+                vertical-alignment: center;
+            }
+            Rule { }
+            Item {
+                min-height: 38px;
+                label: Tr.t("add_light");
+                clicked => { RoomState.add-light(); }
+                Rectangle {
+                    width: 26px;
+                    Icon {
+                        name: "plus";
+                        size: 14px;
+                        color: Theme.text-2;
+                    }
+                }
+                Text {
+                    text: Tr.t("add_light");
+                    color: Theme.text-2;
+                    font-size: S.t-md;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    accessible-role: none;
+                }
+            }
+        }
+    }
+    Rectangle { height: S.s5; }
+    GroupTitle { text: Tr.t("plan_screen"); }
+    Card {
+        VerticalLayout {
+            padding: 3px;
+            Item {
+                key: "screen";
+                label: Tr.t("plan_screen") + ", " + RoomState.screen-meta;
+                clicked => { RoomState.pick("screen"); }
+                VerticalLayout {
+                    alignment: center;
+                    Mark {
+                        Icon {
+                            name: "screen";
+                            size: 16px;
+                            color: Theme.text-2;
+                        }
+                    }
+                }
+                TwoLines {
+                    name: Tr.t("plan_screen");
+                    meta: RoomState.screen-meta;
+                }
+                Chevron { }
+            }
+        }
+    }
+    Rectangle { height: S.s5; }
+    GroupTitle { text: Tr.t("walls_title"); }
+    Card {
+        VerticalLayout {
+            padding: S.s3;
+            spacing: S.s3;
+            Paints { }
+            Hint { text: Tr.t("walls_tip"); }
+        }
+        Rule { inset: 8px; }
+        VerticalLayout {
+            padding: 3px;
+            Item {
+                label: Tr.t("corners");
+                key: "corners";
+                accessible-expandable: true;
+                accessible-expanded: RoomState.corners-open;
+                clicked => { RoomState.toggle-corners(); }
+                Rectangle {
+                    width: 26px;
+                    Rectangle {
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 2px;
+                        background: RoomState.floor;
+                        border-width: 1px;
+                        border-color: RoomState.wall;
+                    }
+                }
+                Text {
+                    text: Tr.t("corners");
+                    font-weight: 500;
+                    font-size: S.t-md;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    accessible-role: none;
+                }
+                Text {
+                    text: RoomState.corner-rows.length > 0 ? RoomState.corner-rows.length : RoomState.corners.length;
+                    font-size: S.t-sm;
+                    color: Theme.text-3;
+                    vertical-alignment: center;
+                    accessible-role: none;
+                }
+                Chevron { turn: RoomState.corners-open ? -90deg : 90deg; }
+            }
+            if RoomState.corners-open: VerticalLayout {
+                for row[i] in RoomState.corner-rows: VerticalLayout {
+                    if i > 0: Rule { inset: 42px; }
+                    Item {
+                        min-height: 34px;
+                        left-pad: 42px;
+                        key: row.key;
+                        label: row.name;
+                        clicked => { RoomState.pick(row.key); }
+                        Text {
+                            text: row.name;
+                            font-size: S.t-md;
+                            color: Theme.text;
+                            overflow: elide;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            accessible-role: none;
+                        }
+                        Text {
+                            text: row.meta;
+                            font-size: S.t-sm;
+                            color: Theme.text-3;
+                            vertical-alignment: center;
+                            accessible-role: none;
+                        }
+                    }
+                }
+                Rule { inset: 42px; }
+                HorizontalLayout {
+                    padding-left: 34px;
+                    padding-right: 4px;
+                    padding-top: 6px;
+                    padding-bottom: 4px;
+                    spacing: 2px;
+                    alignment: start;
+                    PlainButton {
+                        icon: "plus";
+                        text: Tr.t("add_corner");
+                        clicked => { RoomState.add-corner(); }
+                    }
+                    PlainButton {
+                        icon: "reset";
+                        text: Tr.t("reset_shape");
+                        clicked => { RoomState.reset-shape(); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The keyboard's way to place things: X and Y fields, kept in the plan's
+// bounds.
+component Position inherits VerticalLayout {
+    in property <bool> legend;
+    spacing: S.s2;
+    if root.legend: FieldHead { text: Tr.t("position"); }
+    HorizontalLayout {
+        spacing: S.s2;
+        HorizontalLayout {
+            spacing: 6px;
+            Text {
+                text: "X";
+                font-size: S.t-sm;
+                font-weight: 600;
+                color: Theme.text-2;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+            x-field := TextField {
+                text <=> RoomState.x-text;
+                label: Tr.t("pos_x");
+                input-type: InputType.decimal;
+                edited(t) => { RoomState.pos-edited(0, t); }
+                accepted => { RoomState.pos-done(0); }
+                cancelled => { RoomState.escape(); }
+                changed has-focus => {
+                    RoomState.x-focused = self.has-focus;
+                    if (!self.has-focus) { RoomState.pos-done(0); }
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text {
+                text: "Y";
+                font-size: S.t-sm;
+                font-weight: 600;
+                color: Theme.text-2;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+            y-field := TextField {
+                text <=> RoomState.y-text;
+                label: Tr.t("pos_y");
+                input-type: InputType.decimal;
+                edited(t) => { RoomState.pos-edited(1, t); }
+                accepted => { RoomState.pos-done(1); }
+                cancelled => { RoomState.escape(); }
+                changed has-focus => {
+                    RoomState.y-focused = self.has-focus;
+                    if (!self.has-focus) { RoomState.pos-done(1); }
+                }
+            }
+        }
+    }
+    Hint { text: RoomState.pos-tip; }
+}
+
+// The exact position, folded under its card: the plan is the way to place
+// things, the numbers are there for the keyboard and fine work.
+component Exact inherits VerticalLayout {
+    Rectangle { height: 1px; background: Theme.separator; }
+    Rectangle {
+        min-height: 40px;
+        forward-focus: p;
+        accessible-role: button;
+        accessible-label: Tr.t("exact_position");
+        accessible-expandable: true;
+        accessible-expanded: RoomState.exact-open;
+        accessible-action-default => { RoomState.toggle-exact(); }
+        p := Pressable {
+            clicked => { RoomState.toggle-exact(); }
+            HorizontalLayout {
+                spacing: S.s2;
+                Text {
+                    text: Tr.t("exact_position");
+                    font-size: S.t-sm;
+                    font-weight: 500;
+                    color: p.hovered ? Theme.text : Theme.text-2;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    accessible-role: none;
+                }
+                if !RoomState.exact-open: Text {
+                    text: RoomState.exact-summary;
+                    font-size: S.t-sm;
+                    color: Theme.text-3;
+                    vertical-alignment: center;
+                    accessible-role: none;
+                }
+                Chevron { turn: RoomState.exact-open ? -90deg : 90deg; }
+            }
+        }
+        FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: S.r-sm; }
+    }
+    if RoomState.exact-open: VerticalLayout {
+        padding-bottom: S.s3;
+        Position { }
+    }
+}
+
+// The screen as it sits on a desk, with the part a light mirrors.
+component Preview inherits VerticalLayout {
+    alignment: start;
+    accessible-role: image;
+    accessible-label: Tr.t("mirrors");
+    property <float> k: 1.25;
+    HorizontalLayout {
+        alignment: center;
+        Rectangle {
+            width: 168px * root.k;
+            height: 98px * root.k;
+            border-radius: 7px * root.k;
+            background: RoomState.bezel;
+            border-width: 1px;
+            border-color: Theme.line-strong;
+            drop-shadow-blur: 6px;
+            drop-shadow-offset-y: 2px;
+            drop-shadow-color: Theme.shadow;
+            Rectangle {
+                x: 4px * root.k - 1px;
+                y: 4px * root.k - 1px;
+                width: 160px * root.k;
+                height: 90px * root.k;
+                border-radius: 4px * root.k;
+                background: Theme.surface-2;
+            }
+            Rectangle {
+                x: RoomState.zone-x - 1px;
+                y: RoomState.zone-y - 1px;
+                width: RoomState.zone-w;
+                height: RoomState.zone-h;
+                border-radius: 3px * root.k;
+                background: RoomState.zone-color.with-alpha(RoomState.zone-fill);
+                border-width: 1px;
+                border-color: RoomState.zone-color;
+            }
+        }
+    }
+    HorizontalLayout {
+        alignment: center;
+        Rectangle { width: 28px * root.k; height: 5px * root.k; background: RoomState.bezel; }
+    }
+    HorizontalLayout {
+        alignment: center;
+        Rectangle { width: 52px * root.k; height: 3px * root.k; border-radius: 1.5px * root.k; background: RoomState.bezel; }
+    }
+}
+
+// The name of the screen or a corner, where the focus lands on a pick.
+component Heading2 inherits FocusScope {
+    in property <string> text;
+    focus-on-click: false;
+    height: t.preferred-height + S.s4;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+    t := Text {
+        x: S.s2;
+        y: 0;
+        text: root.text;
+        font-size: S.t-lg;
+        font-weight: 700;
+        color: Theme.text;
+        accessible-role: none;
+    }
+}
+
+component LightInspector inherits VerticalLayout {
+    spacing: 0;
+    property <int> ask: RoomState.focus-inspector;
+    changed ask => { name.focus-field(); }
+    name := TextField {
+        text <=> RoomState.name-text;
+        label: Tr.t("light_name");
+        edited(t) => { RoomState.name-edited(t); }
+        accepted => { RoomState.name-done(); }
+        cancelled => { RoomState.escape(); }
+        changed has-focus => {
+            RoomState.name-focused = self.has-focus;
+            if (!self.has-focus) { RoomState.name-done(); }
+        }
+    }
+    Rectangle { height: S.s3; }
+    Preview { }
+    HorizontalLayout {
+        padding-top: S.s3;
+        padding-bottom: S.s4;
+        spacing: 6px;
+        alignment: center;
+        accessible-role: text;
+        accessible-label: RoomState.says-label;
+        VerticalLayout {
+            alignment: center;
+            ZoneBadge {
+                diameter: 15px;
+                letter: RoomState.zone-letter;
+                tint: RoomState.zone-color;
+                ink: RoomState.light-off ? Theme.text : RoomState.zone-ink;
+            }
+        }
+        Text {
+            text: RoomState.says;
+            font-size: S.t-sm;
+            font-weight: 500;
+            color: Theme.text-2;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+    }
+    Card {
+        VerticalLayout {
+            padding-left: S.s3;
+            padding-right: S.s3;
+            VerticalLayout {
+                padding-top: S.s3;
+                padding-bottom: S.s3;
+                spacing: 4px;
+                FieldHead { text: Tr.t("height"); }
+                Slider {
+                    label: Tr.t("height");
+                    value: RoomState.height;
+                    minimum: 0;
+                    maximum: 1;
+                    step: 0.01;
+                    default-value: 0.5;
+                    value-text: RoomState.height-text;
+                    reset-label: RoomState.height-reset;
+                    low-end: Tr.t("h_floor");
+                    high-end: Tr.t("h_ceiling");
+                    value-width: 64px;
+                    min-width: 0;
+                    changed(v) => { RoomState.set-height(v); }
+                }
+            }
+            Rectangle { height: 1px; background: Theme.separator; }
+            HorizontalLayout {
+                min-height: 44px;
+                spacing: S.s3;
+                Text {
+                    text: Tr.t("follows");
+                    font-size: S.t-md;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Switch {
+                        on: RoomState.follows;
+                        label: Tr.t("follows");
+                        toggled => { RoomState.toggle-follows(); }
+                    }
+                }
+            }
+            // What the distance to the screen does, said once, under its
+            // numbers.
+            if RoomState.follows: VerticalLayout {
+                Rectangle { height: 1px; background: Theme.separator; }
+                VerticalLayout {
+                    padding-top: S.s3;
+                    padding-bottom: S.s3;
+                    spacing: S.s2;
+                    HorizontalLayout {
+                        spacing: S.s3;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            Text { text: Tr.t("fact_brightness"); font-size: S.t-sm; color: Theme.text-3; }
+                            Text { text: RoomState.gain-text; font-size: S.t-lg; font-weight: 600; color: Theme.text; }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            Text { text: Tr.t("fact_response"); font-size: S.t-sm; color: Theme.text-3; }
+                            Text { text: RoomState.response-text; font-size: S.t-lg; font-weight: 600; color: Theme.text; }
+                        }
+                    }
+                    Hint { text: Tr.t("facts_tip"); }
+                }
+            }
+            Exact { }
+        }
+    }
+    Rectangle { height: S.s3; }
+    // The bulb by name, never by its address.
+    Card {
+        HorizontalLayout {
+            min-height: 48px;
+            padding-left: S.s3;
+            padding-right: S.s2;
+            spacing: S.s2;
+            if RoomState.bulb != "": Icon {
+                y: (parent.height - self.height) / 2;
+                name: "bulb";
+                size: 15px;
+                color: Theme.text-3;
+            }
+            if RoomState.bulb == "": Rectangle {
+                width: 15px;
+                LampDot { }
+            }
+            Text {
+                text: RoomState.bulb != "" ? RoomState.bulb : Tr.t("no_bulb");
+                font-size: S.t-sm;
+                font-weight: 500;
+                color: RoomState.bulb != "" ? Theme.text : Theme.glow-text;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            VerticalLayout {
+                alignment: center;
+                if RoomState.bulb != "": Button {
+                    text: Tr.t("identify");
+                    tip: Tr.t("identify_tip");
+                    clicked => { RoomState.identify(); }
+                }
+                if RoomState.bulb == "": Button {
+                    text: Tr.t("assign");
+                    clicked => { RoomState.assign(); }
+                }
+            }
+        }
+    }
+    Rectangle { height: S.s4; }
+    HorizontalLayout {
+        alignment: start;
+        PlainButton {
+            icon: "trash";
+            text: Tr.t("remove_light");
+            ink: Theme.danger;
+            clicked => { RoomState.remove-light(); }
+        }
+    }
+}
+
+component ScreenInspector inherits VerticalLayout {
+    property <int> ask: RoomState.focus-inspector;
+    changed ask => { head.focus(); }
+    head := Heading2 { text: Tr.t("plan_screen"); }
+    Card {
+        VerticalLayout {
+            padding-left: S.s3;
+            padding-right: S.s3;
+            VerticalLayout {
+                padding-top: S.s3;
+                padding-bottom: S.s3;
+                spacing: 4px;
+                FieldHead { text: Tr.t("facing"); }
+                Slider {
+                    label: Tr.t("facing");
+                    value: RoomState.facing;
+                    minimum: -180;
+                    maximum: 180;
+                    step: 1;
+                    default-value: 0;
+                    value-text: RoomState.facing-text;
+                    reset-label: RoomState.facing-reset;
+                    min-width: 0;
+                    changed(v) => { RoomState.set-facing(v); }
+                }
+            }
+            Rectangle { height: 1px; background: Theme.separator; }
+            VerticalLayout {
+                padding-top: S.s3;
+                padding-bottom: S.s3;
+                spacing: 4px;
+                FieldHead { text: Tr.t("width"); }
+                Slider {
+                    label: Tr.t("width");
+                    value: RoomState.screen-width;
+                    minimum: RoomState.width-min;
+                    maximum: RoomState.width-max;
+                    step: 5;
+                    default-value: 300;
+                    value-text: RoomState.width-text;
+                    reset-label: RoomState.width-reset;
+                    min-width: 0;
+                    changed(v) => { RoomState.set-width(v); }
+                }
+            }
+            Exact { }
+        }
+    }
+    VerticalLayout {
+        padding-left: S.s1;
+        padding-right: S.s1;
+        padding-top: S.s3;
+        Hint { text: Tr.t("screen_hint"); }
+    }
+}
+
+component CornerInspector inherits VerticalLayout {
+    property <int> ask: RoomState.focus-inspector;
+    changed ask => { head.focus(); }
+    head := Heading2 { text: RoomState.heading; }
+    Card {
+        VerticalLayout {
+            padding: S.s3;
+            Position { legend: true; }
+        }
+    }
+    Rectangle { height: S.s4; }
+    HorizontalLayout {
+        alignment: start;
+        PlainButton {
+            icon: "trash";
+            text: Tr.t("remove_corner");
+            ink: Theme.danger;
+            clicked => { RoomState.remove-corner(); }
+        }
+    }
+}
+
+export component Side inherits VerticalLayout {
+    alignment: start;
+    if RoomState.mode == 0: ObjectList { }
+    if RoomState.mode != 0: VerticalLayout {
+        alignment: start;
+        HorizontalLayout {
+            alignment: start;
+            padding-bottom: S.s2;
+            Rectangle {
+                border-radius: S.r-sm;
+                background: back.hovered ? Theme.surface-hover : transparent;
+                forward-focus: back;
+                accessible-role: button;
+                accessible-label: Tr.t("nav_room");
+                accessible-action-default => { RoomState.back(); }
+                back := Pressable {
+                    clicked => { RoomState.back(); }
+                    HorizontalLayout {
+                        padding-top: 3px;
+                        padding-bottom: 3px;
+                        padding-left: 3px;
+                        padding-right: 8px;
+                        spacing: 2px;
+                        Icon {
+                            y: (parent.height - self.height) / 2;
+                            name: "back";
+                            size: 13px;
+                            color: back.hovered ? Theme.text : Theme.text-2;
+                        }
+                        Text {
+                            text: Tr.t("nav_room");
+                            font-size: S.t-sm;
+                            font-weight: 500;
+                            color: back.hovered ? Theme.text : Theme.text-2;
+                            vertical-alignment: center;
+                            accessible-role: none;
+                        }
+                    }
+                }
+                FocusRing { w: parent.width; h: parent.height; shown: back.keyboard; radius: S.r-sm; }
+            }
+        }
+        if RoomState.mode == 1: LightInspector { }
+        if RoomState.mode == 2: ScreenInspector { }
+        if RoomState.mode == 3: CornerInspector { }
+    }
+}

@@ -34,6 +34,9 @@ pub fn bind(ui: &AppWindow) {
 /// Bring the page shown up to date, and what is drawn behind every page.
 pub fn project(l: &Lueur, ui: &AppWindow) {
     lighting::project_backdrop(l, ui);
+    if l.view != View::Room {
+        room::hidden(l);
+    }
     match l.view {
         View::Lighting => lighting::project(l, ui),
         View::Room => room::project(l, ui),

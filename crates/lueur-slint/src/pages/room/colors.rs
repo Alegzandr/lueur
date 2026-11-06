@@ -1,35 +1,35 @@
 //! The plan's own colours (the zones, the plan's well, grid, floor and
 //! walls, the pins' shadow, the bezel), for both themes. They live here rather than
 //! in `theme.rs` because only the Room page uses them; the values are the
-//! stylesheet's, and must follow it while both interfaces exist.
+//! stylesheet's of the Tauri versions.
 
-use crate::theme::{Theme, oklch};
-use gpui::Hsla;
+use crate::theme::oklch;
 use lueur_core::geometry::ScreenEdge;
+use slint::Color;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PlanColors {
     /// Blue, teal and orange: which part of the screen a light mirrors.
     /// They differ in lightness as well as hue, so they stay apart for
     /// colour-blind eyes, and each zone also carries a letter.
-    pub zone_left: Hsla,
-    pub zone_center: Hsla,
-    pub zone_right: Hsla,
+    pub zone_left: Color,
+    pub zone_center: Color,
+    pub zone_right: Color,
     /// The letter on a zone's colour.
-    pub zone_ink: Hsla,
+    pub zone_ink: Color,
     /// The well the plan sits in, its dotted grid, the floor and the walls.
-    pub bg: Hsla,
-    pub grid: Hsla,
-    pub floor: Hsla,
-    pub wall: Hsla,
-    pub pin_shadow: Hsla,
+    pub bg: Color,
+    pub grid: Color,
+    pub floor: Color,
+    pub wall: Color,
+    pub pin_shadow: Color,
     /// The screen's frame in a light's preview.
-    pub bezel: Hsla,
+    pub bezel: Color,
 }
 
 impl PlanColors {
-    pub fn of(theme: &Theme) -> Self {
-        if theme.dark {
+    pub fn of(dark: bool) -> Self {
+        if dark {
             PlanColors {
                 zone_left: oklch(0.64, 0.13, 252.0, 1.0),
                 zone_center: oklch(0.74, 0.12, 175.0, 1.0),
@@ -58,11 +58,31 @@ impl PlanColors {
         }
     }
 
-    pub fn zone(&self, edge: ScreenEdge) -> Hsla {
+    pub fn zone(&self, edge: ScreenEdge) -> Color {
         match edge {
             ScreenEdge::Left => self.zone_left,
             ScreenEdge::Center => self.zone_center,
             ScreenEdge::Right => self.zone_right,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Both themes keep the three zones apart in lightness, not only hue.
+    #[test]
+    fn the_zones_differ_in_lightness_in_both_themes() {
+        for dark in [false, true] {
+            let c = PlanColors::of(dark);
+            let luma = |c: Color| {
+                0.2126 * f32::from(c.red())
+                    + 0.7152 * f32::from(c.green())
+                    + 0.0722 * f32::from(c.blue())
+            };
+            let (l, m, r) = (luma(c.zone_left), luma(c.zone_center), luma(c.zone_right));
+            assert!(l < m && m < r, "{dark}: {l} {m} {r}");
         }
     }
 }

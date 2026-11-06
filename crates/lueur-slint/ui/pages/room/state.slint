@@ -1,0 +1,204 @@
+// What the Room page shows, worked out in Rust (src/pages/room): the plan
+// already in the stage's pixels, the list of what the room holds, and the
+// inspector of what is selected.
+
+// A light on the plan.
+export struct Pin {
+    id: string,
+    name: string,
+    // What a screen reader hears: the name and the zone, never an address.
+    label: string,
+    letter: string,
+    x: length,
+    y: length,
+    color: color,
+    ink: color,
+    name-color: color,
+    selected: bool,
+    hovered: bool,
+    // Where its name sits: below the pin, or above it.
+    name-dy: length,
+}
+
+// The light a lamp casts on the floor, in its zone's colour.
+export struct Pool {
+    x: length,
+    y: length,
+    r: length,
+    color: color,
+    opacity: float,
+}
+
+// A dashed line, as path commands in the stage's pixels.
+export struct Dash {
+    commands: string,
+    color: color,
+}
+
+export struct Corner {
+    x: length,
+    y: length,
+    selected: bool,
+    hovered: bool,
+}
+
+// A row of the list.
+export struct ListRow {
+    key: string,
+    name: string,
+    meta: string,
+    label: string,
+    letter: string,
+    color: color,
+    ink: color,
+    off: bool,
+    // A light with no bulb yet, which waits on you.
+    no-bulb: bool,
+}
+
+export struct Paint {
+    color: color,
+    label: string,
+    picked: bool,
+}
+
+export global RoomState {
+    // The stage, measured by the page.
+    in-out property <length> stage-width;
+    in-out property <length> stage-height;
+    callback resized();
+
+    // The plan's colours, for the theme in use.
+    in property <color> plan-bg;
+    in property <color> grid;
+    in property <color> floor;
+    in property <color> wall;
+    in property <color> pin-shadow;
+    in property <color> bezel;
+    in property <color> zone-ink;
+
+    // The plan, drawn.
+    in property <string> grid-commands;
+    in property <string> shadow-commands;
+    in property <string> floor-commands;
+    in property <string> cone-commands;
+    in property <string> walls-commands;
+    in property <string> seat-line-commands;
+    in property <string> screen-commands;
+    in property <[Pool]> pools;
+    in property <[Dash]> dashes;
+    in property <[Corner]> corners;
+    in property <[Pin]> pins;
+    in property <length> seat-x;
+    in property <length> seat-y;
+    in property <bool> seat-hovered;
+    in property <length> screen-label-x;
+    in property <length> screen-label-y;
+    in property <length> screen-left-x;
+    in property <length> screen-left-y;
+    in property <length> screen-right-x;
+    in property <length> screen-right-y;
+    in property <bool> screen-selected;
+    // 0 arrow, 1 open hand, 2 closed hand, 3 left-right, 4 crosshair.
+    in property <int> cursor;
+
+    // The header and the first-run guide.
+    in property <bool> can-undo;
+    in property <bool> can-redo;
+    in property <bool> coach;
+
+    // 0 the list, 1 a light, 2 the screen, 3 a corner.
+    in property <int> mode;
+
+    // The list.
+    in property <[ListRow]> lights;
+    in property <string> screen-meta;
+    in property <[Paint]> paints;
+    in property <bool> corners-open;
+    in property <[ListRow]> corner-rows;
+
+    // The inspector.
+    in property <string> heading;
+    in-out property <string> name-text;
+    in-out property <string> x-text;
+    in-out property <string> y-text;
+    in-out property <bool> name-focused;
+    in-out property <bool> x-focused;
+    in-out property <bool> y-focused;
+    in property <bool> exact-open;
+    in property <string> exact-summary;
+    in property <string> pos-tip;
+    // The part of the screen the light mirrors, in the preview's pixels.
+    in property <length> zone-x;
+    in property <length> zone-y;
+    in property <length> zone-w;
+    in property <length> zone-h;
+    in property <color> zone-color;
+    in property <float> zone-fill;
+    in property <string> zone-letter;
+    in property <bool> light-off;
+    in property <string> says;
+    in property <string> says-label;
+    in property <float> height;
+    in property <string> height-text;
+    in property <string> height-reset;
+    in property <bool> follows;
+    in property <string> gain-text;
+    in property <string> response-text;
+    // The bulb by its name and brand, empty when there is none.
+    in property <string> bulb;
+    in property <float> facing;
+    in property <string> facing-text;
+    in property <string> facing-reset;
+    in property <float> screen-width;
+    in property <string> width-text;
+    in property <string> width-reset;
+    in property <float> width-min;
+    in property <float> width-max;
+
+    // Where a move made with the arrows went, for screen readers.
+    in property <string> announcement;
+    // Asks for the focus: the inspector's first control, or a row of the
+    // list by its key. Each ask counts up.
+    in property <int> focus-inspector;
+    in property <int> focus-row-seq;
+    in property <string> focus-row;
+
+    // The plan's pointer, in the stage's pixels.
+    callback press(length, length);
+    callback double(length, length);
+    callback drag(length, length, bool);
+    callback hover(length, length);
+    callback release();
+    callback leave();
+    // A key the page did not use; true when the plan took it.
+    callback key(string, bool, bool, bool) -> bool;
+    callback pin-picked(string);
+    callback pin-focused(string);
+
+    callback undo();
+    callback redo();
+    callback coach-done();
+    callback pick(string);
+    callback back();
+    callback add-light();
+    callback toggle-corners();
+    callback add-corner();
+    callback reset-shape();
+    callback paint(int);
+    callback toggle-exact();
+    callback set-height(float);
+    callback toggle-follows();
+    callback identify();
+    callback assign();
+    callback remove-light();
+    callback remove-corner();
+    callback set-facing(float);
+    callback set-width(float);
+    callback name-edited(string);
+    callback name-done();
+    // 0 for X, 1 for Y.
+    callback pos-edited(int, string);
+    callback pos-done(int);
+    callback escape();
+}
