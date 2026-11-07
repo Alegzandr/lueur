@@ -44,7 +44,7 @@ uuid = { version = "1.29.0", features = ["v4"] }
 # The tray: the crate Tauri's own tray uses, without Tauri. On Linux it needs
 # a GTK loop of its own, which this shell does not run yet.
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
-tray-icon = "0.25"
+tray-icon = "0.26"
 
 # One instance at a time, recognised by the Tauri version too (src/single.rs),
 # and the Windows version for the caption glyphs (src/titlebar.rs).
@@ -63,4 +63,4 @@ windows = { version = "0.62", features = [
 gpui_platform = { workspace = true, features = ["wayland", "x11"] }
 # One instance at a time over the session bus, as the Tauri plugin does it
 # (src/single.rs). The version lueur-shell already uses.
-zbus = "5.17"
+zbus = "6.2"
