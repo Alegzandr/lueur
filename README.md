@@ -297,13 +297,17 @@ others in coarser steps.
   White flashes can be turned off, and never come more than three a
   second.
 - **Several computers.** Lueur can run on every computer in the house. Each
-  one tells the others which bulbs it is playing an effect on, and leaves
-  those alone: a light one computer drives shows *On* and that computer's
-  name on the other, and waits there, picking up again as soon as the first
-  one lets go. *Take over* moves it at once. Nothing Lueur starts by itself,
-  like following a fullscreen game, ever takes a bulb from another
-  computer, and the sleep timer only puts out the lights it drives. A
-  Yeelight that another app streams to is left alone the same way.
+  one tells the others which bulbs it is using, and leaves those alone: a
+  light one computer drives shows that computer's name on the other, and
+  waits there, picking up again as soon as the first one lets go. Choosing
+  something for that light yourself (an effect, a mood, a colour, switching
+  it on or off) takes it, and so does *Take over* on its card; the other
+  computer then shows yours, with the same button to take it back. The last
+  one to choose wins, and the two never fight over a bulb. Nothing Lueur
+  starts by itself, like following a fullscreen game, ever takes a bulb from
+  another computer, and the all-lights switch and the sleep timer only reach
+  the lights this computer uses. A Yeelight that another app streams to is
+  left alone the same way until you take it.
 - **Backup.** **Settings → Configuration** exports your setup to a file and
   imports it back, to keep a copy or move to another computer. The file holds
   no password or key, so it is safe to share; on another computer, pair the

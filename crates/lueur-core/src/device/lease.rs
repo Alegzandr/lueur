@@ -8,7 +8,8 @@
 //! drives any), hears what the others drive, and leaves alone a bulb that
 //! someone else holds: its light waits, and picks up again once the other
 //! lets go. Only the user's word takes a bulb from another computer
-//! ([`Leases::take`]); nothing Lueur starts by itself ever does.
+//! ([`Leases::take`] for an effect, [`Leases::pin`] for a light set by
+//! hand); nothing Lueur starts by itself ever does.
 //!
 //! Who holds a bulb is decided the same way on every computer, from what
 //! the claims say: the highest `round` wins, then the oldest `since`, then
@@ -197,6 +198,9 @@ struct Table {
     mine: HashMap<String, Mine>,
     /// Bulbs the user took, whose next stream goes ahead whoever streams.
     forced: HashSet<String>,
+    /// Bulbs the user took to set by hand: their claim stands while nothing
+    /// drives them, until another computer takes them back.
+    pinned: HashSet<String>,
     /// No claim is made before this: the instance is still listening.
     quiet_until: Instant,
     last_tick: Instant,
@@ -215,6 +219,7 @@ impl Table {
             peers: HashMap::new(),
             mine: HashMap::new(),
             forced: HashSet::new(),
+            pinned: HashSet::new(),
             quiet_until: now + listen,
             last_tick: now,
             last_sent: None,
@@ -256,6 +261,7 @@ impl Table {
                 } else {
                     self.mine.remove(device);
                     self.forced.remove(device);
+                    self.pinned.remove(device);
                     self.dirty = true;
                     false
                 }
@@ -302,11 +308,24 @@ impl Table {
         self.dirty = true;
     }
 
+    /// Claim `device` above whoever holds it, and keep the claim while
+    /// nothing drives it: the user set the light by hand.
+    fn pin(&mut self, device: &str, now: Instant, clock: u64) {
+        self.take(device, now, clock);
+        self.pinned.insert(device.to_string());
+    }
+
     fn release(&mut self, device: &str, now: Instant) {
         if let Some(m) = self.mine.get_mut(device) {
             m.released.get_or_insert(now);
         }
         self.forced.remove(device);
+        self.pinned.remove(device);
+    }
+
+    /// Whether another instance still claims `device`, whoever wins.
+    fn contested(&self, device: &str, now: Instant) -> bool {
+        self.rival(device, now).is_some()
     }
 
     /// The computer that holds `device`, when it is not us: the name of the
@@ -360,6 +379,7 @@ impl Table {
             // Asleep: what we held may be someone else's by now.
             self.mine.clear();
             self.forced.clear();
+            self.pinned.clear();
             self.quiet_until = now + LISTEN;
             self.dirty = true;
         }
@@ -370,14 +390,34 @@ impl Table {
         if self.peers.len() != before {
             self.version += 1;
         }
+        // A light set by hand keeps its bulb until another computer takes
+        // it back.
+        let taken_back: Vec<String> = self
+            .pinned
+            .iter()
+            .filter(|d| {
+                let rival = self.rival(d, now);
+                match (self.mine.get(d.as_str()), rival) {
+                    (Some(m), Some((id, _, c))) => !outranks(&m.claim, &self.me, c, id),
+                    (None, _) => true,
+                    _ => false,
+                }
+            })
+            .cloned()
+            .collect();
+        for d in &taken_back {
+            self.pinned.remove(d);
+            self.mine.remove(d);
+        }
         let before = self.mine.len();
-        self.mine.retain(|_, m| {
+        let pinned = &self.pinned;
+        self.mine.retain(|d, m| {
             let let_go = m
                 .released
                 .is_some_and(|r| now.saturating_duration_since(r) > GRACE);
-            !let_go && now.saturating_duration_since(m.touched) <= IDLE
+            !let_go && (pinned.contains(d) || now.saturating_duration_since(m.touched) <= IDLE)
         });
-        if self.mine.len() != before {
+        if self.mine.len() != before || !taken_back.is_empty() {
             self.forced.retain(|d| self.mine.contains_key(d));
             self.dirty = true;
         }
@@ -448,6 +488,20 @@ impl Leases {
         self.lock().take(device, Instant::now(), clock());
     }
 
+    /// Take `device` from whoever holds it to set it by hand, as the user
+    /// asked: the claim stands, with nothing driving the bulb, until another
+    /// computer takes it back.
+    pub fn pin(&self, device: &str) {
+        log::info!(device = device; "taking a bulb from another computer to set it by hand");
+        self.lock().pin(device, Instant::now(), clock());
+    }
+
+    /// Whether another instance still claims `device`: after a take, until
+    /// it has heard and let go.
+    pub fn contested(&self, device: &str) -> bool {
+        self.lock().contested(device, Instant::now())
+    }
+
     /// The name of the computer that holds `device`, when it is not this
     /// one.
     pub fn holder(&self, device: &str) -> Option<String> {
@@ -476,6 +530,7 @@ impl Leases {
         if !t.mine.is_empty() {
             t.mine.clear();
             t.forced.clear();
+            t.pinned.clear();
             t.dirty = true;
         }
     }
@@ -622,6 +677,43 @@ mod tests {
         relay(&mut b, &mut a, t0);
         assert!(a.drive(LAMP, t0, 8));
         assert!(!b.drive(LAMP, t0, 8));
+    }
+
+    #[test]
+    fn a_light_set_by_hand_keeps_its_bulb_until_taken_back() {
+        let t0 = Instant::now();
+        let (mut a, mut b) = (table("a", t0), table("b", t0));
+        // a plays an effect on the lamp; b sets it by hand.
+        assert!(a.drive(LAMP, t0, 1000));
+        relay(&mut a, &mut b, t0);
+        assert!(b.contested(LAMP, t0));
+        b.pin(LAMP, t0, 2000);
+        assert_eq!(b.holder(LAMP, t0), None);
+        relay(&mut b, &mut a, t0);
+        assert!(!a.drive(LAMP, t0, 1001), "the effect waits");
+        relay(&mut a, &mut b, t0);
+        assert!(!b.contested(LAMP, t0), "a let go, and said so");
+        // Nothing drives the lamp on b, yet its claim stands, heartbeat
+        // after heartbeat, long past what an idle claim gets.
+        let later = t0 + IDLE * 3;
+        let mut now = t0;
+        while now < later {
+            now += ms(100);
+            b.tick(now);
+            a.tick(now);
+            relay(&mut b, &mut a, now);
+        }
+        assert!(b.mine.contains_key(LAMP));
+        assert!(!a.drive(LAMP, now, 1002));
+        assert_eq!(a.holder(LAMP, now).as_deref(), Some("PC-b"));
+        // a takes it back: b's hand-set claim goes, and b says so.
+        a.take(LAMP, now, 3000);
+        assert!(a.drive(LAMP, now, 3001));
+        relay(&mut a, &mut b, now);
+        b.tick(now + ms(100));
+        assert!(!b.mine.contains_key(LAMP));
+        assert!(!b.pinned.contains(LAMP));
+        assert_eq!(b.holder(LAMP, now + ms(100)).as_deref(), Some("PC-a"));
     }
 
     #[test]

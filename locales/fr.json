@@ -344,7 +344,6 @@
     "e_bulb_unreachable": "{subject} ne répond pas.",
     "e_light_unbound": "Cette lumière n'a pas encore d'ampoule.",
     "e_light_following": "Un effet est en cours sur cette lumière.",
-    "e_light_not_playing": "Aucun effet ne joue sur cette lumière ici.",
     "e_scene_missing": "Cette ambiance n'existe plus.",
     "e_invalid_timer": "Cette durée n'est pas valable.",
     "e_no_bindings": "Aucune ampoule n'a encore été ajoutée.",

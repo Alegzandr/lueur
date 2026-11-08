@@ -254,7 +254,11 @@ impl Lueur {
         self.run_then(
             move |s| service::take_light(s, &id),
             |this, result: Result<EffectStatus, _>| match result {
-                Ok(status) => this.status = status,
+                Ok(status) => {
+                    this.status = status;
+                    // A light set by hand shows its colour again.
+                    this.reload_config();
+                }
                 Err(e) => {
                     this.fail(&e);
                     this.refresh_status();

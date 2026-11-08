@@ -336,10 +336,20 @@ would show both streams at once. Two things keep them apart.
   This covers another app, or a Lueur older than the leases. Other families
   cannot tell.
 
-Screen starting by itself, resuming at launch and moving lights between
-effects never take a bulb: only the user's *Take over* does, and it then
-opens the stream impolitely. Restoring hand-set colours and the sleep
-timer skip the bulbs another computer holds.
+The user's own choice for a light takes its bulb; nothing Lueur starts by
+itself does. Picking an effect for it (or for the whole room) claims the
+bulbs others hold a round above them, and the stream then opens
+impolitely. Setting it by hand (a mood, a colour, its brightness, its
+power) *pins* the claim (`Leases::pin`): it stands while nothing drives
+the bulb, so the other computer's effect waits rather than painting over
+the choice, until that computer takes the bulb back. The wish is shown
+again once the other one has let go (`lights::reshow_taken`), as its last
+frames may have landed on top of it. *Take over* on a light does the same
+from its card. The other computer's light shows who holds it, with *Take
+over*: the last one to choose wins, and neither fights the other. Screen
+starting by itself, resuming at launch, restoring hand-set colours, the
+all-lights switch and the sleep timer skip the bulbs another computer
+holds.
 
 ## Building & running
 

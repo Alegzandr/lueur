@@ -152,7 +152,7 @@ pub fn bind(ui: &AppWindow) {
             let room = Room::of(l);
             if !room.bound(&id) {
                 l.show(View::Bulbs);
-            } else if room.mode_of(&id).is_some() && room.elsewhere(&id).is_some() {
+            } else if room.elsewhere(&id).is_some() {
                 l.take_light(id.to_string());
             } else {
                 let on = room.on(&id);

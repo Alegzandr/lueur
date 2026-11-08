@@ -228,7 +228,7 @@ fn lights(l: &Lueur, g: &LightingState, active: Color) {
         let (action, label, text, tip) = if !bound {
             let tip = t("assign");
             (0, labelled(&tip), String::new(), tip)
-        } else if mode.is_some() && other.is_some() {
+        } else if other.is_some() {
             let label = t("take_over");
             (1, labelled(&label), label, t("take_over_tip"))
         } else {
