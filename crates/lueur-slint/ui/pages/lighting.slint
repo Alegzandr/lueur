@@ -1,0 +1,1181 @@
+// The Lighting page: the room's lights as cards, the scenes saved, and
+// beside them what to do with the lights picked (the modes, their settings,
+// brightness, white and colour), with the sleep timer and one switch for
+// the whole room in the page's head, and a getting-started card until the
+// room is set up. Rust (src/pages/lighting) words it all; this draws it.
+
+import { Theme, S, Motion } from "../theme.slint";
+import { Tr } from "../tr.slint";
+import { PageTitle, Heading, Card, Row, Hairline, Switch, Segmented, Slider, Button, ButtonKind, Choice, Icon, Pressable, FocusRing, LampDot, TextField, TipBubble } from "../controls.slint";
+import { PageScroll } from "../shell.slint";
+import { Disc, LightDisc, Picture, LightCard, LightCardView, ModeTile, TileView, Slice, SceneCard, SceneView, GridMath } from "lighting/parts.slint";
+
+export { Disc, LightCard, ModeTile, Slice, SceneCard }
+
+export struct SetupStep {
+    title: string,
+    done: bool,
+    next: bool,
+    action: string,
+    enabled: bool,
+}
+
+// What of the picture a light mirrors, in the settings of the screen.
+export struct ZoneRow {
+    id: string,
+    label: string,
+    letter: string,
+    badge: color,
+    ink: color,
+    what: string,
+    // Read in HDR, said on the first row.
+    hdr: bool,
+    plan-label: string,
+    description: string,
+}
+
+export struct Swatch {
+    name: string,
+    colour: color,
+    picked: bool,
+}
+
+export global LightingState {
+    // --- The head ---
+    in property <bool> has-bulbs;
+    in property <bool> any-on;
+    in property <bool> busy;
+    // Every bulb removed while an effect plays: a button to stop it.
+    in property <bool> show-stop;
+    in property <string> all-off-tip;
+    // The sleep timer: running, its minutes on the clock, its state in
+    // words and the note under it.
+    in property <bool> sleep-running;
+    in property <string> sleep-short;
+    in property <string> sleep-state;
+    in property <string> sleep-label;
+    in property <string> sleep-note;
+
+    // --- Getting started ---
+    in property <bool> setup-shown;
+    in property <image> setup-picture;
+    in property <[SetupStep]> steps;
+
+    // --- The lights and the scenes ---
+    in property <[LightCard]> lights;
+    in property <bool> selectable;
+    in property <bool> whole;
+    in property <[SceneCard]> scenes;
+    in property <string> naming-confirm;
+    in property <string> naming-hint;
+
+    // --- Who the settings go to ---
+    in property <string> selection-name;
+    in property <string> selection-summary;
+    in property <bool> selection-live;
+    in property <string> selection-label;
+    in property <[Disc]> selection-discs;
+
+    // --- The modes ---
+    in property <[ModeTile]> fixed;
+    in property <[ModeTile]> animated;
+
+    // --- The settings of what plays ---
+    in property <bool> mode-settings;
+    in property <bool> screen-lost;
+    in property <[ZoneRow]> zones;
+    in property <bool> has-screen;
+    in property <[Choice]> feels;
+    in property <int> feel;
+    in property <string> feel-tip;
+    in property <bool> paced;
+    in property <float> speed;
+    in property <float> speed-default;
+    in property <string> speed-text;
+    in property <string> speed-reset;
+    in property <bool> music;
+    in property <bool> flashes;
+    in property <string> listens-to;
+    in property <bool> listen-waiting;
+
+    // --- Brightness, white and colour ---
+    in property <bool> tune-shown;
+    in property <float> bright;
+    in property <float> bright-min;
+    in property <string> bright-text;
+    in property <string> bright-shared;
+    in property <bool> tint-shown;
+    in property <bool> colour;
+    in property <float> kelvin;
+    in property <float> kelvin-min;
+    in property <float> kelvin-max;
+    in property <string> kelvin-text;
+    // The warm to cool whites of the Warmth slider, at its two ends and its
+    // middle, and the wheel of hues, red round to red.
+    in property <color> warm-low;
+    in property <color> warm-mid;
+    in property <color> warm-high;
+    out property <brush> warmth-track: @linear-gradient(90deg, warm-low 0%, warm-mid 50%, warm-high 100%);
+    out property <brush> hue-track: @linear-gradient(90deg, #ff0000 0%, #ffff00 16.67%, #00ff00 33.33%, #00ffff 50%, #0000ff 66.67%, #ff00ff 83.33%, #ff0000 100%);
+    in property <[Swatch]> palette;
+    in property <bool> custom-picked;
+    in property <bool> custom-open;
+    in property <bool> hue-shown;
+    in property <float> hue;
+    in property <string> hue-text;
+    in property <bool> single;
+
+    callback set-all-power();
+    callback stop-effects();
+    callback sleep-start(int);
+    callback sleep-cancel();
+    callback step(int);
+    callback toggle-target(string);
+    callback select-all();
+    callback light-action(string);
+    callback choose-tile(string);
+    callback recall-scene(string);
+    callback ask-delete(string);
+    callback keep-scene(string);
+    callback delete-scene(string);
+    callback name-edited(string);
+    callback save-scene(string);
+    callback zone-plan(string);
+    callback feel-chosen(int);
+    callback speed-changed(float);
+    callback flashes-toggled();
+    callback listen-change();
+    callback bright-changed(float);
+    callback tint-chosen(int);
+    callback kelvin-changed(float);
+    callback swatch-chosen(int);
+    callback custom-toggled();
+    callback hue-changed(float);
+    callback identify();
+    callback show-on-plan();
+}
+
+// The clock in the page's head, and the small panel it opens: a few
+// durations at a click, any other typed, or Cancel while one runs.
+component SleepButton inherits Rectangle {
+    width: clock.preferred-width;
+    height: clock.preferred-height;
+    clock := Button {
+        kind: ButtonKind.plain;
+        small: true;
+        icon: "clock";
+        text: LightingState.sleep-short;
+        label: LightingState.sleep-label;
+        tip: Tr.t("sleep_timer");
+        clicked => { panel.show(); }
+    }
+    panel := PopupWindow {
+        x: root.width - 300px;
+        y: root.height + 6px;
+        width: 300px;
+        close-policy: close-on-click-outside;
+        property <bool> typing;
+        Rectangle {
+            background: Theme.surface;
+            border-radius: S.r-lg;
+            border-width: 1px;
+            border-color: Theme.line;
+            drop-shadow-blur: 16px;
+            drop-shadow-offset-y: 4px;
+            drop-shadow-color: Theme.shadow-float;
+            FocusScope {
+                accessible-role: groupbox;
+                accessible-label: Tr.t("sleep_timer");
+                key-pressed(event) => {
+                    if (event.text == Key.Escape) {
+                        if (panel.typing) {
+                            panel.typing = false;
+                        } else {
+                            panel.close();
+                            clock.focus();
+                        }
+                        return accept;
+                    }
+                    reject
+                }
+                VerticalLayout {
+                    padding-top: S.s3;
+                    padding-left: S.s4;
+                    padding-right: S.s4;
+                    padding-bottom: S.s4;
+                    spacing: S.s3;
+                    Text {
+                        text: LightingState.sleep-state;
+                        font-size: S.t-md;
+                        font-weight: 600;
+                        color: Theme.text;
+                    }
+                    if LightingState.sleep-running: HorizontalLayout {
+                        alignment: start;
+                        Button {
+                            small: true;
+                            text: Tr.t("sleep_cancel");
+                            clicked => { LightingState.sleep-cancel(); }
+                            init => { self.focus(); }
+                        }
+                    }
+                    if !LightingState.sleep-running && !panel.typing: HorizontalLayout {
+                        alignment: start;
+                        spacing: S.s1;
+                        accessible-role: groupbox;
+                        accessible-label: Tr.t("sleep_timer");
+                        Button {
+                            small: true;
+                            text: "15 min";
+                            clicked => { LightingState.sleep-start(15); }
+                            init => { self.focus(); }
+                        }
+                        Button {
+                            small: true;
+                            text: "30 min";
+                            clicked => { LightingState.sleep-start(30); }
+                        }
+                        Button {
+                            small: true;
+                            text: "60 min";
+                            clicked => { LightingState.sleep-start(60); }
+                        }
+                        Button {
+                            small: true;
+                            text: Tr.t("sleep_other");
+                            clicked => { panel.typing = true; }
+                        }
+                    }
+                    if !LightingState.sleep-running && panel.typing: HorizontalLayout {
+                        alignment: start;
+                        spacing: S.s2;
+                        property <float> typed: field.text.is-float() ? field.text.to-float() : 0;
+                        property <bool> valid: typed >= 1 && typed <= 240 && Math.round(typed) == typed;
+                        field := TextField {
+                            width: 64px;
+                            text: "45";
+                            label: Tr.t("sleep_minutes");
+                            invalid: !parent.valid;
+                            init => {
+                                self.focus-field();
+                                self.select-all();
+                            }
+                            accepted => {
+                                if (parent.valid) { LightingState.sleep-start(Math.round(parent.typed)); }
+                            }
+                            cancelled => { panel.typing = false; }
+                        }
+                        Text {
+                            text: "min";
+                            font-size: S.t-sm;
+                            color: Theme.text-2;
+                            vertical-alignment: center;
+                        }
+                        Button {
+                            small: true;
+                            y: 2px;
+                            text: Tr.t("sleep_start");
+                            enabled: parent.valid;
+                            clicked => { LightingState.sleep-start(Math.round(parent.typed)); }
+                        }
+                        Button {
+                            small: true;
+                            y: 2px;
+                            kind: ButtonKind.plain;
+                            icon: "close";
+                            label: Tr.t("sleep_back");
+                            tip: Tr.t("sleep_back");
+                            clicked => { panel.typing = false; }
+                        }
+                    }
+                    Text {
+                        text: LightingState.sleep-note;
+                        font-size: S.t-sm;
+                        color: Theme.text-3;
+                        wrap: word-wrap;
+                        accessible-role: text;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The page's head: its title, and the sleep timer and the switch for every
+// light once there are bulbs.
+component Head inherits HorizontalLayout {
+    spacing: S.s4;
+    min-height: 34px;
+    PageTitle {
+        text: Tr.t("nav_lighting");
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+    if LightingState.has-bulbs: HorizontalLayout {
+        spacing: S.s3;
+        horizontal-stretch: 0;
+        VerticalLayout {
+            alignment: center;
+            SleepButton { }
+        }
+        Text {
+            text: Tr.t("all_lights");
+            font-size: S.t-md;
+            font-weight: 500;
+            color: Theme.text-2;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+        VerticalLayout {
+            alignment: center;
+            Switch {
+                on: LightingState.any-on;
+                label: Tr.t("all_lights");
+                enabled: !LightingState.busy;
+                accessible-description: LightingState.all-off-tip;
+                toggled => { LightingState.set-all-power(); }
+            }
+        }
+    }
+    if !LightingState.has-bulbs && LightingState.show-stop: VerticalLayout {
+        alignment: center;
+        Button {
+            text: Tr.t("stop_effects");
+            enabled: !LightingState.busy;
+            clicked => { LightingState.stop-effects(); }
+        }
+    }
+}
+
+// The getting-started card: the room on the left, lighting up as the steps
+// are done, and the steps beside it.
+component Setup inherits VerticalLayout {
+    spacing: S.s2;
+    Heading {
+        x: S.s1;
+        text: Tr.t("setup_title");
+    }
+    Card {
+        HorizontalLayout {
+            padding: 5px;
+            spacing: S.s2;
+            Picture {
+                width: min(root.width * 0.4, 300px);
+                height: 150px;
+                radius: S.r-lg - 5px;
+                source: LightingState.setup-picture;
+            }
+            VerticalLayout {
+                alignment: center;
+                accessible-role: list;
+                for step[i] in LightingState.steps: HorizontalLayout {
+                    min-height: 48px;
+                    padding-left: S.s4;
+                    padding-right: S.s2;
+                    spacing: S.s3;
+                    accessible-role: list-item;
+                    accessible-label: step.title;
+                    accessible-checkable: true;
+                    accessible-checked: step.done;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 20px;
+                            height: 20px;
+                            border-radius: 10px;
+                            background: step.done ? Theme.ok : transparent;
+                            border-width: step.done ? 0 : step.next ? 2px : 1px;
+                            border-color: step.next ? Theme.text : Theme.line-strong;
+                            if step.done: Icon {
+                                name: "check";
+                                size: 12px;
+                                color: white;
+                            }
+                            if !step.done: Text {
+                                text: i + 1;
+                                font-size: S.t-xs;
+                                font-weight: 600;
+                                color: step.next ? Theme.text : Theme.text-3;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        words := Text {
+                            x: 0;
+                            width: min(self.preferred-width, parent.width);
+                            text: step.title;
+                            font-size: S.t-md;
+                            font-weight: 500;
+                            color: step.next ? Theme.text : Theme.text-3;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            accessible-role: none;
+                        }
+                        // Done: struck through.
+                        if step.done: Rectangle {
+                            x: 0;
+                            y: parent.height / 2;
+                            width: words.width;
+                            height: 1px;
+                            background: Theme.line-strong;
+                        }
+                    }
+                    if step.next: VerticalLayout {
+                        alignment: center;
+                        Button {
+                            small: true;
+                            kind: ButtonKind.primary;
+                            text: step.action;
+                            enabled: step.enabled;
+                            clicked => { LightingState.step(i); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A section's heading, with what sits at its right.
+component ShelfHead inherits HorizontalLayout {
+    in property <string> title;
+    min-height: 24px;
+    padding-left: S.s1;
+    padding-right: S.s1;
+    padding-bottom: S.s2;
+    spacing: S.s3;
+    Heading {
+        text: root.title;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+    @children
+}
+
+// Who the settings go to, not what plays: a neutral edge and a tick, never
+// the amber of something running.
+component SelectAll inherits Rectangle {
+    height: 24px;
+    width: row.preferred-width;
+    border-radius: 12px;
+    forward-focus: p;
+    background: LightingState.whole || p.hovered ? Theme.material-hover : Theme.material;
+    border-width: LightingState.whole ? 2px : 1px;
+    border-color: LightingState.whole ? Theme.select : Theme.separator;
+    accessible-role: button;
+    accessible-label: Tr.t("select_all");
+    accessible-description: Tr.t("select_all_tip");
+    accessible-checkable: true;
+    accessible-checked: LightingState.whole;
+    accessible-action-default => { LightingState.select-all(); }
+    p := Pressable {
+        clicked => { LightingState.select-all(); }
+        row := HorizontalLayout {
+            padding-left: S.s2;
+            padding-right: S.s3;
+            spacing: 6px;
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 14px;
+                    height: 14px;
+                    border-radius: 7px;
+                    background: LightingState.whole ? Theme.select : transparent;
+                    border-width: LightingState.whole ? 0 : 1px;
+                    border-color: Theme.control-line;
+                    if LightingState.whole: Icon {
+                        name: "check";
+                        size: 10px;
+                        color: Theme.on-ink;
+                    }
+                }
+            }
+            Text {
+                text: Tr.t("select_all");
+                font-size: S.t-sm;
+                font-weight: 500;
+                color: Theme.text;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+        }
+    }
+    FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: 12px; }
+}
+
+component Lights inherits VerticalLayout {
+    property <length> gap: S.s2;
+    property <int> cols: GridMath.columns(self.width, 160px, gap);
+    property <length> cw: GridMath.cell-width(self.width, cols, gap);
+    property <int> rows: GridMath.rows(LightingState.lights.length, cols);
+    accessible-role: groupbox;
+    accessible-label: Tr.t("lights");
+    ShelfHead {
+        title: Tr.t("lights");
+        if LightingState.selectable: VerticalLayout {
+            alignment: center;
+            SelectAll { }
+        }
+    }
+    Rectangle {
+        height: root.rows * 60px + max(0, root.rows - 1) * root.gap;
+        for card[i] in LightingState.lights: LightCardView {
+            x: Math.mod(i, root.cols) * (root.cw + root.gap);
+            y: Math.floor(i / root.cols) * (60px + root.gap);
+            width: root.cw;
+            height: 60px;
+            card: card;
+            picked => { LightingState.toggle-target(card.id); }
+            action => { LightingState.light-action(card.id); }
+        }
+    }
+}
+
+// The scenes the user saved: the whole room as it was, back in one click.
+// Saving asks for a name in place.
+component Scenes inherits VerticalLayout {
+    property <length> gap: S.s2;
+    property <int> cols: GridMath.columns(self.width, 150px, gap);
+    property <length> cw: GridMath.cell-width(self.width, cols, gap);
+    property <int> rows: GridMath.rows(LightingState.scenes.length, cols);
+    property <bool> naming;
+    accessible-role: groupbox;
+    accessible-label: Tr.t("scenes");
+    function start() {
+        naming = true;
+        LightingState.name-edited("");
+    }
+    function save(name: string) {
+        if (name.is-empty) { return; }
+        LightingState.save-scene(name);
+        naming = false;
+    }
+    ShelfHead {
+        title: Tr.t("scenes");
+        if !root.naming && LightingState.scenes.length > 0: VerticalLayout {
+            alignment: center;
+            Button {
+                small: true;
+                kind: ButtonKind.plain;
+                icon: "plus";
+                text: Tr.t("scene_save");
+                tip: Tr.t("scene_save_tip");
+                clicked => { root.start(); }
+            }
+        }
+    }
+    if root.naming: VerticalLayout {
+        spacing: S.s1;
+        padding-bottom: LightingState.scenes.length > 0 ? S.s3 : 0;
+        Card {
+            HorizontalLayout {
+                padding: S.s2;
+                spacing: S.s2;
+                field := TextField {
+                    horizontal-stretch: 1;
+                    label: Tr.t("scene_name");
+                    placeholder: Tr.t("scene_name_hint");
+                    init => { self.focus-field(); }
+                    edited(text) => { LightingState.name-edited(text); }
+                    accepted(text) => { root.save(text); }
+                    cancelled => { root.naming = false; }
+                }
+                Button {
+                    small: true;
+                    y: 2px;
+                    text: LightingState.naming-confirm;
+                    enabled: !field.text.is-empty;
+                    clicked => { root.save(field.text); }
+                }
+                Button {
+                    small: true;
+                    y: 2px;
+                    kind: ButtonKind.plain;
+                    text: Tr.t("sleep_cancel");
+                    clicked => { root.naming = false; }
+                }
+            }
+        }
+        Text {
+            x: S.s1;
+            text: LightingState.naming-hint;
+            font-size: S.t-sm;
+            color: Theme.text-3;
+            wrap: word-wrap;
+        }
+    }
+    // No scene yet: the place one goes, which saves the first.
+    if !root.naming && LightingState.scenes.length == 0: Rectangle {
+        min-height: 90px;
+        border-radius: S.r-lg;
+        border-width: 1px;
+        border-color: Theme.line-strong;
+        background: e.hovered ? Theme.material-hover : transparent;
+        forward-focus: e;
+        accessible-role: button;
+        accessible-label: Tr.t("scene_save");
+        accessible-description: Tr.t("scenes_empty");
+        accessible-action-default => { root.start(); }
+        e := Pressable {
+            clicked => { root.start(); }
+            HorizontalLayout {
+                padding: S.s3;
+                spacing: S.s3;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: Theme.line-strong;
+                        Icon {
+                            name: "plus";
+                            size: 14px;
+                            color: Theme.text-2;
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 1px;
+                    horizontal-stretch: 1;
+                    Text {
+                        text: Tr.t("scene_save");
+                        font-size: S.t-md;
+                        font-weight: 600;
+                        color: Theme.text;
+                        accessible-role: none;
+                    }
+                    Text {
+                        text: Tr.t("scenes_empty");
+                        font-size: S.t-sm;
+                        color: Theme.text-2;
+                        wrap: word-wrap;
+                        accessible-role: none;
+                    }
+                }
+            }
+        }
+        FocusRing { w: parent.width; h: parent.height; shown: e.keyboard; radius: S.r-lg; }
+    }
+    if LightingState.scenes.length > 0: Rectangle {
+        height: root.rows * 90px + max(0, root.rows - 1) * root.gap;
+        for scene[i] in LightingState.scenes: SceneView {
+            x: Math.mod(i, root.cols) * (root.cw + root.gap);
+            y: Math.floor(i / root.cols) * (90px + root.gap);
+            width: root.cw;
+            height: 90px;
+            scene: scene;
+            recall => { LightingState.recall-scene(scene.id); }
+            ask-delete => { LightingState.ask-delete(scene.id); }
+            keep => { LightingState.keep-scene(scene.id); }
+            delete => { LightingState.delete-scene(scene.id); }
+        }
+    }
+}
+
+// Who the settings go to: the lights picked, named once with their discs,
+// and what they do now.
+component Selection inherits HorizontalLayout {
+    min-height: 44px;
+    spacing: S.s3;
+    accessible-role: text;
+    accessible-label: LightingState.selection-label;
+    Rectangle {
+        property <int> n: min(5, LightingState.selection-discs.length);
+        width: n > 0 ? 26px + (n - 1) * 17px : 0;
+        for disc[i] in LightingState.selection-discs: LightDisc {
+            x: i * 17px;
+            y: (parent.height - self.height) / 2;
+            visible: i < 5;
+            disc: disc;
+            size: 22px;
+            edge: true;
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        horizontal-stretch: 1;
+        Text {
+            text: LightingState.selection-name;
+            font-size: S.t-lg;
+            font-weight: 600;
+            color: Theme.text;
+            overflow: elide;
+            accessible-role: none;
+        }
+        if LightingState.selection-summary != "": HorizontalLayout {
+            spacing: 6px;
+            if LightingState.selection-live: VerticalLayout {
+                alignment: center;
+                LampDot { width: 6px; height: 6px; }
+            }
+            Text {
+                text: LightingState.selection-summary;
+                font-size: S.t-sm;
+                font-weight: LightingState.selection-live ? 500 : 400;
+                color: LightingState.selection-live ? Theme.glow-text : Theme.text-2;
+                overflow: elide;
+                horizontal-stretch: 1;
+                accessible-role: none;
+            }
+        }
+    }
+}
+
+// A grid of mode tiles: three columns, six with the room for them; every
+// picture as high as a single column's.
+component TileGrid inherits Rectangle {
+    in property <[ModeTile]> tiles;
+    property <length> gap: S.s2;
+    property <int> cols: self.width >= 760px ? 6 : 3;
+    property <length> cw: GridMath.cell-width(self.width, cols, gap);
+    property <length> picture-height: max(54px, cw * 0.46 - 6px);
+    property <int> cells: tiles.length == 0 ? 0 : tiles[tiles.length - 1].cell + tiles[tiles.length - 1].span;
+    property <int> rows: GridMath.rows(cells, cols);
+    // Room for a name on two lines once the tiles narrow.
+    property <length> tile-height: 5px + picture-height + 7px + (cols == 6 ? 34px : 17px) + 9px;
+    height: rows * tile-height + max(0, rows - 1) * gap;
+    for tile in root.tiles: TileView {
+        x: Math.mod(tile.cell, root.cols) * (root.cw + root.gap);
+        y: Math.floor(tile.cell / root.cols) * (root.tile-height + root.gap);
+        width: tile.span * root.cw + (tile.span - 1) * root.gap;
+        height: root.tile-height;
+        picture-height: root.picture-height;
+        tile: tile;
+        chosen => { LightingState.choose-tile(tile.id); }
+    }
+}
+
+component Kind inherits Text {
+    x: S.s1;
+    font-size: S.t-md;
+    font-weight: 700;
+    color: Theme.text-2;
+    accessible-role: none;
+}
+
+// The settings of what plays on the lights picked: what of the picture each
+// one mirrors and how fast it follows, the shows' pace, and what the music
+// listens to.
+component ModeSettings inherits Card {
+    if LightingState.screen-lost: HorizontalLayout {
+        padding-left: S.s4;
+        padding-right: S.s4;
+        padding-top: S.s2;
+        padding-bottom: S.s2;
+        spacing: S.s2;
+        accessible-role: text;
+        accessible-label: Tr.t("screen_lost");
+        accessible-live-region: polite;
+        Icon {
+            name: "alert";
+            size: 14px;
+            color: Theme.danger;
+        }
+        Text {
+            text: Tr.t("screen_lost");
+            font-size: S.t-sm;
+            color: Theme.danger;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+            accessible-role: none;
+        }
+    }
+    for zone[i] in LightingState.zones: Rectangle {
+        min-height: 44px;
+        accessible-role: groupbox;
+        accessible-label: zone.description;
+        if i > 0 || LightingState.screen-lost: Hairline {
+            x: S.s4;
+            y: 0;
+            width: parent.width - S.s4;
+        }
+        HorizontalLayout {
+            padding-left: S.s4;
+            padding-right: S.s2;
+            spacing: S.s3;
+            Text {
+                text: zone.label;
+                font-size: S.t-md;
+                color: Theme.text;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+                accessible-role: none;
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                horizontal-stretch: 0;
+                // The zone's colour with its letter on it, so the zone reads
+                // without telling colours apart.
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 15px;
+                        height: 15px;
+                        border-radius: 7.5px;
+                        background: zone.badge;
+                        Text {
+                            text: zone.letter;
+                            font-size: 9.5px;
+                            font-weight: 700;
+                            color: zone.ink;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            accessible-role: none;
+                        }
+                    }
+                }
+                Text {
+                    text: zone.what;
+                    font-size: S.t-md;
+                    color: Theme.text-2;
+                    vertical-alignment: center;
+                    accessible-role: none;
+                }
+                // Read in HDR: a plain outlined tag, not amber, since it says
+                // how the picture is read, not that a light is on.
+                if zone.hdr: VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        height: 16px;
+                        width: hdr.preferred-width + 10px;
+                        border-radius: S.r-sm;
+                        border-width: 1px;
+                        border-color: Theme.line-strong;
+                        accessible-role: text;
+                        accessible-label: Tr.t("hdr");
+                        accessible-description: Tr.t("hdr_tip");
+                        hdr := Text {
+                            text: Tr.t("hdr");
+                            font-size: S.t-xs;
+                            font-weight: 600;
+                            color: Theme.text-2;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            accessible-role: none;
+                        }
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    small: true;
+                    kind: ButtonKind.plain;
+                    icon: "plan";
+                    label: zone.plan-label;
+                    tip: Tr.t("change_on_plan");
+                    clicked => { LightingState.zone-plan(zone.id); }
+                }
+            }
+        }
+    }
+    if LightingState.has-screen: Row {
+        first: LightingState.zones.length == 0 && !LightingState.screen-lost;
+        label: Tr.t("response");
+        tip: LightingState.feel-tip;
+        Segmented {
+            width: min(320px, root.width / 2);
+            options: LightingState.feels;
+            current: LightingState.feel;
+            label: Tr.t("response");
+            chosen(i) => { LightingState.feel-chosen(i); }
+        }
+    }
+    // The music keeps the track's own time: beside it, a speed would read
+    // as the music's.
+    if LightingState.paced && !LightingState.music: Row {
+        first: !LightingState.has-screen && !LightingState.screen-lost;
+        label: Tr.t("speed");
+        Slider {
+            width: min(320px, root.width / 2);
+            value: LightingState.speed;
+            minimum: 1;
+            maximum: 100;
+            step: 1;
+            default-value: LightingState.speed-default;
+            value-text: LightingState.speed-text;
+            reset-label: LightingState.speed-reset;
+            label: Tr.t("speed");
+            low-end: Tr.t("speed_slow");
+            high-end: Tr.t("speed_fast");
+            value-width: 44px;
+            changed(v) => { LightingState.speed-changed(v); }
+        }
+    }
+    if LightingState.music: Row {
+        first: !LightingState.has-screen && !LightingState.screen-lost;
+        label: Tr.t("flashes");
+        tip: Tr.t("flashes_tip");
+        HorizontalLayout {
+            alignment: end;
+            Switch {
+                on: LightingState.flashes;
+                label: Tr.t("flashes");
+                toggled => { LightingState.flashes-toggled(); }
+            }
+        }
+    }
+    // What the music listens to, by the name the source had when picked.
+    if LightingState.music: Row {
+        first: false;
+        label: Tr.t("listens_to");
+        HorizontalLayout {
+            spacing: S.s2;
+            alignment: end;
+            Text {
+                text: LightingState.listens-to;
+                font-size: S.t-md;
+                color: LightingState.listen-waiting ? Theme.text-3 : Theme.text;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Button {
+                small: true;
+                kind: ButtonKind.plain;
+                text: Tr.t("change");
+                clicked => { LightingState.listen-change(); }
+            }
+        }
+    }
+}
+
+// The modes: one grid of fixed modes (the moods), one of animated ones
+// (the screen and the shows), and under them the settings of the animated
+// ones playing there.
+component Modes inherits VerticalLayout {
+    accessible-role: groupbox;
+    accessible-label: Tr.t("mode");
+    Kind { text: Tr.t("modes_fixed"); }
+    Rectangle { height: S.s2; }
+    TileGrid { tiles: LightingState.fixed; }
+    Rectangle { height: S.s4; }
+    Kind { text: Tr.t("modes_animated"); }
+    Rectangle { height: S.s2; }
+    TileGrid { tiles: LightingState.animated; }
+    if LightingState.mode-settings: VerticalLayout {
+        padding-top: S.s3;
+        ModeSettings { }
+    }
+}
+
+// A round colour to pick, ringed in the text's ink when it is the one.
+component SwatchView inherits Rectangle {
+    in property <string> name;
+    in property <bool> picked;
+    in property <brush> fill;
+    in property <bool> expandable;
+    in property <bool> expanded;
+    callback clicked;
+    width: 26px;
+    height: 26px;
+    border-radius: 13px;
+    forward-focus: p;
+    accessible-role: button;
+    accessible-label: name;
+    accessible-checkable: true;
+    accessible-checked: picked;
+    accessible-expandable: expandable;
+    accessible-expanded: expanded;
+    accessible-action-default => { clicked(); }
+    Rectangle {
+        border-radius: 13px;
+        background: root.fill;
+        clip: true;
+    }
+    Rectangle {
+        border-radius: 13px;
+        border-width: root.picked ? 2px : 1px;
+        border-color: root.picked ? Theme.text : #0000002e;
+    }
+    p := Pressable {
+        clicked => { root.clicked(); }
+    }
+    FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: 13px; }
+}
+
+// The light the lights picked give: one brightness for all of them, the
+// white or colour of those set by hand, and for a single light, its
+// identify flash and its place on the plan.
+component Tune inherits Card {
+    accessible-role: groupbox;
+    accessible-label: Tr.t("adjust");
+    Row {
+        label: Tr.t("brightness");
+        Slider {
+            width: min(320px, root.width / 2);
+            value: LightingState.bright;
+            minimum: LightingState.bright-min;
+            maximum: 100;
+            step: 1;
+            value-text: LightingState.bright-text;
+            label: Tr.t("brightness");
+            value-width: 92px;
+            changed(v) => { LightingState.bright-changed(v); }
+        }
+    }
+    if LightingState.bright-shared != "": Text {
+        x: S.s4;
+        width: parent.width - 2 * S.s4;
+        text: LightingState.bright-shared;
+        font-size: S.t-sm;
+        color: Theme.text-3;
+        wrap: word-wrap;
+    }
+    if LightingState.bright-shared != "": Rectangle { height: S.s3; }
+    if LightingState.tint-shown: Hairline { }
+    if LightingState.tint-shown: Row {
+        label: Tr.t("tint");
+        Segmented {
+            width: min(320px, root.width / 2);
+            options: [{ label: Tr.t("white"), tip: "" }, { label: Tr.t("tint_colour"), tip: "" }];
+            current: LightingState.colour ? 1 : 0;
+            label: Tr.t("tint");
+            chosen(i) => { LightingState.tint-chosen(i); }
+        }
+    }
+    if LightingState.tint-shown && !LightingState.colour: VerticalLayout {
+        padding-left: S.s4;
+        padding-right: S.s4;
+        padding-bottom: S.s3;
+        Slider {
+            value: LightingState.kelvin;
+            minimum: LightingState.kelvin-min;
+            maximum: LightingState.kelvin-max;
+            step: 100;
+            has-gradient: true;
+            gradient: LightingState.warmth-track;
+            value-text: LightingState.kelvin-text;
+            label: Tr.t("warmth");
+            low-end: Tr.t("warmth_warm");
+            high-end: Tr.t("warmth_cool");
+            value-width: 56px;
+            changed(v) => { LightingState.kelvin-changed(v); }
+        }
+    }
+    if LightingState.tint-shown && LightingState.colour: VerticalLayout {
+        padding-left: S.s4;
+        padding-right: S.s4;
+        padding-bottom: S.s3;
+        spacing: S.s3;
+        HorizontalLayout {
+            spacing: S.s2;
+            alignment: start;
+            accessible-role: groupbox;
+            accessible-label: Tr.t("tint_colour");
+            for swatch[i] in LightingState.palette: SwatchView {
+                name: swatch.name;
+                picked: swatch.picked;
+                fill: swatch.colour;
+                clicked => { LightingState.swatch-chosen(i); }
+            }
+            // A colour of one's own: a ring of every hue that opens a hue
+            // slider under the palette.
+            SwatchView {
+                name: Tr.t("custom_colour");
+                picked: LightingState.custom-picked;
+                fill: LightingState.hue-track;
+                expandable: true;
+                expanded: LightingState.hue-shown;
+                clicked => { LightingState.custom-toggled(); }
+            }
+        }
+        if LightingState.hue-shown: Slider {
+            value: LightingState.hue;
+            minimum: 0;
+            maximum: 360;
+            step: 1;
+            has-gradient: true;
+            gradient: LightingState.hue-track;
+            value-text: LightingState.hue-text;
+            label: Tr.t("custom_colour");
+            value-width: 40px;
+            changed(v) => { LightingState.hue-changed(v); }
+        }
+    }
+    if LightingState.single: Hairline { }
+    if LightingState.single: HorizontalLayout {
+        padding-left: S.s2;
+        padding-right: S.s2;
+        padding-top: S.s1;
+        padding-bottom: S.s1;
+        spacing: S.s1;
+        alignment: start;
+        Button {
+            small: true;
+            kind: ButtonKind.plain;
+            icon: "flash";
+            text: Tr.t("identify");
+            tip: Tr.t("identify_tip");
+            clicked => { LightingState.identify(); }
+        }
+        Button {
+            small: true;
+            kind: ButtonKind.plain;
+            icon: "plan";
+            text: Tr.t("show_on_plan");
+            clicked => { LightingState.show-on-plan(); }
+        }
+    }
+}
+
+component SettingsColumn inherits VerticalLayout {
+    accessible-role: groupbox;
+    Selection { }
+    Rectangle { height: S.s5; }
+    Modes { }
+    if LightingState.tune-shown: VerticalLayout {
+        padding-top: S.s6;
+        Tune { }
+    }
+}
+
+component LeftColumn inherits VerticalLayout {
+    spacing: S.s6;
+    if LightingState.has-bulbs: Scenes { }
+    if LightingState.lights.length > 0: Lights { }
+}
+
+// The lights and scenes on the left, the settings of the lights picked on
+// the right, once the window is 1200px wide; one column below that.
+component Body inherits Rectangle {
+    in property <bool> two;
+    property <length> gap: S.s7;
+    property <length> w: max(0, self.width - gap);
+    property <length> left-w: two ? max(340px, w * 5 / 12) : self.width;
+    property <length> right-w: two ? min(w * 7 / 12, w - 340px) : self.width;
+    height: two ? max(left.preferred-height, LightingState.has-bulbs ? right.preferred-height : 0)
+        : left.preferred-height + (LightingState.has-bulbs ? S.s6 + right.preferred-height : 0);
+    left := LeftColumn {
+        x: 0;
+        y: 0;
+        width: root.left-w;
+        height: self.preferred-height;
+    }
+    right := SettingsColumn {
+        x: root.two ? root.left-w + root.gap : 0;
+        y: root.two ? 0 : left.preferred-height + S.s6;
+        width: root.right-w;
+        height: self.preferred-height;
+        visible: LightingState.has-bulbs;
+    }
+}
+
+export component LightingPage inherits PageScroll {
+    max-content: 1240px;
+    spacing: 0;
+    Head { }
+    Rectangle { height: S.s5; }
+    if LightingState.setup-shown: VerticalLayout {
+        padding-bottom: S.s6;
+        Setup { }
+    }
+    // The sidebar is 220px wide: 1200px of window leaves 980px of page.
+    Body { two: root.visible-width + 220px >= 1200px; }
+}

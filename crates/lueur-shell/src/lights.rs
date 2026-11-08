@@ -94,6 +94,8 @@ pub fn start_effect(state: &AppState) -> AppResult<usize> {
 /// Start the ambilight or a show on every enabled light, as the user asked,
 /// replacing whatever runs, and record it for the next launch.
 pub fn start(state: &AppState, mode: Mode) -> AppResult<usize> {
+    let ids = runner::enabled_ids(&*state.lock_config()?);
+    take_for_effect(state, &ids);
     let connected = start_room(state, mode)?;
     record_modes(state, |modes, cfg| {
         *modes = runner::enabled_ids(cfg)
@@ -337,6 +339,9 @@ fn put_back(state: &AppState, ids: &[String], or_default: bool) {
 /// too, so a Hue bridge's budget is split anew. The bulbs go straight from
 /// one loop to the next, without settling in between.
 pub fn set_lights_mode(state: &AppState, ids: &[String], mode: Option<Mode>) -> AppResult<()> {
+    if mode.is_some() {
+        take_for_effect(state, ids);
+    }
     move_lights(state, ids, mode, true)
 }
 
@@ -466,16 +471,96 @@ pub fn restart(state: &AppState) -> AppResult<usize> {
 
 /// Take the bulb of `light_id` from whatever drives it, another computer or
 /// another app, as the user asked: the effect playing on the light here
-/// drives it again at once, and the other one waits instead. Only a light
-/// an effect plays on can be taken, or nothing would drive the bulb it
-/// took.
+/// drives it again at once, and the other one waits instead. A light no
+/// effect plays on here goes back to what it was last set to by hand (a
+/// warm white if it never was), once the other computer has let go.
 pub fn take(state: &AppState, light_id: &str) -> AppResult<()> {
-    if state.effects.mode_of(light_id).is_none() {
-        return Err(AppError::new("light_not_playing"));
-    }
     let device = binding(state, light_id)?.device_id;
-    state.leases.take(&device);
+    if state.effects.mode_of(light_id).is_some() {
+        state.leases.take(&device);
+        return Ok(());
+    }
+    state.leases.pin(&device);
+    let ids = [light_id.to_string()];
+    wait_for_others(state, &ids);
+    put_back(state, &ids, true);
     Ok(())
+}
+
+/// The lights of `ids` whose bulb another computer holds now, with that
+/// bulb.
+fn held_elsewhere(state: &AppState, ids: &[String]) -> Vec<(String, String)> {
+    let Ok(cfg) = state.lock_config() else {
+        return Vec::new();
+    };
+    ids.iter()
+        .filter_map(|id| {
+            let b = cfg.binding_for(id)?;
+            state
+                .leases
+                .holder(&b.device_id)
+                .map(|_| (id.clone(), b.device_id.clone()))
+        })
+        .collect()
+}
+
+/// The user chose an effect for `ids`: the bulbs another computer holds are
+/// taken, so the effect drives them rather than waiting. The other computer
+/// waits instead, and can take them back the same way.
+fn take_for_effect(state: &AppState, ids: &[String]) {
+    for (_, device) in held_elsewhere(state, ids) {
+        state.leases.take(&device);
+    }
+}
+
+/// The user set `ids` by hand: the bulbs another computer holds are taken,
+/// and their claim stands while nothing drives them, so that computer's
+/// effect waits rather than painting over the choice. Returns the lights
+/// taken, to show their wish again once that computer has let go.
+fn take_by_hand(state: &AppState, ids: &[String]) -> Vec<String> {
+    held_elsewhere(state, ids)
+        .into_iter()
+        .map(|(id, device)| {
+            state.leases.pin(&device);
+            id
+        })
+        .collect()
+}
+
+/// After a take: wait until no other computer claims the bulbs of `ids`
+/// any more (it hears the take within a heartbeat and lets go at once),
+/// and a moment more for its stream to close. Gives up after a few seconds:
+/// a computer gone silent loses its claims by then anyway.
+fn wait_for_others(state: &AppState, ids: &[String]) {
+    let devices: Vec<String> = {
+        let Ok(cfg) = state.lock_config() else {
+            return;
+        };
+        ids.iter()
+            .filter_map(|id| cfg.binding_for(id).map(|b| b.device_id.clone()))
+            .collect()
+    };
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    while devices.iter().any(|d| state.leases.contested(d)) && std::time::Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+}
+
+/// Show again, once the other computer has let go, what the user just set
+/// by hand on the lights taken from it: its last frames may have landed on
+/// top of the choice meanwhile.
+fn reshow_taken(state: &AppState, taken: &[String]) {
+    if taken.is_empty() {
+        return;
+    }
+    wait_for_others(state, taken);
+    let free: Vec<String> = taken
+        .iter()
+        .filter(|id| state.effects.mode_of(id).is_none())
+        .cloned()
+        .collect();
+    put_back(state, &free, false);
 }
 
 /// Stop loops whose lights something else takes over at once.
@@ -579,15 +664,20 @@ fn apply_one(
 /// Holds the effects' change lock, so an effect starting meanwhile either
 /// sees the light taken by hand or takes it after: never both at once.
 pub fn set_light(state: &AppState, light_id: &str, wish: LightState) -> AppResult<()> {
-    let _change = state.effects.change();
-    let binding = manual_binding(state, light_id)?;
-    let wish = wish.clamped();
-    let wall = state.lock_config()?.room.wall;
-    apply_one(state, &binding, wish, wall).map_err(|e| named_for(state, light_id, e))?;
-    state
-        .lock_config()?
-        .states
-        .insert(light_id.to_string(), wish);
+    let taken = {
+        let _change = state.effects.change();
+        let binding = manual_binding(state, light_id)?;
+        let taken = take_by_hand(state, &[light_id.to_string()]);
+        let wish = wish.clamped();
+        let wall = state.lock_config()?.room.wall;
+        apply_one(state, &binding, wish, wall).map_err(|e| named_for(state, light_id, e))?;
+        state
+            .lock_config()?
+            .states
+            .insert(light_id.to_string(), wish);
+        taken
+    };
+    reshow_taken(state, &taken);
     Ok(())
 }
 
@@ -620,11 +710,14 @@ pub fn set_light_power(state: &AppState, light_id: &str, on: bool) -> AppResult<
         crate::auto::user_took_over(state);
         move_lights(state, &[light_id.to_string()], None, false)?;
     }
+    let taken = take_by_hand(state, &[light_id.to_string()]);
     state.manual.release(light_id);
     power_one(&binding.endpoint(), on).map_err(|e| named_for(state, light_id, e))?;
     remember(state, |states| {
         states.entry(light_id.to_string()).or_default().on = on;
-    })
+    })?;
+    reshow_taken(state, &taken);
+    Ok(())
 }
 
 /// Every bound bulb with what `wish` says it should show (lights it skips
@@ -703,7 +796,9 @@ fn apply_many(
 ///
 /// Turning everything off stops the effect first: the running loop would keep
 /// streaming colours (and its shutdown fade would light the bulbs back up),
-/// so an "all off" that left it running wouldn't stick.
+/// so an "all off" that left it running wouldn't stick. Bulbs another
+/// computer drives are left alone: the switch is for this computer's room,
+/// not the effect someone plays on the other one.
 pub fn set_all_power(state: &AppState, on: bool) -> AppResult<PowerResult> {
     if !on {
         crate::auto::user_took_over(state);
@@ -711,11 +806,15 @@ pub fn set_all_power(state: &AppState, on: bool) -> AppResult<PowerResult> {
     }
     apply_many(
         state,
-        |_| {
-            Some(LightState {
-                on,
-                ..LightState::default()
-            })
+        |b| {
+            state
+                .leases
+                .holder(&b.device_id)
+                .is_none()
+                .then_some(LightState {
+                    on,
+                    ..LightState::default()
+                })
         },
         true,
     )
@@ -769,7 +868,10 @@ pub fn apply_scene(state: &AppState, id: &str, ids: Option<&[String]>) -> AppRes
         }
     };
     set_natural(state, &ids, id == scene::NATURAL)?;
-    apply_many(state, |b| ids.contains(&b.light_id).then_some(wish), false)
+    let taken = take_by_hand(state, &ids);
+    let result = apply_many(state, |b| ids.contains(&b.light_id).then_some(wish), false);
+    reshow_taken(state, &taken);
+    result
 }
 
 /// Have `ids` follow the natural light or stop following it, without

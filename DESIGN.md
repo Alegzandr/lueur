@@ -167,19 +167,22 @@ motion that is short and physical, numbers that line up. Light and dark are
 equal citizens; dark is not a filter on light but its own tuned set of values
 (deeper shadows, brighter amber, a softer backdrop).
 
-The window is drawn with GPUI, Zed's interface framework, in Rust. Its
-tokens live in `crates/lueur-gpui/src/theme.rs`, which is the source of
-truth: the colours in OKLCH, as this file writes them, turned into sRGB, one
-set for light and one for dark, and the spaces, corners and type sizes in
-pixels. The room plan's own colours (the zones, the floor, the walls) are in
-`crates/lueur-gpui/src/views/room/colors.rs`, as only that page uses them.
-The shared controls are in `crates/lueur-gpui/src/ui/`.
+The window is drawn with Slint, in `.slint` files under
+`crates/lueur-slint/ui/` that Rust fills. Its colours live in
+`crates/lueur-slint/src/theme.rs`, which is the source of truth: written in
+OKLCH, as this file writes them, turned into sRGB, one set for light and
+one for dark, and handed to the `Theme` global of `ui/theme.slint`. The
+spaces, corners, type sizes and the timing of motion are in that same
+file. The room plan's own colours (the zones, the floor, the walls) are in
+`crates/lueur-slint/src/pages/room/colors.rs`, as only that page uses them.
+The shared controls are in `crates/lueur-slint/ui/controls.slint`.
 
-GPUI is not a browser, and a few effects this file describes are drawn
+Slint is not a browser, and a few effects this file describes are drawn
 another way. Each place below says how; in short, there is no blur filter
-(soft shadows and layered draws stand in), no colour blend mode (a colour
-is laid over a picture, half seen), and no native colour picker (a palette
-and a hue slider).
+(pictures are blurred once in Rust, glows are worked out as pictures),
+no colour blend mode (a colour is laid over a picture, half seen), no
+dashed border (dashes are drawn as paths) and no native colour picker (a
+palette and a hue slider).
 
 **Key Characteristics:**
 - Neutral chrome (zero chroma greys) in both themes; amber is the one colour.
@@ -249,20 +252,21 @@ dark theme and give it away.
 ## Typography
 
 **Body Font:** Inter, in four static weights (Regular, Medium, SemiBold,
-Bold) built into the executable from `crates/lueur-gpui/assets/fonts/`, and
-loaded before the splash or the window draws a word (`load_fonts` in
-`app.rs`). Nothing is fetched from the network. The `cv11` (single-storey a)
+Bold) built into the executable from `crates/lueur-slint/assets/fonts/`, and
+imported by `ui/app.slint`, so they are there before the splash or the
+window draws a word. Nothing is fetched from the network. The `cv11` (single-storey a)
 and `ss01` (open digits) alternates and the optical size axis the Tauri
-version used are not on in GPUI.
+version used are not on in Slint.
 
 **Character:** smooth and even, close to the faces of Apple's own apps, and
 the same on Windows, macOS and Linux rather than each platform's face.
 Hierarchy comes from size and weight steps, never a second family.
 
 **Icons:** Phosphor, rounded and even like the face, as SVG files in
-`crates/lueur-gpui/assets/icons/`, each named by its role in the interface
+`crates/lueur-slint/assets/icons/`, each named by its role in the interface
 (`bulb`, `screen`, `trash`…) in three weights, and always drawn through
-`ui::icon()`. Regular weight, bold at 12px and below so thin strokes keep
+the `Icon` control. A glyph that points another way (`chevron-down`) is
+its own file, as the software renderer does not rotate pictures. Regular weight, bold at 12px and below so thin strokes keep
 their weight, filled for the current page in the sidebar.
 
 ### Hierarchy
@@ -279,7 +283,7 @@ their weight, filled for the current page in the sidebar.
 ### Named Rules
 **The Lined-Up Numbers Rule.** Every changing number (percentages, minutes,
 degrees, addresses) uses tabular figures, so values don't jitter as they
-change. GPUI does not turn on Inter's tabular figures yet; meanwhile a
+change. Slint does not turn on Inter's tabular figures yet; meanwhile a
 slider's value keeps a minimum width, so the track does not move as the
 number changes.
 
@@ -289,7 +293,7 @@ A 200px sidebar on the left (60px, icons only, once the window is 1100px wide
 or less), the page on the right in a single scroll
 column, max 820px wide, padded 28px top and bottom and 40px on the sides
 (same room below as above, so a page that fits never scrolls a few pixels).
-The GPUI sidebar is 220px wide for now and does not fold yet.
+The sidebar is 220px wide for now and does not fold yet.
 The Room page breaks the column: the plan takes the width and an inspector
 column, 296px, sits on its right, on the page's ground like any other cards,
 under the same title line and with the plan's top edge. It is never a panel
@@ -319,9 +323,9 @@ is never narrower than 960 × 640, so there are no mobile breakpoints.
 `material` in `theme.rs` (white at 70 % on paper, a dark grey at 62 % at
 night) over what lies behind. On Lighting that is the lights' glow,
 elsewhere the room's photograph, so every card takes on the room's light,
-softened, while its text keeps its contrast. GPUI has no backdrop blur, so
+softened, while its text keeps its contrast. Slint has no backdrop blur, so
 the card itself does not blur: what lies behind it is already soft (the
-glow's pools, the photograph drawn out of focus), and the translucent fill
+glow's pools, the photograph blurred), and the translucent fill
 does the rest. Rows inside a card part with a `separator` hairline.
 Controls, fields and popovers stay opaque: the material is for what holds
 them.
@@ -332,9 +336,9 @@ needs it, a short, soft shadow. Only floating things (tooltips, menus,
 toasts) get a longer shadow.
 
 ### Shadow Vocabulary
-The stylesheet of the Tauri version named five shadows. The GPUI controls
-in `ui/` draw them with borders and GPUI's own small and large shadows for
-now:
+The stylesheet of the Tauri version named five shadows. The Slint controls
+draw them with borders and `drop-shadow` (`shadow`, `shadow-float` in the
+theme); the software renderer leaves the shadows out:
 - **Control edge:** the 1px `line` border of buttons, fields and selects;
   the segmented thumb takes the small shadow.
 - **Control highlight:** the lit top edge of a raised control. Not drawn
@@ -361,14 +365,13 @@ tile (112/480 radius). No sharp corners and no pill-shaped buttons.
 
 ## Components
 
-The shared controls are in `crates/lueur-gpui/src/ui/` (button, switch,
-row, card and icon in `mod.rs`, the segmented control and the select in
-`choice.rs`, the slider in `slider.rs`, the text field in `input.rs`); the
-buttons and pieces only one page uses are in that page's `controls.rs`.
-What follows is the look they aim at. Some details of the Tauri version are
-not drawn in GPUI yet: the buttons' gradient, lit top edge and pressed
-drop, and the switch knob's squash and travel. The GPUI controls are flat
-fills with a hairline edge and a hover fill.
+The shared controls are in `crates/lueur-slint/ui/controls.slint` (button,
+switch, row, card, icon, segmented control, select, slider, text field,
+tip); the pieces only one page uses are in that page's own `.slint` files
+under `ui/pages/`. What follows is the look they aim at. Some details of
+the Tauri version are not drawn yet: the buttons' gradient, lit top edge
+and pressed drop. The controls are flat fills with a hairline edge and a
+hover fill; the switch knob travels, and widens while pressed.
 
 ### Buttons
 Tactile and discreet: physical to the touch, never asking for attention.
@@ -398,7 +401,7 @@ thumb that grows 6 % on hover and 12 % while dragged. Focus draws a 2px
 surface gap and a 2px amber ring around the thumb.
 
 The warmth and the hue are sliders whose track is the gradient they choose
-along (`gradient_slider` in `views/lighting/controls.rs`). GPUI has no
+along (the `Tune` card in `ui/pages/lighting.slint`). Slint has no
 native colour picker, so a colour of one's own is a palette and, under it,
 the hue slider.
 
@@ -422,21 +425,21 @@ label. Hover fills `surface-hover`; the active page becomes a small card
 pills. In a window 1100px wide or less the column folds to 60px: icons
 alone, each still named in its tooltip and for screen readers, the logo
 without the name, and a count badge as a small pill on its icon's corner.
-In GPUI the column is the opaque `sidebar` grey for now, and does not fold
-yet.
+For now the column does not fold.
 
 ### The room's photographs (signature)
 The Lighting page shows its modes as photographs of one room (white wall,
 oak sideboard, a table lamp, a floor lamp, a television), each under one
 light: every mood and show, `screen` for the mode that follows the screen,
 `off` for the lights out, and `custom`, neutral white, which a light set by
-hand tints with its colour. GPUI has no colour blend mode, so the tint is
+hand tints with its colour. Slint has no colour blend mode, so the tint is
 the light's colour laid over the neutral room, half seen, rather than the
 room taking its hue. They are content, so they keep their own colours in
 both themes. Generated once, locally, they ship as 960px WebP files (about
-130 KB in all) in `crates/lueur-gpui/assets/modes/`, built into the
-executable, and are looked up in `picture_of()` in
-`crates/lueur-gpui/src/views/lighting/model.rs`.
+130 KB in all) in `crates/lueur-slint/assets/modes/`, built into the
+executable and decoded by `crates/lueur-slint/src/images.rs` (Slint does
+not read WebP), and are looked up in `picture_of()` in
+`crates/lueur-slint/src/pages/lighting/model.rs`.
 
 **The Picture Earns Its Place Rule.** A photograph is shown only where it
 tells something: what a choice will do to the room (the mode tiles, the
@@ -483,10 +486,11 @@ light now, or waiting on you. The status vocabulary across the app.
 Behind the Lighting view, one soft pool of colour per light, placed where the
 light stands relative to the screen and tinted with the frames its bulb is
 receiving. Stronger and purer on paper (strength 0.6, saturation 1.5), softer
-at night (0.7, 1.15). Still under reduced motion. GPUI has neither a shader
-for the page nor a blur filter: each pool is the soft shadow of a round
-shape, which GPUI blurs as a Gaussian bell, laid over the ground rather
-than added to it as light (`crates/lueur-gpui/src/views/lighting/backdrop.rs`).
+at night (0.7, 1.15). Still under reduced motion. Slint has no shader for
+the page: the pools are worked out in Rust as the Tauri version's shader
+worked them out, into a picture redrawn once per frame while they move and
+not at all once they rest (`crates/lueur-slint/src/pages/lighting/backdrop.rs`
+and `glow.rs`).
 
 ### Room backdrop (signature)
 Behind every page but Lighting (which has its glow pools), the photograph
@@ -494,14 +498,13 @@ of the room as its lights make it now: the look most of them share, the
 dark room when they are off, a light set by hand tinting the neutral one.
 It sits at the top of the window, under the navigation too, out of focus,
 and dissolves into the ground by 62 % of the window's height, so cards
-stand on plain ground. `RoomBackdrop` in `views/lighting/backdrop.rs` sets
-it per theme. At night it is the room in the dark, 6px out of focus, at
+stand on plain ground. `pages/lighting/backdrop.rs` sets it per theme. At night it is the room in the dark, 6px out of focus, at
 0.62. On paper a dark room would only grey the ground, so it is blurred
 until no furniture is left, lifted to a high key and its middle (the dark
 screen) covered: what remains is the warm wash of its two lamps, at 0.85.
-Without a blur filter, out of focus means the photograph drawn many times,
-a little apart and each fainter, which averages into a blur; the high key
-is a wash of the ground over it, and the middle a soft patch of the ground.
+Without a blur filter, out of focus means the photograph blurred once in
+Rust as it is first shown (`images::blurred`); the high key is a wash of
+the ground over it, and the middle a soft patch of the ground.
 When the
 lights change it dissolves into the new room over 700 ms, at once under
 reduced motion. Page and section titles carry a halo of the page's ground
@@ -517,21 +520,21 @@ they follow.
 
 ### Do:
 - **Do** take every value from the tokens in
-  `crates/lueur-gpui/src/theme.rs`, and define any new one there in both
-  `Theme::light()` and `Theme::dark()`; the system's appearance, or the one
-  forced in Settings, picks between them (`Theme::resolve`).
+  `crates/lueur-slint/src/theme.rs` (named in `ui/theme.slint`), and
+  define any new one there in both `Theme::light()` and `Theme::dark()`;
+  the system's appearance, or the one forced in Settings, picks between
+  them (`Theme::resolve`).
 - **Do** keep chrome greys at zero chroma; colour enters only as light.
 - **Do** pair every state colour with a lamp, a word, a tick, an edge or a
   letter.
-- **Do** keep motion short and eased (GPUI's `ease_in_out`): 140 ms for
-  state changes, 220 ms for travelling parts (knobs, thumbs), 200 ms for a
-  view entering. GPUI changes a state at once unless an animation is
-  written for it (`with_animation`), so most of these are still immediate
-  in the GPUI window.
+- **Do** keep motion short and eased (`ease-in-out`): 140 ms for state
+  changes, 220 ms for travelling parts (knobs, thumbs), 200 ms for a view
+  entering, taken from the `Motion` global (`Motion.state`,
+  `Motion.travel`, `Motion.enter`), which falls to 0 under reduced motion.
 - **Do** give every looping animation a still alternative, taken when
-  `cx.reduce_motion()` is true. GPUI does not read the system's setting
-  itself: `app::follow_reduced_motion` does, on Windows ("Show animations
-  in Windows"); macOS and Linux are not read yet.
+  `Motion.reduce` is true. Slint does not read the system's setting
+  itself: `app::reduced_motion` does, on Windows ("Show animations in
+  Windows"); macOS and Linux are not read yet.
 - **Do** use tabular figures for any number that changes.
 
 ### Don't:

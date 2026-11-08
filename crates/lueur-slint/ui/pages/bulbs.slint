@@ -1,0 +1,1067 @@
+// The Bulbs page: what the network offers on one side, the room's lights on
+// the other, and above them the check of devices nothing vouches for, the
+// pairing of a bridge and the Smart Life sign-in. Rust
+// (src/pages/bulbs) words everything; this draws it.
+
+import { Theme, S, Motion } from "../theme.slint";
+import { Tr } from "../tr.slint";
+import { PageTitle, Heading, Card, Hairline, Button, ButtonKind, Icon, TextField, Spinner, Pressable, FocusRing, InfoMark } from "../controls.slint";
+import { PageScroll } from "../shell.slint";
+
+// A paired bridge or controller heard where nothing proves it is the one
+// paired.
+export struct CheckBanner {
+    id: string,
+    text: string,
+    // It no longer shows its pinned certificate: only pairing again helps.
+    needs-pairing: bool,
+}
+
+// A bulb found that no light has yet.
+export struct DeviceRow {
+    id: string,
+    name: string,
+    // Its brand and model, with its address when two share a name.
+    meta: string,
+    // What stops it from doing all a bulb can, in words.
+    warn: string,
+    paired: bool,
+    // 0 pair, 1 "Use for…", 2 add.
+    action: int,
+    pair-label: string,
+    pair-tip: string,
+    // Another device's pairing is under way: no second one.
+    pair-blocked: bool,
+    // This one is being paired.
+    pairing: bool,
+    // Paired already, but pairing again makes it faster.
+    faster: bool,
+    // "Desk, Use for…", for screen readers.
+    use-label: string,
+}
+
+// A light of the room as its card shows it.
+export struct BulbCard {
+    id: string,
+    name: string,
+    // Its bulb, or what it waits for.
+    meta: string,
+    bound: bool,
+    // 0 no bulb (dashed), 1 off (a ring), 2 lit or playing.
+    dot: int,
+    // Its colour, or the two ends of the effect it plays.
+    dot-from: color,
+    dot-to: color,
+    dot-halo: color,
+    // "Desk, Show on the plan", for screen readers.
+    plan-label: string,
+    identify-label: string,
+    unassign-label: string,
+    remove-label: string,
+}
+
+export struct PairPanel {
+    shown: bool,
+    title: string,
+    // 0 waiting for the button, 1 paired, 2 failed.
+    step: int,
+    say: string,
+    why: string,
+    // What is left of the time to press the button, 0 to 1.
+    left: float,
+    timer: string,
+    detail: string,
+}
+
+export struct TuyaPanel {
+    // 0 closed, 1 the code, 2 the code sent, 3 the QR code, 4 adding, 5 done.
+    step: int,
+    qr: image,
+    // What is wrong with the code, in words.
+    problem: string,
+    expired: bool,
+    lines: [string],
+    // "Add 3 bulbs", when some wait to be placed.
+    add-label: string,
+    show-plan: bool,
+    show-search: bool,
+}
+
+export global BulbsState {
+    in property <string> search-label;
+    in property <bool> search-primary;
+    in property <bool> scanning;
+    in property <bool> add-all-shown;
+    in property <bool> tuya-busy;
+    // What the page reads out as a pairing, the sign-in or a check moves on.
+    in property <string> said;
+    in property <[CheckBanner]> checks;
+    in property <bool> check-busy;
+    in property <PairPanel> pairing;
+    in property <bool> detail-open;
+    in property <TuyaPanel> tuya;
+    // The code as typed, kept by the field; Rust sets it only to tidy it.
+    in-out property <string> code;
+    in property <bool> network-shown;
+    in property <string> found-count;
+    // 0 listening, 1 nothing found, 2 not searched yet.
+    in property <int> empty-kind;
+    in property <bool> tuya-hint;
+    in property <[DeviceRow]> devices;
+    // The lights without a bulb, then "New light".
+    in property <[string]> use-choices;
+    in property <bool> tips-open;
+    in property <bool> has-lights;
+    in property <[BulbCard]> lights;
+
+    callback search();
+    callback add-all();
+    callback open-tuya();
+    callback check-not-mine(string);
+    callback check-mine(string);
+    callback check-pair-again(string);
+    callback pair(string);
+    callback use-for(string, int);
+    callback add(string);
+    callback identify-device(string);
+    callback pair-retry();
+    callback pair-close();
+    callback toggle-detail();
+    callback code-edited(string);
+    callback tuya-continue(string);
+    callback tuya-cancel();
+    callback tuya-add-ready();
+    callback tuya-plan();
+    callback tuya-search-again();
+    callback toggle-tips();
+    callback open-plan();
+    callback light-show-on-plan(string);
+    callback light-identify(string);
+    callback light-unassign(string);
+    callback light-remove(string);
+    callback light-rename(string, string);
+    callback light-rename-done(string);
+}
+
+component Note inherits Text {
+    font-size: S.t-sm;
+    color: Theme.text-3;
+    wrap: word-wrap;
+}
+
+// A shelf's heading with what stands on its right.
+component GroupHead inherits HorizontalLayout {
+    in property <string> title;
+    spacing: S.s3;
+    padding-left: S.s1;
+    padding-right: S.s1;
+    padding-bottom: S.s2;
+    min-height: 24px;
+    Heading {
+        text: root.title;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+    @children
+}
+
+// A button that shows or hides what follows it.
+component Disclosure inherits Rectangle {
+    in property <string> text;
+    in property <bool> open;
+    in property <length> font-size: S.t-md;
+    in property <int> font-weight: 500;
+    in property <color> ink: Theme.text;
+    callback toggled();
+    forward-focus: p;
+    accessible-role: button;
+    accessible-label: text;
+    accessible-expandable: true;
+    accessible-expanded: open;
+    accessible-action-default => { toggled(); }
+    height: 22px;
+    horizontal-stretch: 0;
+    p := Pressable {
+        clicked => { root.toggled(); }
+        HorizontalLayout {
+            spacing: S.s2;
+            Icon {
+                y: (parent.height - self.height) / 2;
+                // Right while closed, down once open.
+                name: root.open ? "chevron-down" : "chevron";
+                size: 14px;
+                color: Theme.text-3;
+            }
+            Text {
+                text: root.text;
+                font-size: root.font-size;
+                font-weight: root.font-weight;
+                color: root.ink;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+        }
+    }
+    FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: S.r-sm; }
+}
+
+// "Use for…": a button that opens the list of the lights still without a
+// bulb, and a new light.
+component UseFor inherits Rectangle {
+    in property <string> label;
+    in property <[string]> choices;
+    callback chosen(int);
+    forward-focus: p;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-expandable: true;
+    accessible-action-default => { menu.show(); }
+    height: 26px;
+    width: min(180px, row.preferred-width);
+    border-radius: 7px;
+    background: p.hovered ? Theme.surface-hover : Theme.surface;
+    border-width: 1px;
+    border-color: Theme.line;
+    p := Pressable {
+        clicked => { menu.show(); }
+        row := HorizontalLayout {
+            padding-left: S.s3;
+            padding-right: S.s2;
+            spacing: S.s2;
+            Text {
+                text: Tr.t("use_for");
+                font-size: S.t-sm;
+                color: Theme.text;
+                vertical-alignment: center;
+                overflow: elide;
+                accessible-role: none;
+            }
+            Icon {
+                y: (parent.height - self.height) / 2;
+                name: "chevron-down";
+                size: 12px;
+                color: Theme.text-3;
+            }
+        }
+    }
+    FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: 7px; }
+    menu := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: 200px;
+        Rectangle {
+            background: Theme.surface;
+            border-radius: S.r-md;
+            border-width: 1px;
+            border-color: Theme.line;
+            drop-shadow-blur: 14px;
+            drop-shadow-offset-y: 4px;
+            drop-shadow-color: Theme.shadow-float;
+            VerticalLayout {
+                padding: S.s1;
+                accessible-role: AccessibleRole.list;
+                accessible-label: root.label;
+                for choice[i] in root.choices: Rectangle {
+                    height: 28px;
+                    border-radius: S.r-sm;
+                    background: t.has-hover ? Theme.surface-hover : transparent;
+                    accessible-role: list-item;
+                    accessible-label: choice;
+                    accessible-item-index: i;
+                    accessible-item-count: root.choices.length;
+                    accessible-action-default => { root.chosen(i); }
+                    t := TouchArea {
+                        clicked => { root.chosen(i); }
+                    }
+                    Text {
+                        x: S.s3;
+                        width: parent.width - 2 * S.s3;
+                        text: choice;
+                        font-size: S.t-md;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        accessible-role: none;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A light as it glows now, round: its white or colour, the gradient of the
+// effect it plays, a hollow ring while off, a dashed outline with no bulb.
+component LightDot inherits Rectangle {
+    in property <int> kind;
+    in property <color> from;
+    in property <color> to;
+    in property <color> halo;
+    width: 28px;
+    height: 28px;
+    border-radius: 14px;
+    border-width: kind == 1 ? 1px : 0px;
+    border-color: Theme.line-strong;
+    accessible-role: none;
+    // Lit: a soft halo of its own colour, then the disc, drawn as a path
+    // so its gradient stays round on every renderer.
+    if root.kind == 2: Rectangle {
+        border-radius: self.width / 2;
+        background: root.halo.with-alpha(0.01);
+        drop-shadow-blur: 12px;
+        drop-shadow-color: root.halo;
+    }
+    if root.kind == 2: Path {
+        width: root.width;
+        height: root.height;
+        viewbox-width: 28;
+        viewbox-height: 28;
+        fill: @linear-gradient(135deg, root.from 0%, root.to 100%);
+        // A hairline keeps a near-white bulb visible on a white card.
+        stroke: #0000001f;
+        stroke-width: 1px;
+        commands: "M 14 0.5 A 13.5 13.5 0 1 1 14 27.5 A 13.5 13.5 0 1 1 14 0.5 Z";
+    }
+    // Slint draws no dashed border: the outline of a light with no bulb is
+    // a ring of short strokes.
+    if root.kind == 0: Path {
+        width: root.width;
+        height: root.height;
+        viewbox-width: 28;
+        viewbox-height: 28;
+        stroke: Theme.line-strong;
+        stroke-width: 1px;
+        fill: transparent;
+        commands: "M 14 0.5 A 13.5 13.5 0 0 1 18.2 1.2 M 22.0 3.1 A 13.5 13.5 0 0 1 24.9 6.0 M 26.8 9.8 A 13.5 13.5 0 0 1 27.5 14 M 26.8 18.2 A 13.5 13.5 0 0 1 24.9 22.0 M 22.0 24.9 A 13.5 13.5 0 0 1 18.2 26.8 M 14 27.5 A 13.5 13.5 0 0 1 9.8 26.8 M 6.0 24.9 A 13.5 13.5 0 0 1 3.1 22.0 M 1.2 18.2 A 13.5 13.5 0 0 1 0.5 14 M 1.2 9.8 A 13.5 13.5 0 0 1 3.1 6.0 M 6.0 3.1 A 13.5 13.5 0 0 1 9.8 1.2";
+    }
+    @children
+}
+
+component CheckView inherits Rectangle {
+    in property <CheckBanner> c;
+    border-radius: S.r-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.separator;
+    HorizontalLayout {
+        padding-left: S.s4;
+        padding-right: S.s2;
+        padding-top: S.s2;
+        padding-bottom: S.s2;
+        spacing: S.s3;
+        VerticalLayout {
+            spacing: S.s1;
+            alignment: center;
+            horizontal-stretch: 1;
+            Text { text: root.c.text; font-size: S.t-md; color: Theme.text; wrap: word-wrap; }
+            Note { text: Tr.t("unverified_tip"); }
+        }
+        HorizontalLayout {
+            spacing: S.s2;
+            alignment: end;
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    small: true;
+                    text: Tr.t("unverified_not_mine");
+                    enabled: !BulbsState.check-busy;
+                    clicked => { BulbsState.check-not-mine(root.c.id); }
+                }
+            }
+            // Never the main action: the user's word is the weakest proof.
+            if !root.c.needs-pairing: VerticalLayout {
+                alignment: center;
+                Button {
+                    small: true;
+                    text: Tr.t("unverified_mine");
+                    enabled: !BulbsState.check-busy;
+                    clicked => { BulbsState.check-mine(root.c.id); }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    small: true;
+                    kind: ButtonKind.primary;
+                    text: Tr.t("unverified_pair_again");
+                    enabled: !BulbsState.check-busy;
+                    clicked => { BulbsState.check-pair-again(root.c.id); }
+                }
+            }
+        }
+    }
+}
+
+// The panel of a pairing under way or just ended.
+component PairingView inherits VerticalLayout {
+    property <PairPanel> p: BulbsState.pairing;
+    GroupHead { title: root.p.title; }
+    Card {
+        HorizontalLayout {
+            padding-left: S.s5;
+            padding-right: S.s5;
+            padding-top: S.s4;
+            padding-bottom: S.s4;
+            spacing: S.s4;
+            VerticalLayout {
+                alignment: start;
+                Rectangle {
+                    width: 36px;
+                    height: 36px;
+                    border-radius: 18px;
+                    background: root.p.step == 0 ? Theme.glow-soft : root.p.step == 1 ? Theme.ok.with-alpha(0.16) : Theme.danger-soft;
+                    if root.p.step == 0: Spinner { size: 18px; tint: Theme.glow-text; }
+                    if root.p.step == 1: Icon { name: "check"; size: 18px; color: Theme.ok; }
+                    if root.p.step == 2: Icon { name: "alert"; size: 18px; color: Theme.danger; }
+                }
+            }
+            VerticalLayout {
+                spacing: S.s2;
+                horizontal-stretch: 1;
+                Text {
+                    text: root.p.say;
+                    font-size: S.t-lg;
+                    font-weight: 600;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                if root.p.step == 0: Note { text: root.p.why; }
+                if root.p.step == 0: HorizontalLayout {
+                    spacing: S.s3;
+                    alignment: start;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 260px;
+                            height: 4px;
+                            border-radius: 2px;
+                            background: Theme.line;
+                            clip: true;
+                            Rectangle {
+                                x: 0;
+                                width: parent.width * root.p.left;
+                                background: Theme.glow;
+                            }
+                        }
+                    }
+                    Note {
+                        text: root.p.timer;
+                        accessible-role: text;
+                        accessible-label: root.p.timer;
+                    }
+                }
+                if root.p.step == 2 && root.p.detail != "": VerticalLayout {
+                    spacing: S.s1;
+                    Disclosure {
+                        text: Tr.t("details");
+                        open: BulbsState.detail-open;
+                        font-size: S.t-sm;
+                        font-weight: 400;
+                        ink: Theme.text-3;
+                        toggled => { BulbsState.toggle-detail(); }
+                    }
+                    if BulbsState.detail-open: Note { text: root.p.detail; }
+                }
+                HorizontalLayout {
+                    spacing: S.s2;
+                    alignment: start;
+                    padding-top: S.s1;
+                    if root.p.step == 2: Button {
+                        small: true;
+                        kind: ButtonKind.primary;
+                        text: Tr.t("retry");
+                        clicked => { BulbsState.pair-retry(); }
+                    }
+                    Button {
+                        small: true;
+                        kind: root.p.step == 1 ? ButtonKind.normal : ButtonKind.plain;
+                        text: Tr.t(root.p.step == 1 ? "close" : "tuya_cancel");
+                        clicked => { BulbsState.pair-close(); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The panel of the Smart Life sign-in.
+component TuyaView inherits VerticalLayout {
+    property <TuyaPanel> tu: BulbsState.tuya;
+    GroupHead { title: Tr.t("tuya_title"); }
+    Card {
+        VerticalLayout {
+            padding-left: S.s5;
+            padding-right: S.s5;
+            padding-top: S.s4;
+            padding-bottom: S.s4;
+            spacing: S.s3;
+            // The user code.
+            if root.tu.step == 1 || root.tu.step == 2: VerticalLayout {
+                spacing: S.s3;
+                HorizontalLayout {
+                    spacing: S.s3;
+                    alignment: start;
+                    Text {
+                        text: Tr.t("tuya_code");
+                        font-size: S.t-md;
+                        font-weight: 500;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                    }
+                    code := TextField {
+                        width: 220px;
+                        text <=> BulbsState.code;
+                        label: Tr.t("tuya_code");
+                        invalid: root.tu.problem != "";
+                        enabled: root.tu.step == 1;
+                        edited(t) => { BulbsState.code-edited(t); }
+                        accepted(t) => { BulbsState.tuya-continue(t); }
+                        cancelled => { BulbsState.tuya-cancel(); }
+                        init => { self.focus-field(); }
+                    }
+                }
+                if root.tu.problem != "": HorizontalLayout {
+                    spacing: S.s2;
+                    alignment: start;
+                    accessible-role: text;
+                    accessible-label: root.tu.problem;
+                    accessible-live-region: assertive;
+                    Icon { y: (parent.height - self.height) / 2; name: "alert"; size: 13px; color: Theme.danger; }
+                    Text { text: root.tu.problem; font-size: S.t-md; color: Theme.danger; accessible-role: none; }
+                }
+                if root.tu.expired: Text {
+                    text: Tr.t("tuya_expired");
+                    font-size: S.t-md;
+                    color: Theme.glow-text;
+                    wrap: word-wrap;
+                }
+                Note { text: Tr.t("tuya_code_help"); }
+                HorizontalLayout {
+                    spacing: S.s2;
+                    alignment: start;
+                    Button {
+                        kind: ButtonKind.plain;
+                        text: Tr.t("tuya_cancel");
+                        clicked => { BulbsState.tuya-cancel(); }
+                    }
+                    Button {
+                        kind: ButtonKind.primary;
+                        text: Tr.t("tuya_continue");
+                        enabled: root.tu.step == 1;
+                        icon: root.tu.step == 2 ? "refresh" : "";
+                        spinning: root.tu.step == 2;
+                        clicked => { BulbsState.tuya-continue(BulbsState.code); }
+                    }
+                }
+            }
+            // The QR code.
+            if root.tu.step == 3: HorizontalLayout {
+                spacing: S.s5;
+                // A QR code reads dark on white whatever the theme.
+                Rectangle {
+                    width: 168px;
+                    height: 168px;
+                    border-radius: S.r-md;
+                    background: white;
+                    clip: true;
+                    Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: root.tu.qr;
+                        accessible-role: image;
+                        accessible-label: Tr.t("tuya_qr");
+                    }
+                }
+                VerticalLayout {
+                    spacing: S.s3;
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    Text { text: Tr.t("tuya_scan"); font-size: S.t-md; color: Theme.text; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: S.s2;
+                        alignment: start;
+                        Spinner { y: (parent.height - self.height) / 2; size: 12px; tint: Theme.text-3; }
+                        Note { text: Tr.t("tuya_waiting"); }
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        Button {
+                            small: true;
+                            kind: ButtonKind.plain;
+                            text: Tr.t("tuya_cancel");
+                            clicked => { BulbsState.tuya-cancel(); }
+                        }
+                    }
+                }
+            }
+            if root.tu.step == 4: HorizontalLayout {
+                spacing: S.s2;
+                alignment: start;
+                Spinner { y: (parent.height - self.height) / 2; size: 12px; tint: Theme.text-3; }
+                Text { text: Tr.t("tuya_adding"); font-size: S.t-md; color: Theme.text; }
+            }
+            if root.tu.step == 5: VerticalLayout {
+                spacing: S.s3;
+                for line[i] in root.tu.lines: Text {
+                    text: line;
+                    font-size: i == 0 ? S.t-lg : S.t-md;
+                    font-weight: i == 0 ? 600 : 400;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: S.s2;
+                    alignment: start;
+                    if root.tu.add-label != "": Button {
+                        kind: ButtonKind.primary;
+                        text: root.tu.add-label;
+                        clicked => { BulbsState.tuya-add-ready(); }
+                    }
+                    if root.tu.show-plan: Button {
+                        kind: ButtonKind.primary;
+                        text: Tr.t("step2_btn");
+                        clicked => { BulbsState.tuya-plan(); }
+                    }
+                    if root.tu.show-search: Button {
+                        text: Tr.t("search_again");
+                        enabled: !BulbsState.scanning;
+                        clicked => { BulbsState.tuya-search-again(); }
+                    }
+                    Button {
+                        kind: ButtonKind.plain;
+                        text: Tr.t("close");
+                        clicked => { BulbsState.tuya-cancel(); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component DeviceView inherits Rectangle {
+    in property <DeviceRow> d;
+    in property <bool> first;
+    min-height: 50px;
+    if !root.first: Hairline { x: 0; y: 0; width: parent.width; }
+    HorizontalLayout {
+        padding-left: S.s4;
+        padding-right: S.s3;
+        padding-top: S.s2;
+        padding-bottom: S.s2;
+        spacing: S.s3;
+        // A bulb found but not in the room yet: a dashed place, like a light
+        // with no bulb, holding the bulb mark.
+        VerticalLayout {
+            alignment: center;
+            LightDot {
+                kind: 0;
+                Icon { x: 7px; y: 7px; name: "bulb"; size: 14px; color: Theme.text-2; }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.d.name;
+                font-size: S.t-md;
+                font-weight: 500;
+                color: Theme.text;
+                overflow: elide;
+            }
+            HorizontalLayout {
+                alignment: start;
+                Text { text: root.d.meta; font-size: S.t-sm; color: Theme.text-3; overflow: elide; }
+                // Amber like any light waiting on the user, and in words.
+                if root.d.warn != "": Text {
+                    text: ", " + root.d.warn;
+                    font-size: S.t-sm;
+                    color: Theme.glow-text;
+                    overflow: elide;
+                }
+            }
+        }
+        if root.d.paired: VerticalLayout {
+            alignment: center;
+            Button {
+                small: true;
+                kind: ButtonKind.plain;
+                text: Tr.t("identify");
+                tip: Tr.t("identify_tip");
+                clicked => { BulbsState.identify-device(root.d.id); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            if root.d.action == 0: Button {
+                small: true;
+                kind: root.d.faster ? ButtonKind.plain : ButtonKind.normal;
+                text: root.d.pair-label;
+                tip: root.d.pair-tip;
+                enabled: !root.d.pair-blocked;
+                icon: root.d.pairing ? "refresh" : "";
+                spinning: root.d.pairing;
+                clicked => { BulbsState.pair(root.d.id); }
+            }
+            if root.d.action == 1: UseFor {
+                label: root.d.use-label;
+                choices: BulbsState.use-choices;
+                chosen(i) => { BulbsState.use-for(root.d.id, i); }
+            }
+            if root.d.action == 2: Button {
+                small: true;
+                text: Tr.t("add");
+                clicked => { BulbsState.add(root.d.id); }
+            }
+        }
+    }
+}
+
+component NetworkColumn inherits VerticalLayout {
+    spacing: S.s6;
+    alignment: start;
+    if BulbsState.network-shown: VerticalLayout {
+        GroupHead {
+            title: Tr.t("on_network");
+            if BulbsState.found-count != "": Note {
+                text: BulbsState.found-count;
+                vertical-alignment: center;
+                horizontal-stretch: 0;
+            }
+        }
+        Card {
+            if BulbsState.devices.length == 0: VerticalLayout {
+                padding-left: S.s5;
+                padding-right: S.s5;
+                padding-top: S.s6;
+                padding-bottom: S.s6;
+                spacing: S.s1;
+                if BulbsState.empty-kind == 0: Text {
+                    text: Tr.t("listening");
+                    font-size: S.t-md;
+                    color: Theme.text-3;
+                    horizontal-alignment: center;
+                }
+                if BulbsState.empty-kind != 0: Text {
+                    text: Tr.t(BulbsState.empty-kind == 1 ? "none_title" : "first_title");
+                    font-size: S.t-md;
+                    font-weight: 600;
+                    color: Theme.text;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                if BulbsState.empty-kind == 2: Text {
+                    text: Tr.t("first_text");
+                    font-size: S.t-md;
+                    color: Theme.text-3;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                if BulbsState.tuya-hint: VerticalLayout {
+                    padding-top: S.s3;
+                    spacing: S.s2;
+                    Text {
+                        text: Tr.t("tuya_hint");
+                        font-size: S.t-md;
+                        color: Theme.text-3;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        Button {
+                            small: true;
+                            text: Tr.t("tuya_title");
+                            clicked => { BulbsState.open-tuya(); }
+                        }
+                    }
+                }
+            }
+            for d[i] in BulbsState.devices: DeviceView { d: d; first: i == 0; }
+            if BulbsState.devices.length > 0 && BulbsState.tuya-hint: VerticalLayout {
+                Hairline { }
+                HorizontalLayout {
+                    padding-left: S.s4;
+                    padding-right: S.s3;
+                    padding-top: S.s3;
+                    padding-bottom: S.s3;
+                    spacing: S.s3;
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        Note { text: Tr.t("tuya_hint"); }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Button {
+                            small: true;
+                            kind: ButtonKind.plain;
+                            text: Tr.t("tuya_title");
+                            clicked => { BulbsState.open-tuya(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // The tips for a bulb that does not show up, open by themselves when a
+    // search found nothing at all.
+    Card {
+        VerticalLayout {
+            padding-left: S.s4;
+            padding-right: S.s5;
+            padding-top: S.s3;
+            padding-bottom: BulbsState.tips-open ? S.s4 : S.s3;
+            spacing: S.s3;
+            HorizontalLayout {
+                alignment: start;
+                Disclosure {
+                    text: Tr.t("tips_title");
+                    open: BulbsState.tips-open;
+                    toggled => { BulbsState.toggle-tips(); }
+                }
+            }
+            if BulbsState.tips-open: VerticalLayout {
+                padding-left: 22px;
+                spacing: S.s2;
+                for key[i] in ["tip_1", "tip_2", "tip_3", "tip_4", "tip_5"]: HorizontalLayout {
+                    spacing: S.s2;
+                    Text { width: 16px; text: (i + 1) + "."; font-size: S.t-md; color: Theme.text-2; }
+                    Text { text: Tr.t(key); font-size: S.t-md; color: Theme.text-2; wrap: word-wrap; horizontal-stretch: 1; }
+                }
+            }
+        }
+    }
+}
+
+component LightView inherits Rectangle {
+    in property <BulbCard> c;
+    property <bool> editing;
+    min-height: 60px;
+    border-radius: S.r-lg;
+    border-width: 1px;
+    // No bulb yet: an outline waiting for one, not a card.
+    background: c.bound ? Theme.material : transparent;
+    border-color: c.bound ? Theme.separator : Theme.line-strong;
+    function finish() {
+        if (editing) {
+            editing = false;
+            BulbsState.light-rename-done(c.id);
+        }
+    }
+    HorizontalLayout {
+        padding-left: S.s3;
+        padding-right: S.s2;
+        padding-top: S.s2;
+        padding-bottom: S.s2;
+        spacing: S.s3;
+        VerticalLayout {
+            alignment: center;
+            LightDot { kind: root.c.dot; from: root.c.dot-from; to: root.c.dot-to; halo: root.c.dot-halo; }
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Rectangle {
+                height: 28px;
+                // Plain text until it is pointed at or chosen, then a field.
+                if !root.editing: name := Rectangle {
+                    x: -9px;
+                    width: min(parent.width + 9px, label.preferred-width + 18px);
+                    border-radius: 7px;
+                    border-width: 1px;
+                    border-color: np.hovered ? Theme.line-strong : transparent;
+                    background: np.hovered ? Theme.surface : transparent;
+                    forward-focus: np;
+                    accessible-role: text-input;
+                    accessible-label: Tr.t("light_name");
+                    accessible-value: root.c.name;
+                    accessible-action-default => { root.editing = true; }
+                    np := Pressable {
+                        clicked => { root.editing = true; }
+                        label := Text {
+                            x: 8px;
+                            width: parent.width - 16px;
+                            text: root.c.name;
+                            font-size: S.t-md;
+                            font-weight: 500;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            accessible-role: none;
+                        }
+                    }
+                    TouchArea { mouse-cursor: text; clicked => { root.editing = true; } }
+                    FocusRing { w: parent.width; h: parent.height; shown: np.keyboard; radius: 7px; }
+                }
+                if root.editing: field := TextField {
+                    x: -9px;
+                    width: parent.width + 9px;
+                    label: Tr.t("light_name");
+                    init => {
+                        self.text = root.c.name;
+                        self.focus-field();
+                        self.select-all();
+                    }
+                    // The name changes everywhere as it is typed.
+                    edited(t) => { BulbsState.light-rename(root.c.id, t); }
+                    accepted => { root.finish(); }
+                    cancelled => { root.finish(); }
+                    changed focused => {
+                        if (!self.focused) { root.finish(); }
+                    }
+                }
+            }
+            Text {
+                text: root.c.meta;
+                font-size: S.t-sm;
+                color: root.c.bound ? Theme.text-3 : Theme.glow-text;
+                overflow: elide;
+            }
+        }
+        HorizontalLayout {
+            spacing: 2px;
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    small: true;
+                    kind: ButtonKind.plain;
+                    icon: "plan";
+                    width: 24px;
+                    label: root.c.plan-label;
+                    tip: Tr.t("show_on_plan");
+                    clicked => { BulbsState.light-show-on-plan(root.c.id); }
+                }
+            }
+            if root.c.bound: VerticalLayout {
+                alignment: center;
+                Button {
+                    small: true;
+                    kind: ButtonKind.plain;
+                    icon: "flash";
+                    width: 24px;
+                    label: root.c.identify-label;
+                    tip: Tr.t("identify_tip");
+                    clicked => { BulbsState.light-identify(root.c.id); }
+                }
+            }
+            if root.c.bound: VerticalLayout {
+                alignment: center;
+                Button {
+                    small: true;
+                    kind: ButtonKind.plain;
+                    icon: "unlink";
+                    width: 24px;
+                    label: root.c.unassign-label;
+                    tip: Tr.t("unassign_tip");
+                    clicked => { BulbsState.light-unassign(root.c.id); }
+                }
+            }
+            // A light left without its bulb can go from here too.
+            if !root.c.bound: VerticalLayout {
+                alignment: center;
+                Button {
+                    small: true;
+                    kind: ButtonKind.danger;
+                    icon: "trash";
+                    width: 24px;
+                    label: root.c.remove-label;
+                    tip: Tr.t("remove_light");
+                    clicked => { BulbsState.light-remove(root.c.id); }
+                }
+            }
+        }
+    }
+}
+
+component LightsColumn inherits VerticalLayout {
+    alignment: start;
+    GroupHead {
+        title: Tr.t("in_room");
+        VerticalLayout {
+            alignment: center;
+            Button {
+                small: true;
+                kind: ButtonKind.plain;
+                text: Tr.t("step2_btn");
+                clicked => { BulbsState.open-plan(); }
+            }
+        }
+    }
+    VerticalLayout {
+        spacing: S.s2;
+        for c in BulbsState.lights: LightView { c: c; }
+    }
+}
+
+export component BulbsPage inherits PageScroll {
+    max-content: BulbsState.has-lights ? 1240px : 820px;
+    spacing: S.s5;
+    // Side by side once the room has lights and there is room for two
+    // columns; before that, the network alone.
+    property <bool> two-cols: BulbsState.has-lights && self.visible-width >= 960px;
+
+    HorizontalLayout {
+        spacing: S.s4;
+        min-height: 34px;
+        PageTitle {
+            text: Tr.t("nav_bulbs");
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        HorizontalLayout {
+            spacing: S.s2;
+            alignment: end;
+            if BulbsState.add-all-shown: VerticalLayout {
+                alignment: center;
+                Button {
+                    text: Tr.t("add_all");
+                    clicked => { BulbsState.add-all(); }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: Tr.t("tuya_open");
+                    tip: Tr.t("tuya_open_tip");
+                    enabled: !BulbsState.tuya-busy;
+                    clicked => { BulbsState.open-tuya(); }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    text: BulbsState.search-label;
+                    kind: BulbsState.search-primary ? ButtonKind.primary : ButtonKind.normal;
+                    enabled: !BulbsState.scanning;
+                    icon: BulbsState.scanning ? "refresh" : "";
+                    spinning: BulbsState.scanning;
+                    clicked => { BulbsState.search(); }
+                }
+            }
+        }
+    }
+    // Always there, so each change to the pairing or the import, and each
+    // device to check, is read out.
+    Rectangle {
+        height: 0px;
+        accessible-role: text;
+        accessible-label: BulbsState.said;
+        accessible-live-region: polite;
+    }
+    if BulbsState.checks.length > 0: VerticalLayout {
+        spacing: S.s2;
+        for c in BulbsState.checks: CheckView { c: c; }
+    }
+    if BulbsState.pairing.shown: PairingView { }
+    if BulbsState.tuya.step != 0: TuyaView { }
+    if root.two-cols: HorizontalLayout {
+        spacing: 36px;
+        alignment: start;
+        NetworkColumn { horizontal-stretch: 1; width: (parent.width - 36px) / 2; }
+        LightsColumn { horizontal-stretch: 1; width: (parent.width - 36px) / 2; }
+    }
+    if !root.two-cols: VerticalLayout {
+        spacing: S.s6;
+        NetworkColumn { }
+        if BulbsState.has-lights: LightsColumn { }
+    }
+}

@@ -1,7 +1,7 @@
 //! Logs, for whoever needs to see what Lueur did on real hardware.
 //!
-//! Everything logs through the `log` facade, which most of the tree (GPUI,
-//! rustls, the Tuya driver…) already speaks, into the small logger here:
+//! Everything logs through the `log` facade, which most of the tree (rustls,
+//! the Tuya driver…) already speaks, into the small logger here:
 //! each line goes to stderr and to `logs/lueur.log` in the data folder. The
 //! file is capped: past [`MAX_FILE`] it becomes `lueur.old.log`, replacing
 //! the one before, and a fresh one starts, so the logs never take more than
@@ -526,7 +526,7 @@ mod tests {
         let mut files = Vec::new();
         walk(&root.join("src"), &mut files);
         walk(&root.join("../lueur-core/src"), &mut files);
-        walk(&root.join("../lueur-gpui/src"), &mut files);
+        walk(&root.join("../lueur-slint/src"), &mut files);
         assert!(files.len() > 20, "the sources were found");
 
         let mut calls = Vec::new();

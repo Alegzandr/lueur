@@ -7,9 +7,9 @@ license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 
-# Everything a window needs from the running app, whatever draws the window:
-# the Tauri shell today, the GPUI one next. Neither framework is a dependency
-# here; each front end plugs into `Shell` through the `Host` trait.
+# Everything a window needs from the running app, whatever draws the window
+# (Slint, in crates/lueur-slint). No interface framework is a dependency
+# here; a front end plugs into `Shell` through the `Host` trait.
 
 [dependencies]
 lueur-core = { path = "../lueur-core" }

@@ -1,0 +1,72 @@
+[package]
+name = "lueur-slint"
+description = "Lueur's window, drawn with Slint over lueur-shell."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+# The release and the updater ship `lueur` (see .github/workflows/release.yml);
+# Windows installs it as lueur-app.exe (lueur-shell's install.rs).
+[[bin]]
+name = "lueur"
+path = "src/main.rs"
+
+[build-dependencies]
+slint-build = "1.18.1"
+# The executable's icon and version on Windows (build.rs). Declared for
+# every host: the build script decides by the target, and calls it only for
+# Windows.
+embed-resource = "3.0"
+
+[dependencies]
+lueur-core = { path = "../lueur-core" }
+lueur-shell = { path = "../lueur-shell" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { version = "0.4.29", features = ["kv"] }
+# The window: the winit backend, drawn with OpenGL (femtovg) or, without
+# it, on the CPU, and described to assistive technology through AccessKit.
+# The tray is tray-icon's (below), drawn from lueur_shell::tray_model.
+slint = { version = "1.18.1", default-features = false, features = [
+    "std",
+    "backend-default",
+    "renderer-femtovg",
+    "renderer-software",
+    "accessibility",
+    "compat-1-2",
+    # The window brought to the front from the tray (src/app.rs).
+    "unstable-winit-030",
+] }
+# The save and open dialogs of the configuration file (Settings): the
+# system's own, through the desktop portal on Linux.
+rfd = "0.17.2"
+# The system's language, when the interface follows it.
+sys-locale = "0.3"
+# The tray icon's pixels, the room's photographs (WebP) and their blur.
+image = { version = "0.25", default-features = false, features = ["png", "webp"] }
+# Ids for new lights (src/pages/room.rs), as the Tauri interface makes
+# them. The version lueur-shell already uses.
+uuid = { version = "1.29.0", features = ["v4"] }
+
+# The tray: the crate Tauri's own tray uses, without Tauri. On Linux it needs
+# a GTK loop of its own, which this shell does not run yet.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+tray-icon = "0.25"
+
+# One instance at a time, recognised by the Tauri version too (src/single.rs),
+# and the system's "show animations" setting (src/app.rs).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# One instance at a time over the session bus, as the Tauri plugin does it
+# (src/single.rs). The version lueur-shell already uses.
+zbus = "5.17"

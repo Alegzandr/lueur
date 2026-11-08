@@ -1,0 +1,415 @@
+// What the window around the pages shows: the sidebar, the update button,
+// the toasts and the backdrops, and the page a page scrolls in.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme, S, Motion } from "theme.slint";
+import { Tr } from "tr.slint";
+import { Icon, Pressable, FocusRing, Badge, LampDot, Button, ButtonKind } from "controls.slint";
+
+export struct NavItem {
+    label: string,
+    icon: string,
+    // Lights drawn in the room with no bulb yet, counted on Bulbs.
+    badge: int,
+}
+
+export struct Toast {
+    id: int,
+    error: bool,
+    // The words, with the count when the same message came more than once.
+    text: string,
+    // The untranslated technical cause.
+    detail: string,
+    // The words of its button, if it has one ("Undo").
+    action: string,
+}
+
+// The window's own state, set from Rust (src/window.rs).
+export global Nav {
+    // 0 Lighting, 1 Room, 2 Bulbs, 3 Settings.
+    in-out property <int> view;
+    in property <[NavItem]> items;
+    // The version installed and waiting for a restart, if any.
+    in property <string> update-ready;
+    // "Version 0.20.0 is installed. Restart Lueur to apply it."
+    in property <string> update-tip;
+    in property <[Toast]> toasts;
+    callback go(int);
+    callback toggle-effect();
+    callback restart-into-update();
+    callback dismiss(int);
+    callback toast-action(int);
+    callback hold-toast(int, bool);
+    // The system switched between light and dark.
+    callback scheme-changed();
+}
+
+// The pictures behind the pages, worked out in Rust: the glow of the lights
+// behind Lighting, the room's photograph as its lights make it behind the
+// others (src/pages/lighting/backdrop.rs).
+export global Backdrop {
+    in property <image> glow;
+    in property <bool> glow-shown;
+    // The dither laid over the glow where light reaches (`glow.rs`), and
+    // that place, in page pixels.
+    in property <image> noise;
+    in property <length> noise-x;
+    in property <length> noise-y;
+    in property <length> noise-width;
+    in property <length> noise-height;
+    // True while the pools move: `frame` is called once per frame the
+    // screen shows, until they rest.
+    in property <bool> animating;
+    callback frame();
+    // The room now, and the room it dissolves from, each with the colour
+    // of a light set by hand laid over it.
+    in property <image> room;
+    in property <bool> room-tinted;
+    in property <color> room-tint;
+    in property <image> room-before;
+    in property <bool> before-tinted;
+    in property <color> before-tint;
+    in property <float> room-mix: 1;
+    in property <float> room-opacity: 0.8;
+    // The page's size, for the glow's picture.
+    in-out property <length> page-width;
+    in-out property <length> page-height;
+    callback resized();
+}
+
+// The page's scrolling column: at most `max-content` wide, centred, padded
+// as DESIGN.md's "Layout" says.
+export component PageScroll inherits ScrollView {
+    in property <length> max-content: 820px;
+    in property <length> spacing: S.s6;
+    property <length> side: S.s7;
+    property <length> inner: min(root.max-content, root.visible-width - 2 * root.side);
+    content-width: root.visible-width;
+    content-height: col.preferred-height;
+    col := VerticalLayout {
+        x: max(root.side, (root.visible-width - root.inner) / 2);
+        width: root.inner;
+        padding-top: S.s3;
+        padding-bottom: S.s6;
+        spacing: root.spacing;
+        alignment: start;
+        @children
+    }
+}
+
+component NavButton inherits Rectangle {
+    in property <NavItem> item;
+    in property <bool> selected;
+    in property <int> index;
+    callback clicked;
+    height: 36px;
+    border-radius: 7px;
+    forward-focus: p;
+    accessible-role: tab;
+    accessible-label: item.badge > 0 ? item.label + ", " + Tr.t("unbound_badge") + ": " + item.badge : item.label;
+    accessible-item-selectable: true;
+    accessible-item-selected: selected;
+    accessible-item-index: index;
+    accessible-item-count: 4;
+    accessible-description: (Tr.mac ? "⌘" : "Ctrl+") + (index + 1);
+    accessible-action-default => { clicked(); }
+    background: selected ? Theme.surface : p.hovered ? Theme.surface-hover : transparent;
+    border-width: selected ? 1px : 0px;
+    border-color: Theme.separator;
+    drop-shadow-blur: selected ? 2px : 0px;
+    drop-shadow-offset-y: 0.5px;
+    drop-shadow-color: Theme.shadow;
+    p := Pressable {
+        clicked => { root.clicked(); }
+        HorizontalLayout {
+            padding-left: S.s3;
+            padding-right: S.s3;
+            spacing: S.s3;
+            Icon {
+                y: (parent.height - self.height) / 2;
+                name: root.item.icon;
+                size: 18px;
+                filled: root.selected;
+                // The current page's icon is amber, like the light it is about.
+                color: root.selected ? Theme.active : Theme.text-2;
+            }
+            Text {
+                text: root.item.label;
+                font-size: S.t-md;
+                font-weight: root.selected ? 500 : 400;
+                color: root.selected ? Theme.text : Theme.text-2;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+                accessible-role: none;
+            }
+            if root.item.badge > 0: VerticalLayout {
+                alignment: center;
+                Badge { text: root.item.badge; }
+            }
+        }
+    }
+    FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: 7px; }
+}
+
+export component Sidebar inherits Rectangle {
+    width: 220px;
+    background: Theme.sidebar.with-alpha(0.73);
+    accessible-role: navigation;
+    accessible-label: "Lueur";
+    Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        background: Theme.separator;
+    }
+    VerticalLayout {
+        padding-left: S.s3;
+        padding-right: S.s3;
+        padding-top: S.s3;
+        padding-bottom: S.s3;
+        spacing: 2px;
+        alignment: start;
+        HorizontalLayout {
+            height: 40px;
+            padding-left: S.s2;
+            spacing: S.s2;
+            Image {
+                y: (parent.height - self.height) / 2;
+                width: 22px;
+                height: 22px;
+                source: @image-url("../assets/logo-mark.svg");
+                accessible-role: none;
+            }
+            Text {
+                text: "Lueur";
+                font-size: S.t-lg;
+                font-weight: 600;
+                color: Theme.text;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+        }
+        Rectangle { height: S.s3; }
+        VerticalLayout {
+            spacing: 2px;
+            accessible-role: tab-list;
+            for item[i] in Nav.items: NavButton {
+                item: item;
+                index: i;
+                selected: i == Nav.view;
+                clicked => { Nav.go(i); }
+            }
+        }
+    }
+}
+
+// The button that restarts into an installed update, when there is one.
+export component UpdateButton inherits Rectangle {
+    height: 24px;
+    border-radius: 12px;
+    background: Theme.active-soft;
+    forward-focus: p;
+    accessible-role: button;
+    accessible-label: Tr.t("update_restart");
+    accessible-description: tip;
+    accessible-action-default => { Nav.restart-into-update(); }
+    property <string> tip: Nav.update-tip;
+    p := Pressable {
+        clicked => { Nav.restart-into-update(); }
+        HorizontalLayout {
+            padding-left: S.s3;
+            padding-right: S.s3;
+            spacing: S.s2;
+            VerticalLayout {
+                alignment: center;
+                LampDot { }
+            }
+            Text {
+                text: Tr.t("update_restart");
+                font-size: S.t-sm;
+                font-weight: 500;
+                color: Theme.active-text;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+        }
+    }
+    FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: 12px; }
+}
+
+component ToastView inherits Rectangle {
+    in property <Toast> toast;
+    border-radius: S.r-md;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: toast.error ? Theme.danger : Theme.line;
+    drop-shadow-blur: 16px;
+    drop-shadow-offset-y: 4px;
+    drop-shadow-color: Theme.shadow-float;
+    accessible-role: text;
+    accessible-label: toast.text;
+    accessible-description: toast.detail;
+    accessible-live-region: toast.error ? assertive : polite;
+    // Pointed at, an information toast waits.
+    hover := TouchArea {
+        changed has-hover => { Nav.hold-toast(root.toast.id, self.has-hover); }
+    }
+    HorizontalLayout {
+        padding: S.s3;
+        spacing: S.s3;
+        Icon {
+            name: root.toast.error ? "alert" : "info";
+            size: 16px;
+            color: root.toast.error ? Theme.danger : Theme.text-2;
+        }
+        VerticalLayout {
+            spacing: S.s1;
+            horizontal-stretch: 1;
+            Text {
+                text: root.toast.text;
+                font-size: S.t-md;
+                color: Theme.text;
+                wrap: word-wrap;
+                accessible-role: none;
+            }
+            if root.toast.detail != "": Text {
+                text: root.toast.detail;
+                font-size: S.t-xs;
+                color: Theme.text-3;
+                wrap: word-wrap;
+                accessible-role: none;
+            }
+            if root.toast.action != "": HorizontalLayout {
+                alignment: start;
+                Button {
+                    kind: ButtonKind.plain;
+                    small: true;
+                    text: root.toast.action;
+                    clicked => { Nav.toast-action(root.toast.id); }
+                }
+            }
+        }
+        Button {
+            kind: ButtonKind.plain;
+            small: true;
+            icon: "close";
+            label: Tr.t("dismiss");
+            clicked => { Nav.dismiss(root.toast.id); }
+        }
+    }
+}
+
+export component Toasts inherits VerticalLayout {
+    width: 380px;
+    spacing: S.s2;
+    alignment: end;
+    for toast in Nav.toasts: ToastView { toast: toast; }
+}
+
+// One photograph of the room behind the pages, with the colour of a light
+// set by hand over it and, on paper, a wash of the ground that lifts it to
+// a high key.
+component RoomLayer inherits Rectangle {
+    in property <image> source;
+    in property <bool> tinted;
+    in property <color> tint;
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.source;
+        image-fit: cover;
+        accessible-role: none;
+    }
+    if root.tinted: Rectangle {
+        background: root.tint.with-alpha(0.45);
+    }
+    if !Theme.dark: Rectangle {
+        background: Theme.bg.with-alpha(0.55);
+    }
+}
+
+// Behind every page: the glow on Lighting, the room's photograph on the
+// others, at the top of the window and dissolved into the ground by 62 % of
+// its height, so cards stand on plain ground.
+export component BackdropView inherits Rectangle {
+    background: Theme.bg;
+    clip: true;
+    changed width => {
+        Backdrop.page-width = self.width;
+        Backdrop.resized();
+    }
+    changed height => {
+        Backdrop.page-height = self.height;
+        Backdrop.resized();
+    }
+    // One call per frame the screen shows, while the pools move.
+    property <duration> tick: Backdrop.animating ? animation-tick() : 0ms;
+    changed tick => { Backdrop.frame(); }
+    if !Backdrop.glow-shown: Rectangle {
+        property <length> h: min(root.height * 0.62, 560px);
+        y: 0;
+        height: h;
+        clip: true;
+        Rectangle {
+            opacity: Backdrop.room-opacity;
+            RoomLayer {
+                source: Backdrop.room-before;
+                tinted: Backdrop.before-tinted;
+                tint: Backdrop.before-tint;
+                opacity: 1 - Backdrop.room-mix;
+            }
+            RoomLayer {
+                source: Backdrop.room;
+                tinted: Backdrop.room-tinted;
+                tint: Backdrop.room-tint;
+                opacity: Backdrop.room-mix;
+            }
+        }
+        // On paper the dark screen in the middle would only grey the
+        // ground: a soft patch of the ground covers it.
+        if !Theme.dark: Rectangle {
+            x: parent.width * 0.38 - parent.h * 0.3;
+            y: parent.h * 0.05 - parent.h * 0.3;
+            width: parent.width * 0.24 + parent.h * 0.6;
+            height: parent.h * 0.35 + parent.h * 0.6;
+            background: @radial-gradient(circle, Theme.bg.with-alpha(0.75) 0%, Theme.bg.with-alpha(0.6) 35%, Theme.bg.with-alpha(0) 70%);
+        }
+        // Gone by the time the cards gather: the page's own ground below.
+        Rectangle {
+            y: 0;
+            height: parent.h * 0.45;
+            background: @linear-gradient(180deg, Theme.bg.with-alpha(0) 0%, Theme.bg.with-alpha(0.45) 100%);
+        }
+        Rectangle {
+            y: parent.h * 0.45;
+            height: parent.h * 0.55;
+            background: @linear-gradient(180deg, Theme.bg.with-alpha(0.45) 0%, Theme.bg 100%);
+        }
+    }
+    if Backdrop.glow-shown: Image {
+        width: parent.width;
+        height: parent.height;
+        source: Backdrop.glow;
+        image-fit: fill;
+        accessible-role: none;
+    }
+    // The dither, one tile pixel to one screen pixel, where light reaches.
+    if Backdrop.glow-shown && Backdrop.noise-width > 0: Rectangle {
+        x: Backdrop.noise-x;
+        y: Backdrop.noise-y;
+        width: Backdrop.noise-width;
+        height: Backdrop.noise-height;
+        clip: true;
+        Image {
+            x: -Math.mod(Backdrop.noise-x / 1px, 128) * 1px;
+            y: -Math.mod(Backdrop.noise-y / 1px, 128) * 1px;
+            width: parent.width + 128px;
+            height: parent.height + 128px;
+            source: Backdrop.noise;
+            horizontal-tiling: repeat;
+            vertical-tiling: repeat;
+            image-fit: preserve;
+            accessible-role: none;
+        }
+    }
+}

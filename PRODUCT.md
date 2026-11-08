@@ -6,8 +6,7 @@
 
 desktop
 
-Desktop app written in Rust, its window drawn with GPUI (Zed's interface
-framework), on Windows, macOS and Linux. The window is resizable with a 960 × 640 minimum; it is not a website and has no
+Desktop app written in Rust, its window drawn with Slint, on Windows, macOS and Linux. The window is resizable with a 960 × 640 minimum; it is not a website and has no
 mobile layout.
 
 ## Users
@@ -93,7 +92,7 @@ Several things together, the first one leading:
 ## Brand Commitments
 
 - Name: **Lueur**. Logo: `assets/logo.svg` (the mark the window shows:
-  `crates/lueur-gpui/assets/logo-mark.svg`).
+  `crates/lueur-slint/assets/logo-mark.svg`).
 - Interface in English and French (`locales/en.json`, `locales/fr.json`);
   brand names stay the same in every language.
 - Voice: plain, concrete sentences that say what happens ("the light around
@@ -138,5 +137,5 @@ Several things together, the first one leading:
   Windows"; macOS and Linux are not read yet.
 - Full keyboard use, including on the room plan.
 - Every control tells screen readers what it is, its name and its state,
-  through GPUI's AccessKit integration.
+  through Slint's AccessKit integration.
 - English and French with equal standing.

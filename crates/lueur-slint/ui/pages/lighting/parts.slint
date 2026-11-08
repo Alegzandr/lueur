@@ -1,0 +1,563 @@
+// The Lighting page's own pieces: a light's disc, the room's framed
+// photographs, the dashed edges Slint has no border for, the light cards,
+// the mode tiles and the scene cards.
+
+import { Theme, S, Motion } from "../../theme.slint";
+import { Tr } from "../../tr.slint";
+import { Icon, Pressable, FocusRing, LampDot, Button, ButtonKind } from "../../controls.slint";
+
+// How a light glows now, worked out in Rust (src/pages/lighting/view.rs).
+export struct Disc {
+    // 0 no bulb (a dashed ring), 1 off (a hollow ring), 2 an effect (the
+    // gradient from `a` to `b`), 3 a white or colour set by hand (`a`).
+    kind: int,
+    a: color,
+    b: color,
+    // The glow around it.
+    halo: color,
+}
+
+// The ease the GPUI version used for its loops, as a smooth step.
+export global Ease {
+    public pure function smooth(x: float) -> float {
+        return x * x * (3 - 2 * x);
+    }
+    // 0 → 1 → 0 over `period`, from the animation clock.
+    public pure function swing(period: duration) -> float {
+        let t = Math.mod(animation-tick() / 1ms, period / 1ms) / (period / 1ms);
+        return smooth(1 - abs(2 * t - 1));
+    }
+}
+
+// A ring of twelve dashes, for a light with no bulb yet.
+export component DashedRing inherits Path {
+    in property <color> ink: Theme.line-strong;
+    viewbox-x: 0;
+    viewbox-y: 0;
+    viewbox-width: 100;
+    viewbox-height: 100;
+    stroke: ink;
+    stroke-width: 1px;
+    commands: "M 99.50 50.00 A 49.5 49.5 0 0 1 97.81 62.81 M 92.87 74.75 A 49.5 49.5 0 0 1 85.00 85.00 M 74.75 92.87 A 49.5 49.5 0 0 1 62.81 97.81 M 50.00 99.50 A 49.5 49.5 0 0 1 37.19 97.81 M 25.25 92.87 A 49.5 49.5 0 0 1 15.00 85.00 M 7.13 74.75 A 49.5 49.5 0 0 1 2.19 62.81 M 0.50 50.00 A 49.5 49.5 0 0 1 2.19 37.19 M 7.13 25.25 A 49.5 49.5 0 0 1 15.00 15.00 M 25.25 7.13 A 49.5 49.5 0 0 1 37.19 2.19 M 50.00 0.50 A 49.5 49.5 0 0 1 62.81 2.19 M 74.75 7.13 A 49.5 49.5 0 0 1 85.00 15.00 M 92.87 25.25 A 49.5 49.5 0 0 1 97.81 37.19";
+    accessible-role: none;
+}
+
+// Dashes along the straight parts of a rounded box's edge: the ring of a
+// mode some of the lights picked play.
+export component DashedEdge inherits Rectangle {
+    in property <color> ink;
+    in property <length> radius: S.r-lg;
+    in property <length> thickness: 2px;
+    property <length> dash: 6px;
+    property <length> gap: 4px;
+    property <int> across: Math.floor((self.width - 2 * radius) / (dash + gap));
+    property <int> down: Math.floor((self.height - 2 * radius) / (dash + gap));
+    property <length> across-start: (self.width - across * (dash + gap) + gap) / 2;
+    property <length> down-start: (self.height - down * (dash + gap) + gap) / 2;
+    for i in root.across: Rectangle {
+        x: root.across-start + i * (root.dash + root.gap);
+        y: 0;
+        width: root.dash;
+        height: root.thickness;
+        background: root.ink;
+    }
+    for i in root.across: Rectangle {
+        x: root.across-start + i * (root.dash + root.gap);
+        y: root.height - root.thickness;
+        width: root.dash;
+        height: root.thickness;
+        background: root.ink;
+    }
+    for i in root.down: Rectangle {
+        x: 0;
+        y: root.down-start + i * (root.dash + root.gap);
+        width: root.thickness;
+        height: root.dash;
+        background: root.ink;
+    }
+    for i in root.down: Rectangle {
+        x: root.width - root.thickness;
+        y: root.down-start + i * (root.dash + root.gap);
+        width: root.thickness;
+        height: root.dash;
+        background: root.ink;
+    }
+}
+
+// A light as it glows now, drawn round: its white or colour, fainter as it
+// dims, the gradient of the effect it plays, a hollow ring while off, a
+// dashed one with no bulb. What a bulb gives is content, so its real colour
+// belongs here. `edge` rings it with the page's ground, for a stack.
+export component LightDisc inherits Rectangle {
+    in property <Disc> disc;
+    in property <length> size: 28px;
+    in property <bool> edge;
+    width: edge ? size + 4px : size;
+    height: self.width;
+    border-radius: self.width / 2;
+    background: edge ? Theme.bg : transparent;
+    Rectangle {
+        x: root.edge ? 2px : 0;
+        y: self.x;
+        width: root.size;
+        height: root.size;
+        border-radius: root.size / 2;
+        background: root.disc.kind == 2 ? @linear-gradient(135deg, root.disc.a 0%, root.disc.b 100%)
+            : root.disc.kind == 3 ? root.disc.a : transparent;
+        border-width: root.disc.kind == 0 ? 0 : 1px;
+        border-color: root.disc.kind == 1 ? Theme.line-strong : #0000001f;
+        drop-shadow-blur: root.disc.kind >= 2 ? root.size * 0.45 : 0;
+        drop-shadow-color: root.disc.halo;
+        if root.disc.kind == 0: DashedRing {
+            width: parent.width;
+            height: parent.height;
+        }
+    }
+}
+
+// One of the room's photographs, framed: it covers its box, with rounded
+// corners and a hairline edge. `zoom` brings it closer from its middle;
+// `tint` lays the colour of a light set by hand over the neutral room.
+// Slint has no colour blend mode, so the colour is laid over it, half seen.
+export component Picture inherits Rectangle {
+    in property <image> source;
+    in property <float> zoom: 1;
+    in property <bool> tinted;
+    in property <color> tint;
+    in property <length> radius: 6px;
+    border-radius: radius;
+    background: Theme.sunken;
+    clip: true;
+    Image {
+        width: parent.width * root.zoom;
+        height: parent.height * root.zoom;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) * 0.42;
+        source: root.source;
+        image-fit: cover;
+        accessible-role: none;
+    }
+    if root.tinted: Rectangle {
+        background: root.tint.with-alpha(0.42);
+    }
+    // A hairline keeps a bright picture's edge on a white card.
+    Rectangle {
+        border-radius: root.radius;
+        border-width: 1px;
+        border-color: #00000024;
+    }
+}
+
+export struct LightCard {
+    id: string,
+    name: string,
+    // What it does, in words, and why when that needs a word more.
+    sub: string,
+    sub-tip: string,
+    // An effect plays on it: its name in the amber of light.
+    live: bool,
+    bright: string,
+    bound: bool,
+    picked: bool,
+    // The card picks the light (two lights or more with a bulb).
+    selectable: bool,
+    // Its one button: 0 a place for a bulb, 1 take the bulb back, 2 power.
+    action: int,
+    action-label: string,
+    action-text: string,
+    action-tip: string,
+    busy: bool,
+    disc: Disc,
+    description: string,
+}
+
+// A light's card: its disc, its name and what it does, and its button.
+// Picked, it takes a neutral ink edge and a tick on the disc, never amber.
+export component LightCardView inherits Rectangle {
+    in property <LightCard> card;
+    callback picked();
+    callback action();
+    forward-focus: p;
+    // Nothing to pick: a button that does nothing, which the keyboard passes by.
+    accessible-role: button;
+    accessible-enabled: card.bound && card.selectable;
+    accessible-label: card.name;
+    accessible-description: card.description;
+    accessible-checkable: card.bound && card.selectable;
+    accessible-checked: card.picked;
+    accessible-action-default => { if (card.bound && card.selectable) { picked(); } }
+    border-radius: S.r-lg;
+    background: !card.bound ? transparent
+        : card.picked || (card.selectable && p.hovered) ? Theme.material-hover : Theme.material;
+    border-width: card.picked ? 2px : 1px;
+    border-color: !card.bound ? Theme.line-strong : card.picked ? Theme.select : Theme.separator;
+    p := Pressable {
+        enabled-press: root.card.bound && root.card.selectable;
+        focus-on-tab-navigation: root.card.bound && root.card.selectable;
+        clicked => { root.picked(); }
+        HorizontalLayout {
+            padding-left: S.s3;
+            padding-right: S.s2;
+            spacing: S.s3;
+            Rectangle {
+                width: 28px;
+                LightDisc {
+                    y: (parent.height - self.height) / 2;
+                    disc: root.card.disc;
+                }
+                if root.card.picked: Rectangle {
+                    x: 28px - 11px;
+                    y: (parent.height + 28px) / 2 - 11px;
+                    width: 15px;
+                    height: 15px;
+                    border-radius: 7.5px;
+                    background: Theme.select;
+                    border-width: 2px;
+                    border-color: Theme.surface;
+                    Icon {
+                        name: "check";
+                        size: 9px;
+                        color: Theme.on-ink;
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                spacing: 1px;
+                horizontal-stretch: 1;
+                Text {
+                    text: root.card.name;
+                    font-size: S.t-md;
+                    font-weight: root.card.bound ? 600 : 500;
+                    color: root.card.bound ? Theme.text : Theme.text-2;
+                    overflow: elide;
+                    accessible-role: none;
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    Text {
+                        text: root.card.sub;
+                        font-size: S.t-sm;
+                        font-weight: root.card.live ? 500 : 400;
+                        color: root.card.live ? Theme.glow-text : Theme.text-2;
+                        overflow: elide;
+                        min-width: 0;
+                        horizontal-stretch: 0;
+                        accessible-role: none;
+                    }
+                    if root.card.bright != "": Text {
+                        text: root.card.bright;
+                        font-size: S.t-sm;
+                        color: Theme.text-3;
+                        horizontal-stretch: 0;
+                        accessible-role: none;
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    small: true;
+                    kind: root.card.action == 2 ? ButtonKind.plain : ButtonKind.normal;
+                    icon: root.card.action == 0 ? "plus" : root.card.action == 2 ? "power" : "";
+                    text: root.card.action == 1 ? root.card.action-text : "";
+                    label: root.card.action-label;
+                    tip: root.card.action-tip;
+                    enabled: !root.card.busy;
+                    clicked => { root.action(); }
+                }
+            }
+        }
+    }
+    FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: S.r-lg; }
+}
+
+export struct ModeTile {
+    id: string,
+    name: string,
+    // Playing on the lights picked: 0 on none, 1 on some, 2 on every one.
+    plays: int,
+    tip: string,
+    // The cell it starts at, counting the cells the tiles before it take.
+    cell: int,
+    span: int,
+    animated: bool,
+    pending: bool,
+    disabled: bool,
+    picture: image,
+}
+
+// A mode as a framed photograph of the room under it, its name beneath.
+// Playing on every light picked: an amber ring, an edge rather than a
+// colour alone; on some of them, a dashed one. A playing animated mode's
+// picture drifts slowly closer; a pending one breathes; both stand still
+// under reduced motion, the pending one dimmed instead.
+export component TileView inherits Rectangle {
+    in property <ModeTile> tile;
+    in property <length> picture-height;
+    callback chosen();
+    forward-focus: p;
+    accessible-role: button;
+    accessible-label: tile.name;
+    accessible-description: tile.tip;
+    accessible-checkable: true;
+    accessible-checked: tile.plays == 2;
+    accessible-enabled: !tile.disabled;
+    accessible-action-default => { if (!tile.disabled) { chosen(); } }
+    border-radius: S.r-lg;
+    background: p.hovered && !tile.disabled ? Theme.material-hover : Theme.material;
+    border-width: tile.plays == 2 ? 2px : tile.plays == 1 ? 0 : 1px;
+    border-color: tile.plays == 2 ? Theme.active : Theme.separator;
+    opacity: tile.disabled && !tile.pending ? 0.55 : 1;
+    if tile.plays == 1: DashedEdge {
+        ink: Theme.active;
+    }
+    p := Pressable {
+        enabled-press: !root.tile.disabled;
+        clicked => { root.chosen(); }
+        VerticalLayout {
+            padding-top: 5px;
+            padding-left: 5px;
+            padding-right: 5px;
+            padding-bottom: 9px;
+            spacing: 7px;
+            Picture {
+                height: root.picture-height;
+                radius: S.r-lg - 5px;
+                source: root.tile.picture;
+                zoom: root.tile.animated && root.tile.plays == 2 && !root.tile.pending && !Motion.reduce ? 1 + 0.07 * Ease.swing(16s) : 1;
+                opacity: !root.tile.pending ? 1 : Motion.reduce ? 0.5 : 1 - 0.55 * Ease.swing(1600ms);
+            }
+            // Names wrap rather than truncate: French ones run long.
+            Text {
+                x: 4px;
+                text: root.tile.name;
+                font-size: S.t-md;
+                font-weight: 600;
+                color: Theme.text;
+                wrap: word-wrap;
+                overflow: elide;
+                vertical-alignment: top;
+                accessible-role: none;
+            }
+        }
+    }
+    hover := Timer {
+        interval: 600ms;
+        running: p.hovered && root.tile.tip != "" && !root.tip-shown;
+        triggered => {
+            root.tip-shown = true;
+            bubble.show();
+        }
+    }
+    property <bool> tip-shown;
+    property <bool> pointed: p.hovered;
+    changed pointed => {
+        if (!pointed) {
+            tip-shown = false;
+            bubble.close();
+        }
+    }
+    bubble := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            background: Theme.surface;
+            border-radius: S.r-md;
+            border-width: 1px;
+            border-color: Theme.line;
+            drop-shadow-blur: 12px;
+            drop-shadow-offset-y: 4px;
+            drop-shadow-color: Theme.shadow-float;
+            VerticalLayout {
+                padding-left: S.s3;
+                padding-right: S.s3;
+                padding-top: S.s2;
+                padding-bottom: S.s2;
+                Text {
+                    text: root.tile.tip;
+                    font-size: S.t-sm;
+                    color: Theme.text-2;
+                    wrap: word-wrap;
+                    max-width: 280px - 2 * S.s3;
+                }
+            }
+        }
+    }
+    FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: S.r-lg; }
+}
+
+export struct Slice {
+    picture: image,
+    tinted: bool,
+    tint: color,
+}
+
+export struct SceneCard {
+    id: string,
+    name: string,
+    // The room shows it now.
+    on: bool,
+    pending: bool,
+    disabled: bool,
+    slices: [Slice],
+    // Its deletion is being asked about, in its own place.
+    confirming: bool,
+    ask: string,
+    delete-label: string,
+}
+
+// A saved scene as the room it makes: the pictures of what its lights do
+// side by side, its name beneath, an amber ring and a lamp while the room
+// shows it, and a small round delete mark on hover or focus.
+export component SceneView inherits Rectangle {
+    in property <SceneCard> scene;
+    callback recall();
+    callback ask-delete();
+    callback keep();
+    callback delete();
+    forward-focus: p;
+    border-radius: S.r-lg;
+    background: !scene.confirming && p.hovered && !scene.disabled ? Theme.material-hover : Theme.material;
+    border-width: scene.on && !scene.confirming ? 2px : 1px;
+    border-color: scene.on && !scene.confirming ? Theme.active : Theme.separator;
+    Rectangle {
+        visible: !root.scene.confirming;
+        accessible-role: button;
+        accessible-label: root.scene.name;
+        accessible-checkable: true;
+        accessible-checked: root.scene.on;
+        accessible-enabled: !root.scene.disabled;
+        accessible-action-default => { if (!root.scene.disabled) { root.recall(); } }
+        opacity: root.scene.disabled ? 0.6 : 1;
+        p := Pressable {
+            enabled-press: !root.scene.disabled && !root.scene.confirming;
+            clicked => { root.recall(); }
+            VerticalLayout {
+                padding-top: 5px;
+                padding-left: 5px;
+                padding-right: 5px;
+                padding-bottom: 9px;
+                spacing: 7px;
+                HorizontalLayout {
+                    height: 48px;
+                    spacing: 2px;
+                    // A scene coming back breathes; under reduced motion it dims.
+                    opacity: !root.scene.pending ? 1 : Motion.reduce ? 0.5 : 1 - 0.55 * Ease.swing(1600ms);
+                    for slice in root.scene.slices: Picture {
+                        source: slice.picture;
+                        tinted: slice.tinted;
+                        tint: slice.tint;
+                        radius: 6px;
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: 4px;
+                    padding-right: 4px;
+                    spacing: 6px;
+                    if root.scene.on: VerticalLayout {
+                        alignment: center;
+                        LampDot { width: 6px; height: 6px; }
+                    }
+                    Text {
+                        text: root.scene.name;
+                        font-size: S.t-md;
+                        font-weight: 600;
+                        color: Theme.text;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                        accessible-role: none;
+                    }
+                }
+            }
+        }
+        FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: S.r-lg; }
+        // Delete waits out of sight until the scene is hovered or reached
+        // by the keyboard.
+        del := Rectangle {
+            x: parent.width - 9px - 20px;
+            y: 9px;
+            width: 20px;
+            height: 20px;
+            border-radius: 10px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.line;
+            opacity: p.hovered || d.hovered || d.has-focus ? 1 : 0;
+            accessible-role: button;
+            accessible-label: root.scene.delete-label;
+            accessible-action-default => { root.ask-delete(); }
+            d := Pressable {
+                enabled-press: !root.scene.confirming;
+                clicked => { root.ask-delete(); }
+                Icon {
+                    x: 4.5px;
+                    y: 4.5px;
+                    name: "close";
+                    size: 11px;
+                    color: Theme.text-2;
+                }
+            }
+            FocusRing { w: parent.width; h: parent.height; shown: d.keyboard; radius: 10px; }
+        }
+    }
+    // Deleting asks first, in the scene's own place. Escape keeps it.
+    if root.scene.confirming: FocusScope {
+        accessible-role: groupbox;
+        accessible-label: root.scene.ask;
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.keep();
+                return accept;
+            }
+            reject
+        }
+        VerticalLayout {
+            padding-left: S.s3;
+            padding-right: S.s2;
+            spacing: S.s2;
+            alignment: center;
+            Text {
+                text: root.scene.ask;
+                font-size: S.t-md;
+                font-weight: 600;
+                color: Theme.text;
+                overflow: elide;
+            }
+            HorizontalLayout {
+                spacing: S.s1;
+                alignment: start;
+                yes := Button {
+                    small: true;
+                    kind: ButtonKind.danger;
+                    text: Tr.t("delete");
+                    clicked => { root.delete(); }
+                    init => { self.focus(); }
+                }
+                Button {
+                    small: true;
+                    kind: ButtonKind.plain;
+                    text: Tr.t("sleep_cancel");
+                    clicked => { root.keep(); }
+                }
+            }
+        }
+    }
+}
+
+// Rows of equal cells, `gap` apart: `columns` across, each `cell-height`
+// high. The cells place themselves with `x-of` and `y-of`.
+export global GridMath {
+    // How many cells of at least `min` fit in `width`, `gap` apart.
+    public pure function columns(width: length, min: length, gap: length) -> int {
+        return max(1, Math.floor((width + gap) / (min + gap)));
+    }
+    public pure function cell-width(width: length, columns: int, gap: length) -> length {
+        return (width - (columns - 1) * gap) / max(1, columns);
+    }
+    public pure function rows(count: int, columns: int) -> int {
+        return Math.ceil(count / max(1, columns));
+    }
+}

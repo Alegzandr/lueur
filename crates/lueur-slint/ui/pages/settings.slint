@@ -1,0 +1,143 @@
+// The Settings page: how the ambilight reads the screen, what the music
+// show listens to, and the app's own preferences. The photosensitivity
+// protection and the black-bar trim have no row: they are always on.
+// Rust (src/pages/settings) words every row; this draws them.
+
+import { Theme, S } from "../theme.slint";
+import { Tr } from "../tr.slint";
+import { PageTitle, Section, Card, Row, Switch, Segmented, Select, Slider, Button, Choice } from "../controls.slint";
+import { PageScroll } from "../shell.slint";
+
+export enum SettingKind { switch, segmented, select, slider, buttons }
+
+// One row of a group: its words, and the control it holds.
+export struct Setting {
+    id: string,
+    kind: SettingKind,
+    label: string,
+    tip: string,
+    // A switch.
+    on: bool,
+    // A segmented control or a select, and a slider's words.
+    options: [Choice],
+    current: int,
+    // A slider.
+    value: float,
+    minimum: float,
+    maximum: float,
+    step: float,
+    default-value: float,
+    value-text: string,
+    reset-label: string,
+    low-end: string,
+    high-end: string,
+    // Wider than the column allows (three long choices in French).
+    wide: bool,
+}
+
+export struct SettingGroup {
+    title: string,
+    rows: [Setting],
+    // A line under the card ("credentials are stored unencrypted").
+    note: string,
+}
+
+export global SettingsState {
+    in property <[SettingGroup]> groups;
+    in property <string> version;
+    callback toggled(string);
+    callback chosen(string, int);
+    callback slid(string, float);
+    // A row of buttons: which one was pressed.
+    callback pressed(string, int);
+    // A select's list is about to open.
+    callback opening(string);
+}
+
+component SettingControl inherits HorizontalLayout {
+    in property <Setting> s;
+    // The width of a slider, a select or a segmented control.
+    in property <length> span;
+    alignment: end;
+    if s.kind == SettingKind.switch: VerticalLayout {
+        alignment: center;
+        Switch {
+            on: root.s.on;
+            label: root.s.label;
+            toggled => { SettingsState.toggled(root.s.id); }
+        }
+    }
+    if s.kind == SettingKind.segmented: Segmented {
+        width: root.span;
+        options: root.s.options;
+        current: root.s.current;
+        label: root.s.label;
+        chosen(i) => { SettingsState.chosen(root.s.id, i); }
+    }
+    if s.kind == SettingKind.select: Select {
+        width: root.span;
+        options: root.s.options;
+        current: root.s.current;
+        label: root.s.label;
+        opening => { SettingsState.opening(root.s.id); }
+        chosen(i) => { SettingsState.chosen(root.s.id, i); }
+    }
+    if s.kind == SettingKind.slider: Slider {
+        width: root.span;
+        value: root.s.value;
+        minimum: root.s.minimum;
+        maximum: root.s.maximum;
+        step: root.s.step;
+        default-value: root.s.default-value;
+        value-text: root.s.value-text;
+        label: root.s.label;
+        reset-label: root.s.reset-label;
+        low-end: root.s.low-end;
+        high-end: root.s.high-end;
+        value-width: 52px;
+        changed(v) => { SettingsState.slid(root.s.id, v); }
+    }
+    if s.kind == SettingKind.buttons: HorizontalLayout {
+        spacing: S.s2;
+        for option[i] in root.s.options: Button {
+            text: option.label;
+            tip: option.tip;
+            clicked => { SettingsState.pressed(root.s.id, i); }
+        }
+    }
+}
+
+export component SettingsPage inherits PageScroll {
+    spacing: S.s5;
+    PageTitle { text: Tr.t("nav_settings"); }
+    for group in SettingsState.groups: VerticalLayout {
+        spacing: S.s2;
+        Section { text: group.title; }
+        Card {
+            for s[i] in group.rows: row := Row {
+                first: i == 0;
+                label: s.label;
+                tip: s.tip;
+                control-width: s.wide ? min(400px, self.width * 0.6) : min(320px, self.width / 2);
+                SettingControl {
+                    s: s;
+                    span: row.control-width;
+                }
+            }
+        }
+        if group.note != "": Text {
+            x: S.s4;
+            text: group.note;
+            font-size: S.t-sm;
+            color: Theme.text-3;
+            wrap: word-wrap;
+            accessible-role: text;
+        }
+    }
+    Text {
+        text: SettingsState.version;
+        font-size: S.t-sm;
+        color: Theme.text-3;
+        horizontal-alignment: center;
+    }
+}

@@ -110,7 +110,7 @@ jobs:
       - name: Linux, AppImage
         if: matrix.name == 'linux'
         run: |
-          cargo build --release --locked -p lueur-gpui
+          cargo build --release --locked -p lueur-slint
           ./scripts/package-linux.sh 0.0.0 release
           ls -l release
       - name: macOS, universal app

@@ -1,0 +1,13 @@
+// The interface's words, from locales/*.json (src/i18n.rs). `Tr.t("key")`
+// is the string in the current language; `rev` changes with the language,
+// so every string drawn reads its new words.
+
+export global Tr {
+    in property <int> rev;
+    // True on a Mac: shortcuts are named with ⌘ rather than Ctrl.
+    in property <bool> mac;
+    pure callback lookup(string, int) -> string;
+    public pure function t(key: string) -> string {
+        return lookup(key, rev);
+    }
+}
