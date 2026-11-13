@@ -17,6 +17,7 @@ pub fn bind(ui: &AppWindow) {
         }
     });
     nav.on_toggle_effect(|| rt::with(Lueur::toggle_effect));
+    titlebar(ui);
     nav.on_restart_into_update(crate::app::restart_into_update);
     nav.on_dismiss(|id| rt::with(|l| l.dismiss(id as u64)));
     nav.on_hold_toast(|id, held| rt::with(|l| l.hold_toast(id as u64, held)));
@@ -35,6 +36,51 @@ pub fn bind(ui: &AppWindow) {
             run();
         }
     });
+}
+
+/// The window's own title bar, on Windows (`TitleBar` in `shell.slint`):
+/// its strip moves the window through the system, so snapping to the
+/// screen's edges works as with the system's bar.
+fn titlebar(ui: &AppWindow) {
+    let nav = ui.global::<Nav>();
+    nav.set_own_titlebar(cfg!(windows));
+    nav.set_caption_font(caption_font().into());
+    nav.on_drag_window(|| {
+        use slint::winit_030::WinitWindowAccessor;
+        let Some(ui) = rt::ui() else { return };
+        ui.window().with_winit_window(|w| {
+            if let Err(e) = w.drag_window() {
+                log::warn!("cannot move the window: {e}");
+            }
+        });
+    });
+    nav.on_minimize(|| {
+        if let Some(ui) = rt::ui() {
+            ui.window().set_minimized(true);
+        }
+    });
+    nav.on_toggle_maximize(|| {
+        if let Some(ui) = rt::ui() {
+            let w = ui.window();
+            w.set_maximized(!w.is_maximized());
+        }
+    });
+    nav.on_close_window(crate::app::close_main);
+}
+
+/// The face of the caption glyphs: Windows 11's, or Windows 10's.
+fn caption_font() -> &'static str {
+    #[cfg(windows)]
+    {
+        use windows::Wdk::System::SystemServices::RtlGetVersion;
+        let mut version = windows::Win32::System::SystemInformation::OSVERSIONINFOW::default();
+        // SAFETY: RtlGetVersion only fills the struct it is handed.
+        let ok = unsafe { RtlGetVersion(&mut version) }.is_ok();
+        if ok && version.dwBuildNumber < 22000 {
+            return "Segoe MDL2 Assets";
+        }
+    }
+    "Segoe Fluent Icons"
 }
 
 /// Bring the sidebar, the update button and the toasts up to date.

@@ -10,7 +10,7 @@ import "../assets/fonts/Inter-Bold.ttf";
 import { Palette } from "std-widgets.slint";
 import { Theme, S, Motion } from "theme.slint";
 import { Tr } from "tr.slint";
-import { Nav, Backdrop, Sidebar, Toasts, BackdropView, NavItem, Toast, UpdateButton } from "shell.slint";
+import { Nav, Backdrop, Sidebar, Toasts, BackdropView, NavItem, Toast, UpdateButton, TitleBar } from "shell.slint";
 import { LightingPage, LightingState, Disc, LightCard, ModeTile, Slice, SceneCard, SetupStep, ZoneRow, Swatch } from "pages/lighting.slint";
 import { RoomPage, RoomState } from "pages/room.slint";
 import { BulbsPage, BulbsState } from "pages/bulbs.slint";
@@ -30,6 +30,10 @@ export component AppWindow inherits Window {
     preferred-width: 1180px;
     preferred-height: 800px;
     background: Theme.bg;
+    // On Windows the window draws its own title bar; its edges still
+    // resize it.
+    no-frame: Nav.own-titlebar;
+    resize-border-width: Nav.own-titlebar ? 6px : 0px;
     default-font-family: "Inter";
     default-font-size: S.t-md;
     forward-focus: keys;
@@ -59,7 +63,8 @@ export component AppWindow inherits Window {
                 accessible-role: main;
                 BackdropView { }
                 VerticalLayout {
-                    HorizontalLayout {
+                    if Nav.own-titlebar: TitleBar { }
+                    if !Nav.own-titlebar: HorizontalLayout {
                         alignment: end;
                         padding-right: S.s4;
                         padding-top: S.s3;

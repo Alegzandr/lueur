@@ -108,7 +108,7 @@ pub fn run(started: Started) {
         CloseRequestResponse::HideWindow
     });
     #[cfg(windows)]
-    minimize_to_tray(&ui, &shell);
+    window_events(&ui, &shell);
 
     // The tray, and what it asks for.
     let tray_shell = Arc::clone(&shell);
@@ -182,33 +182,54 @@ pub fn open_main() {
 #[cfg(windows)]
 fn bring_to_front(ui: &AppWindow) {
     use slint::winit_030::WinitWindowAccessor;
+    use slint::winit_030::winit::platform::windows::WindowExtWindows;
     ui.window().with_winit_window(|w| {
+        // The system's shadow and rounded corners, which a window without
+        // the system's frame loses otherwise.
+        w.set_undecorated_shadow(true);
         w.set_minimized(false);
         w.focus_window();
     });
 }
 
+/// The window's own title bar asks to close: the same as the system's
+/// close button.
+pub fn close_main() {
+    let Some(ui) = rt::ui() else { return };
+    let shell = rt::read(|l| Arc::clone(&l.shell));
+    if should_close(&shell) {
+        quit(&shell);
+    }
+    rt::with(|l| l.window_shown = false);
+    if let Err(e) = ui.hide() {
+        log::error!("cannot hide the window: {e}");
+    }
+}
+
+/// What the system tells the window, on Windows: its size, which says
+/// whether it is maximised (for the title bar's button) or minimised.
+///
 /// When closing quits Lueur, minimising is how it goes to the tray instead
 /// of the taskbar; when closing goes to the tray, minimising stays ordinary.
 /// Windows only: it is the one system with both a tray and a taskbar (a Mac
 /// minimises to its Dock, and Linux has no tray here yet).
 #[cfg(windows)]
-fn minimize_to_tray(ui: &AppWindow, shell: &Arc<Shell>) {
+fn window_events(ui: &AppWindow, shell: &Arc<Shell>) {
     use slint::winit_030::winit::event::WindowEvent;
     use slint::winit_030::{EventResult, WinitWindowAccessor};
     let shell = Arc::clone(shell);
     ui.window().on_winit_window_event(move |_, event| {
-        // A minimised window is resized to nothing. Whether it is minimised
-        // is asked once the event is handled, out of the backend's hands.
+        // A minimised window is resized to nothing. Its state is asked once
+        // the event is handled, out of the backend's hands.
         if let WindowEvent::Resized(_) = event {
             let shell = Arc::clone(&shell);
             rt::post(move || {
                 let Some(ui) = rt::ui() else { return };
-                let minimized = ui
+                let (minimized, maximized) = ui
                     .window()
-                    .with_winit_window(|w| w.is_minimized())
-                    .flatten()
-                    .unwrap_or(false);
+                    .with_winit_window(|w| (w.is_minimized().unwrap_or(false), w.is_maximized()))
+                    .unwrap_or_default();
+                ui.global::<Nav>().set_maximized(maximized);
                 if minimized && closing_quits(&shell) {
                     rt::with(|l| {
                         l.arranging = false;

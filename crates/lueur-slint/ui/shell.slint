@@ -42,6 +42,16 @@ export global Nav {
     callback hold-toast(int, bool);
     // The system switched between light and dark.
     callback scheme-changed();
+    // On Windows the window draws its own title bar (`TitleBar`): the
+    // sidebar runs to the top edge and the caption buttons sit on the page.
+    in property <bool> own-titlebar;
+    in property <bool> maximized;
+    // The face of the caption glyphs: Windows 11's, or Windows 10's.
+    in property <string> caption-font: "Segoe Fluent Icons";
+    callback drag-window();
+    callback minimize();
+    callback toggle-maximize();
+    callback close-window();
 }
 
 // The pictures behind the pages, worked out in Rust: the glow of the lights
@@ -82,7 +92,7 @@ export global Backdrop {
 export component PageScroll inherits ScrollView {
     in property <length> max-content: 820px;
     in property <length> spacing: S.s6;
-    property <length> side: S.s7;
+    property <length> side: S.s6 + S.s2;
     property <length> inner: min(root.max-content, root.visible-width - 2 * root.side);
     content-width: root.visible-width;
     content-height: col.preferred-height;
@@ -94,6 +104,46 @@ export component PageScroll inherits ScrollView {
         spacing: root.spacing;
         alignment: start;
         @children
+    }
+}
+
+// A stretch of the title bar: pressed, it moves the window through the
+// system (which snaps it to the screen's edges); double-clicked, it
+// maximises or restores it.
+export component TitleDrag inherits TouchArea {
+    accessible-role: none;
+    pointer-event(event) => {
+        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+            Nav.drag-window();
+        }
+    }
+    double-clicked => { Nav.toggle-maximize(); }
+}
+
+// One caption button, drawn with the system's own glyph, size and red.
+component Caption inherits Rectangle {
+    in property <string> glyph;
+    in property <string> label;
+    in property <bool> close;
+    callback clicked;
+    width: 46px;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => { clicked(); }
+    background: t.pressed ? (close ? #c42b1ce6 : Theme.line)
+        : t.has-hover ? (close ? #c42b1c : Theme.surface-hover)
+        : transparent;
+    t := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    Text {
+        text: root.glyph;
+        font-family: Nav.caption-font;
+        font-size: 10px;
+        color: root.close && t.has-hover ? white : Theme.text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        accessible-role: none;
     }
 }
 
@@ -118,7 +168,8 @@ component NavButton inherits Rectangle {
     border-color: Theme.separator;
     drop-shadow-blur: selected ? 2px : 0px;
     drop-shadow-offset-y: 0.5px;
-    drop-shadow-color: Theme.shadow;
+    // femtovg draws an unblurred shadow too: none is transparent.
+    drop-shadow-color: selected ? Theme.shadow : transparent;
     p := Pressable {
         clicked => { root.clicked(); }
         HorizontalLayout {
@@ -154,7 +205,7 @@ component NavButton inherits Rectangle {
 
 export component Sidebar inherits Rectangle {
     width: 220px;
-    background: Theme.sidebar.with-alpha(0.73);
+    background: Theme.sidebar;
     accessible-role: navigation;
     accessible-label: "Lueur";
     Rectangle {
@@ -162,10 +213,16 @@ export component Sidebar inherits Rectangle {
         width: 1px;
         background: Theme.separator;
     }
+    // With the window's own title bar, the brand is part of the strip the
+    // window is dragged by.
+    if Nav.own-titlebar: TitleDrag {
+        y: 0;
+        height: 46px;
+    }
     VerticalLayout {
         padding-left: S.s3;
         padding-right: S.s3;
-        padding-top: S.s3;
+        padding-top: Nav.own-titlebar ? 6px : S.s3;
         padding-bottom: S.s3;
         spacing: 2px;
         alignment: start;
@@ -235,6 +292,38 @@ export component UpdateButton inherits Rectangle {
         }
     }
     FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: 12px; }
+}
+
+// The title bar on Windows, over the page: what drags the window, the
+// update button when there is one, then minimise, maximise and close.
+// Windows gives keyboard users Alt+Space for the same, so the captions
+// stay out of the Tab order, as the system's own do.
+export component TitleBar inherits HorizontalLayout {
+    height: 32px;
+    TitleDrag { horizontal-stretch: 1; }
+    if Nav.update-ready != "": HorizontalLayout {
+        padding-right: S.s2;
+        VerticalLayout {
+            alignment: center;
+            UpdateButton { }
+        }
+    }
+    Caption {
+        glyph: "\u{e921}";
+        label: Tr.t("window_minimize");
+        clicked => { Nav.minimize(); }
+    }
+    Caption {
+        glyph: Nav.maximized ? "\u{e923}" : "\u{e922}";
+        label: Nav.maximized ? Tr.t("window_restore") : Tr.t("window_maximize");
+        clicked => { Nav.toggle-maximize(); }
+    }
+    Caption {
+        glyph: "\u{e8bb}";
+        label: Tr.t("window_close");
+        close: true;
+        clicked => { Nav.close-window(); }
+    }
 }
 
 component ToastView inherits Rectangle {
@@ -413,3 +502,4 @@ export component BackdropView inherits Rectangle {
         }
     }
 }
+

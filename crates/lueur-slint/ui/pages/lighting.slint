@@ -163,6 +163,7 @@ component SleepButton inherits Rectangle {
     clock := Button {
         kind: ButtonKind.plain;
         small: true;
+        text-size: S.t-md;
         icon: "clock";
         text: LightingState.sleep-short;
         label: LightingState.sleep-label;
@@ -214,6 +215,7 @@ component SleepButton inherits Rectangle {
                         alignment: start;
                         Button {
                             small: true;
+                            text-size: S.t-md;
                             text: Tr.t("sleep_cancel");
                             clicked => { LightingState.sleep-cancel(); }
                             init => { self.focus(); }
@@ -226,22 +228,26 @@ component SleepButton inherits Rectangle {
                         accessible-label: Tr.t("sleep_timer");
                         Button {
                             small: true;
+                            text-size: S.t-md;
                             text: "15 min";
                             clicked => { LightingState.sleep-start(15); }
                             init => { self.focus(); }
                         }
                         Button {
                             small: true;
+                            text-size: S.t-md;
                             text: "30 min";
                             clicked => { LightingState.sleep-start(30); }
                         }
                         Button {
                             small: true;
+                            text-size: S.t-md;
                             text: "60 min";
                             clicked => { LightingState.sleep-start(60); }
                         }
                         Button {
                             small: true;
+                            text-size: S.t-md;
                             text: Tr.t("sleep_other");
                             clicked => { panel.typing = true; }
                         }
@@ -273,6 +279,7 @@ component SleepButton inherits Rectangle {
                         }
                         Button {
                             small: true;
+                            text-size: S.t-md;
                             y: 2px;
                             text: Tr.t("sleep_start");
                             enabled: parent.valid;
@@ -280,6 +287,7 @@ component SleepButton inherits Rectangle {
                         }
                         Button {
                             small: true;
+                            text-size: S.t-md;
                             y: 2px;
                             kind: ButtonKind.plain;
                             icon: "close";
@@ -426,7 +434,6 @@ component Setup inherits VerticalLayout {
                     if step.next: VerticalLayout {
                         alignment: center;
                         Button {
-                            small: true;
                             kind: ButtonKind.primary;
                             text: step.action;
                             enabled: step.enabled;
@@ -559,6 +566,7 @@ component Scenes inherits VerticalLayout {
             alignment: center;
             Button {
                 small: true;
+                text-size: S.t-md;
                 kind: ButtonKind.plain;
                 icon: "plus";
                 text: Tr.t("scene_save");
@@ -585,6 +593,7 @@ component Scenes inherits VerticalLayout {
                 }
                 Button {
                     small: true;
+                    text-size: S.t-md;
                     y: 2px;
                     text: LightingState.naming-confirm;
                     enabled: !field.text.is-empty;
@@ -592,6 +601,7 @@ component Scenes inherits VerticalLayout {
                 }
                 Button {
                     small: true;
+                    text-size: S.t-md;
                     y: 2px;
                     kind: ButtonKind.plain;
                     text: Tr.t("sleep_cancel");
@@ -867,6 +877,7 @@ component ModeSettings inherits Card {
                 alignment: center;
                 Button {
                     small: true;
+                    text-size: S.t-md;
                     kind: ButtonKind.plain;
                     icon: "plan";
                     label: zone.plan-label;
@@ -881,7 +892,6 @@ component ModeSettings inherits Card {
         label: Tr.t("response");
         tip: LightingState.feel-tip;
         Segmented {
-            width: min(320px, root.width / 2);
             options: LightingState.feels;
             current: LightingState.feel;
             label: Tr.t("response");
@@ -938,6 +948,7 @@ component ModeSettings inherits Card {
             }
             Button {
                 small: true;
+                text-size: S.t-md;
                 kind: ButtonKind.plain;
                 text: Tr.t("change");
                 clicked => { LightingState.listen-change(); }
@@ -1033,7 +1044,6 @@ component Tune inherits Card {
     if LightingState.tint-shown: Row {
         label: Tr.t("tint");
         Segmented {
-            width: min(320px, root.width / 2);
             options: [{ label: Tr.t("white"), tip: "" }, { label: Tr.t("tint_colour"), tip: "" }];
             current: LightingState.colour ? 1 : 0;
             label: Tr.t("tint");
@@ -1109,6 +1119,7 @@ component Tune inherits Card {
         alignment: start;
         Button {
             small: true;
+            text-size: S.t-md;
             kind: ButtonKind.plain;
             icon: "flash";
             text: Tr.t("identify");
@@ -1117,6 +1128,7 @@ component Tune inherits Card {
         }
         Button {
             small: true;
+            text-size: S.t-md;
             kind: ButtonKind.plain;
             icon: "plan";
             text: Tr.t("show_on_plan");

@@ -68,14 +68,13 @@ component SettingControl inherits HorizontalLayout {
         }
     }
     if s.kind == SettingKind.segmented: Segmented {
-        width: root.span;
         options: root.s.options;
         current: root.s.current;
         label: root.s.label;
         chosen(i) => { SettingsState.chosen(root.s.id, i); }
     }
     if s.kind == SettingKind.select: Select {
-        width: root.span;
+        max-width: root.span;
         options: root.s.options;
         current: root.s.current;
         label: root.s.label;
@@ -100,6 +99,7 @@ component SettingControl inherits HorizontalLayout {
     if s.kind == SettingKind.buttons: HorizontalLayout {
         spacing: S.s2;
         for option[i] in root.s.options: Button {
+            large: true;
             text: option.label;
             tip: option.tip;
             clicked => { SettingsState.pressed(root.s.id, i); }
@@ -108,6 +108,8 @@ component SettingControl inherits HorizontalLayout {
 }
 
 export component SettingsPage inherits PageScroll {
+    // The rows run the page's width, their controls to the right.
+    max-content: 100000px;
     spacing: S.s5;
     PageTitle { text: Tr.t("nav_settings"); }
     for group in SettingsState.groups: VerticalLayout {

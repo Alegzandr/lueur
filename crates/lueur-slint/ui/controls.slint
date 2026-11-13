@@ -106,12 +106,18 @@ export component TipBubble inherits PopupWindow {
 }
 
 // A button: `primary` is the ink one a page leads with, `plain` has no
-// fill until pointed at, `danger` destroys something.
+// fill until pointed at, `danger` destroys something; `small` sits in a
+// list's row and `large` in a settings row.
 export component Button inherits Rectangle {
     in property <string> text;
     in property <string> icon;
     in property <ButtonKind> kind: ButtonKind.normal;
     in property <bool> small;
+    // The roomier button of a settings row or the room's banner.
+    in property <bool> large;
+    // A small button's words are smaller too, except on Lighting, where
+    // they keep the page's size.
+    in property <length> text-size: small ? S.t-sm : S.t-md;
     in property <bool> enabled: true;
     // What a screen reader says, when the words shown are not enough.
     in property <string> label: text;
@@ -126,10 +132,10 @@ export component Button inherits Rectangle {
     accessible-description: tip;
     accessible-enabled: enabled;
     accessible-action-default => { if (enabled) { clicked(); } }
-    height: small ? 24px : 28px;
+    height: small ? 24px : large ? 32px : 28px;
     min-width: self.height;
     horizontal-stretch: 0;
-    border-radius: small ? 6px : 7px;
+    border-radius: small ? 6px : large ? S.r-md : 7px;
     background: !enabled ? (kind == ButtonKind.primary ? Theme.surface-2 : transparent)
         : kind == ButtonKind.primary ? (p.hovered ? Theme.ink-hover : Theme.ink)
         : kind == ButtonKind.plain ? (p.hovered ? Theme.surface-hover : transparent)
@@ -139,7 +145,8 @@ export component Button inherits Rectangle {
     border-color: Theme.line;
     drop-shadow-blur: (kind == ButtonKind.normal || kind == ButtonKind.danger) && enabled ? 2px : 0px;
     drop-shadow-offset-y: 0.5px;
-    drop-shadow-color: Theme.shadow;
+    // femtovg draws an unblurred shadow too: none is transparent.
+    drop-shadow-color: (kind == ButtonKind.normal || kind == ButtonKind.danger) && enabled ? Theme.shadow : transparent;
     property <color> fg: !enabled ? Theme.text-3
         : kind == ButtonKind.primary ? Theme.on-ink
         : kind == ButtonKind.danger ? Theme.danger
@@ -149,7 +156,7 @@ export component Button inherits Rectangle {
         enabled-press: root.enabled;
         clicked => { root.clicked(); }
         HorizontalLayout {
-            padding-left: root.text == "" ? 0px : (root.small ? S.s2 : S.s3);
+            padding-left: root.text == "" ? 0px : (root.small ? S.s2 : root.large ? S.s4 : S.s3);
             padding-right: self.padding-left;
             spacing: S.s2;
             alignment: center;
@@ -163,8 +170,8 @@ export component Button inherits Rectangle {
             if root.text != "": Text {
                 text: root.text;
                 color: root.fg;
-                font-size: root.small ? S.t-sm : S.t-md;
-                font-weight: root.small ? 600 : 500;
+                font-size: root.text-size;
+                font-weight: 500;
                 vertical-alignment: center;
                 accessible-role: none;
             }
@@ -376,8 +383,8 @@ export struct Choice {
     tip: string,
 }
 
-// Equal segments in a well, the chosen one raised. Tab lands on the group;
-// the arrows move the choice.
+// Segments in a well, each as wide as its words, the chosen one raised.
+// Tab lands on the group; the arrows move the choice.
 export component Segmented inherits Rectangle {
     in property <[Choice]> options;
     in property <int> current: -1;
@@ -388,10 +395,10 @@ export component Segmented inherits Rectangle {
     accessible-role: radio-group;
     accessible-label: label;
     height: 28px;
+    horizontal-stretch: 0;
     border-radius: S.r-md;
     background: Theme.surface-hover;
     opacity: enabled ? 1 : 0.5;
-    property <length> segment: (self.width - 4px) / max(1, options.length);
     function step(by: int) {
         if (options.length == 0) { return; }
         chosen(Math.mod(max(0, current) + by + options.length, options.length));
@@ -406,20 +413,9 @@ export component Segmented inherits Rectangle {
             if (event.text == Key.End) { root.chosen(root.options.length - 1); return accept; }
             reject
         }
-        if root.current >= 0: thumb := Rectangle {
-            x: 2px + root.current * root.segment;
-            y: 2px;
-            width: root.segment;
-            height: root.height - 4px;
-            border-radius: S.r-sm;
-            background: Theme.surface;
-            drop-shadow-blur: 2px;
-            drop-shadow-offset-y: 0.5px;
-            drop-shadow-color: Theme.shadow;
-            animate x { duration: Motion.travel; easing: ease-in-out; }
-        }
         HorizontalLayout {
             padding: 2px;
+            spacing: 2px;
             for option[i] in root.options: Rectangle {
                 accessible-role: radio-button;
                 accessible-label: option.label;
@@ -429,19 +425,29 @@ export component Segmented inherits Rectangle {
                 accessible-item-index: i;
                 accessible-item-count: root.options.length;
                 accessible-action-default => { root.chosen(i); }
+                border-radius: 6px;
+                background: i == root.current ? Theme.surface : transparent;
+                drop-shadow-blur: i == root.current ? 2px : 0px;
+                drop-shadow-offset-y: 0.5px;
+                // femtovg draws an unblurred shadow too: none is transparent.
+                drop-shadow-color: i == root.current ? Theme.shadow : transparent;
+                animate background { duration: Motion.state; easing: ease-in-out; }
                 t := TouchArea {
                     enabled: root.enabled;
                     clicked => { root.chosen(i); }
                 }
-                Text {
-                    text: option.label;
-                    font-size: S.t-md;
-                    font-weight: i == root.current ? 500 : 400;
-                    color: i == root.current || t.has-hover ? Theme.text : Theme.text-2;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    overflow: elide;
-                    accessible-role: none;
+                HorizontalLayout {
+                    padding-left: S.s2;
+                    padding-right: S.s2;
+                    Text {
+                        text: option.label;
+                        font-size: S.t-sm;
+                        font-weight: i == root.current ? 500 : 400;
+                        color: i == root.current || t.has-hover ? Theme.text : Theme.text-2;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        accessible-role: none;
+                    }
                 }
             }
         }
@@ -471,7 +477,8 @@ export component Select inherits Rectangle {
     accessible-action-default => { open(); }
     height: 28px;
     min-width: 120px;
-    border-radius: S.r-md;
+    horizontal-stretch: 0;
+    border-radius: 7px;
     background: p.hovered && enabled ? Theme.surface-hover : Theme.surface;
     border-width: 1px;
     border-color: Theme.line;
@@ -499,7 +506,7 @@ export component Select inherits Rectangle {
             reject
         }
         HorizontalLayout {
-            padding-left: S.s2 + 2px;
+            padding-left: S.s3;
             padding-right: S.s2;
             spacing: S.s2;
             Text {
@@ -513,9 +520,9 @@ export component Select inherits Rectangle {
             }
             Icon {
                 y: (parent.height - self.height) / 2;
-                name: "chevron-down";
+                name: "chevron";
                 size: 12px;
-                color: Theme.text-2;
+                color: Theme.text-3;
             }
         }
     }
