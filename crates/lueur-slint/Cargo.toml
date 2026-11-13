@@ -41,7 +41,7 @@ slint = { version = "1.18.1", default-features = false, features = [
 ] }
 # The save and open dialogs of the configuration file (Settings): the
 # system's own, through the desktop portal on Linux.
-rfd = "0.17.2"
+rfd = "0.18.0"
 # The system's language, when the interface follows it.
 sys-locale = "0.3"
 # The tray icon's pixels, the room's photographs (WebP) and their blur.
@@ -53,7 +53,7 @@ uuid = { version = "1.29.0", features = ["v4"] }
 # The tray: the crate Tauri's own tray uses, without Tauri. On Linux it needs
 # a GTK loop of its own, which this shell does not run yet.
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
-tray-icon = "0.25"
+tray-icon = "0.26"
 
 # One instance at a time, recognised by the Tauri version too (src/single.rs),
 # the system's "show animations" setting (src/app.rs) and its version, for
@@ -72,4 +72,4 @@ windows = { version = "0.62", features = [
 [target.'cfg(target_os = "linux")'.dependencies]
 # One instance at a time over the session bus, as the Tauri plugin does it
 # (src/single.rs). The version lueur-shell already uses.
-zbus = "5.17"
+zbus = "6.2"
