@@ -107,6 +107,8 @@ pub fn run(started: Started) {
         rt::with(|l| l.window_shown = false);
         CloseRequestResponse::HideWindow
     });
+    #[cfg(windows)]
+    minimize_to_tray(&ui, &shell);
 
     // The tray, and what it asks for.
     let tray_shell = Arc::clone(&shell);
@@ -186,12 +188,54 @@ fn bring_to_front(ui: &AppWindow) {
     });
 }
 
+/// When closing quits Lueur, minimising is how it goes to the tray instead
+/// of the taskbar; when closing goes to the tray, minimising stays ordinary.
+/// Windows only: it is the one system with both a tray and a taskbar (a Mac
+/// minimises to its Dock, and Linux has no tray here yet).
+#[cfg(windows)]
+fn minimize_to_tray(ui: &AppWindow, shell: &Arc<Shell>) {
+    use slint::winit_030::winit::event::WindowEvent;
+    use slint::winit_030::{EventResult, WinitWindowAccessor};
+    let shell = Arc::clone(shell);
+    ui.window().on_winit_window_event(move |_, event| {
+        // A minimised window is resized to nothing. Whether it is minimised
+        // is asked once the event is handled, out of the backend's hands.
+        if let WindowEvent::Resized(_) = event {
+            let shell = Arc::clone(&shell);
+            rt::post(move || {
+                let Some(ui) = rt::ui() else { return };
+                let minimized = ui
+                    .window()
+                    .with_winit_window(|w| w.is_minimized())
+                    .flatten()
+                    .unwrap_or(false);
+                if minimized && closing_quits(&shell) {
+                    rt::with(|l| {
+                        l.arranging = false;
+                        l.window_shown = false;
+                    });
+                    if let Err(e) = ui.hide() {
+                        log::error!("cannot hide the window: {e}");
+                    }
+                }
+            });
+        }
+        EventResult::Propagate
+    });
+}
+
 /// Closing goes to the tray when the settings say so, or while a sleep
 /// timer runs (quitting would leave the lights on); otherwise it quits.
 fn should_close(shell: &Arc<Shell>) -> bool {
     // A drag on the plan cut short by the window closing ends here, or the
     // room's changes would wait for its release forever.
     rt::with(|l| l.arranging = false);
+    closing_quits(shell)
+}
+
+/// Whether closing the window quits Lueur rather than leaving it in the
+/// tray.
+fn closing_quits(shell: &Arc<Shell>) -> bool {
     let to_tray = shell
         .lock_config()
         .map(|c| c.behavior.minimize_to_tray)

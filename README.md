@@ -243,8 +243,9 @@ others in coarser steps.
 ## Everyday use
 
 - **Tray.** On Windows and macOS, closing the window keeps Lueur in the
-  tray. Turn off *Keep running when closed* in Settings and closing quits
-  instead. The tray menu says what the lights show, starts and stops Screen
+  tray and minimising keeps it in the taskbar. Turn off *Keep running when
+  closed* in Settings and closing quits instead, while minimising sends
+  Lueur to the tray (on Windows; a Mac minimises to the Dock). The tray menu says what the lights show, starts and stops Screen
   and the effects and applies a mood, so you never have to leave a game.
   Once an update is installed, it also restarts Lueur into it. Linux has no
   tray yet: there, closing the window quits Lueur.
