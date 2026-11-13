@@ -665,16 +665,20 @@ component DeviceView inherits Rectangle {
                 font-size: S.t-md;
                 font-weight: 500;
                 color: Theme.text;
+                min-height: S.line-md;
+                vertical-alignment: center;
                 overflow: elide;
             }
             HorizontalLayout {
                 alignment: start;
-                Text { text: root.d.meta; font-size: S.t-sm; color: Theme.text-3; overflow: elide; }
+                min-height: S.line-sm;
+                Text { text: root.d.meta; font-size: S.t-sm; color: Theme.text-3; vertical-alignment: center; overflow: elide; }
                 // Amber like any light waiting on the user, and in words.
                 if root.d.warn != "": Text {
                     text: ", " + root.d.warn;
                     font-size: S.t-sm;
                     color: Theme.glow-text;
+                    vertical-alignment: center;
                     overflow: elide;
                 }
             }
@@ -913,6 +917,8 @@ component LightView inherits Rectangle {
             Text {
                 text: root.c.meta;
                 font-size: S.t-sm;
+                min-height: S.line-sm;
+                vertical-alignment: center;
                 color: root.c.bound ? Theme.text-3 : Theme.glow-text;
                 overflow: elide;
             }

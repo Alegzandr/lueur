@@ -90,11 +90,14 @@ component Item inherits Rectangle {
     FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: root.border-radius; }
 }
 
+// The chevron of a row: pointing right to what the row opens, or, on a
+// fold, down while folded and up while open.
 component Chevron inherits VerticalLayout {
+    in property <bool> fold;
     in property <bool> open;
     alignment: center;
     Icon {
-        name: root.open ? "chevron-up" : "chevron-down";
+        name: !root.fold ? "chevron" : root.open ? "chevron-up" : "chevron-down";
         size: 12px;
         color: Theme.text-3;
     }
@@ -113,6 +116,8 @@ component TwoLines inherits VerticalLayout {
         color: root.name-color;
         font-weight: 500;
         font-size: S.t-md;
+        min-height: S.line-md;
+        vertical-alignment: center;
         overflow: elide;
         accessible-role: none;
     }
@@ -120,6 +125,8 @@ component TwoLines inherits VerticalLayout {
         text: root.meta;
         color: Theme.text-3;
         font-size: S.t-sm;
+        min-height: S.line-sm;
+        vertical-alignment: center;
         overflow: elide;
         accessible-role: none;
     }
@@ -286,15 +293,18 @@ component ObjectList inherits VerticalLayout {
                     Chevron { }
                 }
             }
-            if RoomState.lights.length == 0: Text {
-                text: Tr.t("no_lights");
-                font-size: S.t-sm;
-                color: Theme.text-3;
-                wrap: word-wrap;
-                x: 42px;
-                width: parent.width - 42px - S.s3;
-                height: self.preferred-height + S.s3 + S.s2;
-                vertical-alignment: center;
+            // Under the rows' names, past their marks.
+            if RoomState.lights.length == 0: HorizontalLayout {
+                padding-left: 42px;
+                padding-right: S.s3;
+                padding-top: S.s3;
+                padding-bottom: S.s2;
+                Text {
+                    text: Tr.t("no_lights");
+                    font-size: S.t-sm;
+                    color: Theme.text-3;
+                    wrap: word-wrap;
+                }
             }
             Rule { }
             Item {
@@ -392,7 +402,7 @@ component ObjectList inherits VerticalLayout {
                     vertical-alignment: center;
                     accessible-role: none;
                 }
-                Chevron { open: RoomState.corners-open; }
+                Chevron { fold: true; open: RoomState.corners-open; }
             }
             if RoomState.corners-open: VerticalLayout {
                 for row[i] in RoomState.corner-rows: VerticalLayout {
@@ -535,7 +545,7 @@ component Exact inherits VerticalLayout {
                     vertical-alignment: center;
                     accessible-role: none;
                 }
-                Chevron { open: RoomState.exact-open; }
+                Chevron { fold: true; open: RoomState.exact-open; }
             }
         }
         FocusRing { w: parent.width; h: parent.height; shown: p.keyboard; radius: S.r-sm; }
