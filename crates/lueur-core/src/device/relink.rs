@@ -12,7 +12,8 @@
 //! something else streams to it (a polite open fails with
 //! [`lease::taken`]). Taking it back would cut the other one off, and the
 //! two would take it from each other in turn, so the link waits without
-//! sending anything, and the bulb joins the room again as soon as it is free.
+//! sending anything, and the bulb joins the room again as soon as it is
+//! free, or as soon as the user takes it.
 
 use super::LightStream;
 use super::lease::{self, Gate};
@@ -802,6 +803,7 @@ mod tests {
                     device: d.to_string(),
                     round,
                     since: 0,
+                    set: None,
                 })
                 .collect(),
         }

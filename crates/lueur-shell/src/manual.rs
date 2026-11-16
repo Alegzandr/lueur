@@ -12,9 +12,15 @@
 //! What the hand asks for goes through the photosensitivity protection like
 //! every effect: moods or colours switched faster than three times a second
 //! are eased rather than flashed.
+//!
+//! Another computer running Lueur may take the bulb meanwhile (see
+//! `lueur_core::device::lease`). Each light held here carries a [`Pass`]
+//! that says whether its bulb is still this computer's to send to; once it
+//! is not, the light is let go without another command.
 
 use crate::devices;
 use lueur_core::color::BulbOutput;
+use lueur_core::device::lease::Gate;
 use lueur_core::device::{self, Endpoint, LightStream};
 use lueur_core::safety::FlashGuard;
 use lueur_core::yeelight::Effect;
@@ -31,11 +37,42 @@ const IDLE: Duration = Duration::from_secs(4);
 /// enough that a dragged slider does not lag behind the hand.
 const FADE_MS: u32 = 150;
 
+/// What lets a light held by hand keep sending to its bulb.
+pub enum Pass {
+    /// The user set it, which claimed the bulb (`Leases::set`): until
+    /// another computer takes it.
+    Claimed(Gate),
+    /// Lueur set it by itself (the natural light, a light put back after an
+    /// effect): for as long as no other computer holds the bulb.
+    Unclaimed(Gate),
+}
+
+impl Pass {
+    /// Whether the bulb may still be sent to. Asked on every tick, which
+    /// keeps a claim alive.
+    fn open(&self) -> bool {
+        match self {
+            Pass::Claimed(gate) => gate.holds(),
+            Pass::Unclaimed(gate) => gate.is_free(),
+        }
+    }
+}
+
+impl Drop for Pass {
+    fn drop(&mut self) {
+        // The claim stands a moment longer, then the bulb is anyone's.
+        if let Pass::Claimed(gate) = self {
+            gate.release();
+        }
+    }
+}
+
 struct Session {
     stream: Box<dyn LightStream>,
     target: BulbOutput,
     touched: Instant,
     guard: Guarded,
+    pass: Pass,
 }
 
 /// One light's wishes, held to the flash budget (see [`FlashGuard`]).
@@ -65,7 +102,7 @@ impl Guarded {
 
 enum Slot {
     /// The stream is being opened; the newest wish waits here.
-    Opening(BulbOutput),
+    Opening(BulbOutput, Pass),
     Open(Session),
 }
 
@@ -78,23 +115,34 @@ pub struct Manual {
 }
 
 impl Manual {
-    /// Show `output` on the light, opening its stream if needed. Blocks while
-    /// the bulb is reached (up to a few seconds for one that is unplugged).
-    pub fn set(&self, light_id: &str, ep: &Endpoint, output: BulbOutput) -> io::Result<()> {
+    /// Show `output` on the light, opening its stream if needed, for as long
+    /// as `pass` holds. Blocks while the bulb is reached (up to a few
+    /// seconds for one that is unplugged).
+    pub fn set(
+        &self,
+        light_id: &str,
+        ep: &Endpoint,
+        output: BulbOutput,
+        pass: Pass,
+    ) -> io::Result<()> {
         {
             let mut slots = self.lock();
             match slots.get_mut(light_id) {
                 Some(Slot::Open(s)) => {
                     s.target = output;
                     s.touched = Instant::now();
+                    // The pass replaced lets go of its claim as it drops;
+                    // the new one's next tick keeps it.
+                    s.pass = pass;
                     return Ok(());
                 }
-                Some(Slot::Opening(wish)) => {
+                Some(Slot::Opening(wish, held)) => {
                     *wish = output;
+                    *held = pass;
                     return Ok(());
                 }
                 None => {
-                    slots.insert(light_id.to_string(), Slot::Opening(output));
+                    slots.insert(light_id.to_string(), Slot::Opening(output, pass));
                 }
             }
         }
@@ -114,7 +162,7 @@ impl Manual {
         };
         // Switched off or taken by the ambilight while we were connecting:
         // that later decision wins, and the stream is dropped unused.
-        let Some(Slot::Opening(target)) = slots.remove(light_id) else {
+        let Some(Slot::Opening(target, pass)) = slots.remove(light_id) else {
             return Ok(());
         };
         slots.insert(
@@ -124,6 +172,7 @@ impl Manual {
                 target,
                 touched: Instant::now(),
                 guard: Guarded::new(),
+                pass,
             }),
         );
         drop(slots);
@@ -165,12 +214,15 @@ fn run(slots: &Mutex<HashMap<String, Slot>>, worker: &Mutex<bool>) {
         std::thread::sleep(TICK);
         let mut slots = slots.lock().unwrap_or_else(|p| p.into_inner());
         slots.retain(|_, slot| match slot {
-            Slot::Opening(_) => true,
+            Slot::Opening(..) => true,
             Slot::Open(s) => {
-                // A bulb that stops answering is let go; the next change
+                // A bulb another computer took is let go without a word
+                // more, and so is one that stops answering; the next change
                 // opens a fresh stream.
                 let output = s.guard.next(s.target, Instant::now());
-                s.touched.elapsed() < IDLE && s.stream.push(output, Effect::Smooth, FADE_MS).is_ok()
+                s.pass.open()
+                    && s.touched.elapsed() < IDLE
+                    && s.stream.push(output, Effect::Smooth, FADE_MS).is_ok()
             }
         });
         if slots.is_empty() {

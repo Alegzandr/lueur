@@ -309,12 +309,27 @@ would show both streams at once. Two things keep them apart.
   without settling it, and its light waits (`Link::Held`) until the claim
   is gone. Who holds a bulb is decided from the claims alone, the same way
   on every computer: highest `round`, then oldest `since`, then smallest
-  instance id. *Take over* (`take_light`) claims a round above the holder.
+  instance id. What the user does claims a round above the holder: an
+  effect started on the light (`lights::start`, `set_lights_mode`), *Take
+  over* (`take_light`), and a light set by hand (below).
   Claims of an instance not heard for 3.5 s lapse; a released claim stands
   1.5 s, so the effect that replaces it keeps the bulb; an instance that
   slept drops its claims and listens for 1.2 s before claiming again, as it
-  does at launch. Announcements are not authenticated: a forged one can
-  make a light wait, never drive a bulb, and *Take over* always wins.
+  does at launch.
+- **Lights set by hand** (`Leases::set`, `Asker` in `lights.rs`). A
+  brightness, a colour, a mood or a power switch from the user claims the
+  bulb too, and the claim carries what it was set to
+  (`"set":{"state":{"on":…,"bright":…,"tint":…},"natural":…}`). It stands
+  while the light is held by hand (`manual.rs`, whose `Pass` stops sending
+  once another computer outranks it) or 5 s for a power switch, so it goes
+  out a few times. A computer that hears it follows
+  (`peers.rs`, `lights::follow_set`): its effect stops on that light, the
+  state is recorded and the window reads it again. It sends nothing to the
+  bulb. A version from before `set` reads such a claim as an effect's and
+  only waits.
+- Announcements are not authenticated: a forged one can make a light wait
+  or stop its effect, and change the state recorded for it, never drive a
+  bulb; the user's next change wins.
 - **Eviction** (`yeelight/connection.rs`). A reconnecting Yeelight first
   asks the bulb whether it is in music mode (`get_prop music_on`, asked
   again for most of a second, so a channel this instance just closed is not
@@ -323,10 +338,10 @@ would show both streams at once. Two things keep them apart.
   This covers another app, or a Lueur older than the leases. Other families
   cannot tell.
 
-Screen starting by itself, resuming at launch and moving lights between
-effects never take a bulb: only the user's *Take over* does, and it then
-opens the stream impolitely. Restoring hand-set colours and the sleep
-timer skip the bulbs another computer holds.
+Screen starting by itself, resuming at launch and restarting an effect
+never take a bulb: only what the user does takes one, and an effect then
+opens its stream impolitely. Restoring hand-set colours, the natural light
+and the sleep timer skip the bulbs another computer holds.
 
 ## Building & running
 

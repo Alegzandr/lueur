@@ -8,7 +8,8 @@
 //! * No command takes a shell string, path to execute, or arbitrary URL; the
 //!   network egress is LAN bulb control and discovery, the LAN broadcast
 //!   that tells other computers running Lueur which bulbs this one drives
-//!   (`peers.rs`: device ids and the computer's name, nothing secret), the
+//!   (`peers.rs`: device ids, the computer's name and what a bulb was set
+//!   to by hand, nothing secret), the
 //!   Smart Life sign-in while the user is importing Tuya bulbs (Tuya's own
 //!   hosts only, see `tuya_cloud.rs`), and the update check in `update.rs`,
 //!   whose address is a constant. No command can point any of them elsewhere.
@@ -110,8 +111,14 @@ fn away(state: &AppState) -> (Vec<String>, Vec<Elsewhere>) {
             Link::Held | Link::Taken => elsewhere.push(Elsewhere { light_id, by }),
         }
     }
+    // A light at rest here says who plays an effect on it. A computer that
+    // only set it by hand is not named: the light shows what it was set to.
+    let player = |light_id: &str| {
+        cfg.binding_for(light_id)
+            .and_then(|b| state.leases.player(&b.device_id))
+    };
     for light in cfg.room.lights.iter().filter(|l| !driven.contains(&l.id)) {
-        if let Some(by) = holder(&light.id) {
+        if let Some(by) = player(&light.id) {
             elsewhere.push(Elsewhere {
                 light_id: light.id.clone(),
                 by: Some(by),

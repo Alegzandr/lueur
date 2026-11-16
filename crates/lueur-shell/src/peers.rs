@@ -7,18 +7,26 @@
 //! hears decides which bulbs the effects leave alone, and each time that
 //! changes the window is told, so it shows who drives which light.
 //!
+//! A bulb the user sets by hand is claimed the same way, with what it was
+//! set to, for a few seconds. A second thread follows what the others set:
+//! the effect playing here on that light stops there, and the state is
+//! recorded, so every computer shows the room alike (`lights::follow_set`).
+//!
 //! Only announcements from a private or link-local address are read, at
-//! most `lease::MAX_DATAGRAM` bytes of them, and nothing they say ever
-//! reaches a bulb: the worst a forged one can do is make a light wait,
-//! which the user's take overrides.
+//! most `lease::MAX_DATAGRAM` bytes of them, and nothing they say is ever
+//! sent to a bulb as it is heard: the worst a forged one can do is make a
+//! light wait or stop its effect, and change what the window says the
+//! light was set to, which the user's next change overrides.
 
+use crate::lights;
 use crate::state::AppState;
 use crate::{Event, Shell};
 use lueur_core::device::common::{broadcast_targets, is_lan};
-use lueur_core::device::lease::{self, Announce};
+use lueur_core::device::lease::{self, Announce, Set};
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 /// The port every instance listens and broadcasts on.
@@ -31,13 +39,55 @@ const RETARGET: Duration = Duration::from_secs(30);
 /// The interface hears that another computer took or let go of a bulb at
 /// most this often, however many announcements arrive.
 const NOTIFY_GAP: Duration = Duration::from_millis(250);
+/// What another computer set the lights to reaches the disk once nothing
+/// more was heard for this long: a slider dragged there is heard several
+/// times a second.
+const SAVE_AFTER: Duration = Duration::from_secs(1);
 
 /// Talk with the other instances for as long as the app runs.
 pub fn spawn(shell: &Arc<Shell>) {
+    // Following a light another computer set may stop an effect here, which
+    // waits on the bulbs: on a thread of its own, so the claims keep going
+    // out and coming in meanwhile.
+    let (sets, heard) = mpsc::channel();
+    let follower = Arc::clone(shell);
+    let _ = std::thread::Builder::new()
+        .name("lueur-peers-follow".into())
+        .spawn(move || follow(&follower, &heard));
     let shell = Arc::clone(shell);
     let _ = std::thread::Builder::new()
         .name("lueur-peers".into())
-        .spawn(move || run(&shell));
+        .spawn(move || run(&shell, &sets));
+}
+
+/// Follow what the other computers set by hand, as it is heard.
+fn follow(shell: &Shell, heard: &Receiver<(String, Set)>) {
+    let mut unsaved = false;
+    loop {
+        match heard.recv_timeout(SAVE_AFTER) {
+            Ok((device, set)) => {
+                let mut changed = lights::follow_set(shell, &device, set);
+                // Everything heard meanwhile, before the window is told once.
+                while let Ok((device, set)) = heard.try_recv() {
+                    changed |= lights::follow_set(shell, &device, set);
+                }
+                if changed {
+                    unsaved = true;
+                    shell.emit(Event::EffectChanged(None));
+                    shell.emit(Event::LightsChanged);
+                    shell.tray_sync();
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                if std::mem::take(&mut unsaved)
+                    && let Err(e) = shell.persist()
+                {
+                    log::warn!("cannot save what another computer set the lights to: {e}");
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+    }
 }
 
 /// The socket announcements go out of and come in on. Another program on
@@ -61,7 +111,7 @@ fn send(socket: &UdpSocket, targets: &[Ipv4Addr], a: &Announce) {
     }
 }
 
-fn run(shell: &Shell) {
+fn run(shell: &Shell, sets: &Sender<(String, Set)>) {
     let leases = Arc::clone(&shell.leases);
     let socket = match bind() {
         Ok(s) => s,
@@ -80,6 +130,9 @@ fn run(shell: &Shell) {
             Ok((n, SocketAddr::V4(from))) if n <= lease::MAX_DATAGRAM && is_lan(*from.ip()) => {
                 if let Some(a) = Announce::decode(&buf[..n]) {
                     leases.hear(a);
+                    for set in leases.heard_sets() {
+                        let _ = sets.send(set);
+                    }
                 }
             }
             Ok(_) => {}

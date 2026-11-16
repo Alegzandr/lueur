@@ -24,7 +24,8 @@ pub(super) enum Opened {
 /// counts every light that will be driven once this starts (see
 /// [`per_host`](super::per_host)). A bulb another computer drives, or that
 /// says something else streams to it, is left alone: its light joins the
-/// effect, waiting, and picks up once the bulb is free.
+/// effect, waiting, and picks up once the bulb is free. Not so a bulb the
+/// user took for this effect (`Leases::take`): it is opened at once.
 ///
 /// Returns an error if there are none, or if none of the bulbs accept a
 /// stream; individual failures are tolerated.
@@ -76,7 +77,9 @@ pub(super) fn connect(
                     if !gate.may_drive() {
                         return Opened::Busy(Link::Held);
                     }
-                    match open(true) {
+                    // A bulb the user just took is opened whoever streams
+                    // to it.
+                    match open(!gate.take_forced()) {
                         Ok(stream) => Opened::Stream(stream),
                         Err(e) if lease::is_taken(&e) => Opened::Busy(Link::Taken),
                         Err(e) => Opened::Failed(e),

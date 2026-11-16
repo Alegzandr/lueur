@@ -5,10 +5,12 @@
 
 use crate::devices;
 use crate::error::{AppError, AppResult};
+use crate::manual::Pass;
 use crate::runner::{self, Mode};
 use crate::state::AppState;
 use lueur_core::color::Rgb;
 use lueur_core::config::{AppConfig, DeviceBinding};
+use lueur_core::device::lease::Set;
 use lueur_core::device::{Endpoint, common};
 use lueur_core::scene::{self, LightState};
 use std::collections::BTreeMap;
@@ -22,6 +24,20 @@ pub struct PowerResult {
     pub succeeded: usize,
     /// Names of the lights whose bulb did not answer.
     pub failures: Vec<String>,
+}
+
+/// Who asks for a light to change, which decides what happens to a bulb
+/// another computer running Lueur holds (see `lueur_core::device::lease`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Asker {
+    /// The user. Whoever changes a light has it: the bulb is taken from the
+    /// computer that holds it, and a light set by hand is told to the
+    /// others, which show the same.
+    User,
+    /// Lueur by itself (a light put back after an effect, the natural
+    /// light, the sleep timer's fade). A bulb another computer holds is
+    /// left alone, and nothing is said.
+    App,
 }
 
 /// The bulb at `ip` did not answer. Its address is the subject until
@@ -88,13 +104,14 @@ pub fn power_one(ep: &Endpoint, on: bool) -> AppResult<()> {
 /// for a fullscreen game), replacing whatever runs. The modes the user chose
 /// stay recorded, so they come back at the next launch.
 pub fn start_effect(state: &AppState) -> AppResult<usize> {
-    start_room(state, Mode::Ambilight)
+    start_room(state, Mode::Ambilight, Asker::App)
 }
 
 /// Start the ambilight or a show on every enabled light, as the user asked,
-/// replacing whatever runs, and record it for the next launch.
+/// replacing whatever runs, and record it for the next launch. Bulbs
+/// another computer drives are taken from it.
 pub fn start(state: &AppState, mode: Mode) -> AppResult<usize> {
-    let connected = start_room(state, mode)?;
+    let connected = start_room(state, mode, Asker::User)?;
     record_modes(state, |modes, cfg| {
         *modes = runner::enabled_ids(cfg)
             .into_iter()
@@ -107,7 +124,7 @@ pub fn start(state: &AppState, mode: Mode) -> AppResult<usize> {
 /// Start `mode` on every enabled light, from the saved config, replacing
 /// whatever runs. Lights held by hand are let go first: the effect needs
 /// their streams. A show started this way becomes the one the tray offers.
-fn start_room(state: &AppState, mode: Mode) -> AppResult<usize> {
+fn start_room(state: &AppState, mode: Mode, asker: Asker) -> AppResult<usize> {
     let _change = state.effects.change();
     stop_taken(state, state.effects.take(|_| true), false);
     state.manual.release_all();
@@ -122,6 +139,9 @@ fn start_room(state: &AppState, mode: Mode) -> AppResult<usize> {
         state.persist()?;
     }
     let ids = runner::enabled_ids(&config);
+    if asker == Asker::User {
+        take_bulbs(state, &config, &ids);
+    }
     let hosts = runner::per_host(&config, &ids);
     let handle = runner::start(&config, mode, &ids, &hosts, &state.leases)?;
     let connected = handle.connected_lights;
@@ -284,6 +304,14 @@ pub fn give_back(
     }
 }
 
+/// Take the bulbs of `ids` from whichever computers hold them, for an
+/// effect the user starts on those lights.
+fn take_bulbs(state: &AppState, config: &AppConfig, ids: &[String]) {
+    for binding in ids.iter().filter_map(|id| config.binding_for(id)) {
+        state.leases.take(&binding.device_id);
+    }
+}
+
 fn stop_taken(state: &AppState, mut handles: Vec<runner::Handle>, restore: bool) {
     // Every loop at once: each one's bulbs fade out together.
     std::thread::scope(|scope| {
@@ -324,12 +352,14 @@ fn put_back(state: &AppState, ids: &[String], or_default: bool) {
     drop(cfg);
     std::thread::scope(|scope| {
         for (b, wish) in &jobs {
-            scope.spawn(move || apply_one(state, b, *wish, wall));
+            scope.spawn(move || apply_one(state, b, *wish, wall, Asker::App));
         }
     });
 }
 
-/// Play `mode` on `ids`, or give them back to the hand with `None`.
+/// Play `mode` on `ids`, or give them back to the hand with `None`, as the
+/// user asked. Bulbs another computer drives are taken from it for the
+/// effect.
 ///
 /// Lights playing the same mode share one loop, so they move in step: the
 /// lights join that loop, which restarts with them, and the ones they leave
@@ -337,6 +367,10 @@ fn put_back(state: &AppState, ids: &[String], or_default: bool) {
 /// too, so a Hue bridge's budget is split anew. The bulbs go straight from
 /// one loop to the next, without settling in between.
 pub fn set_lights_mode(state: &AppState, ids: &[String], mode: Option<Mode>) -> AppResult<()> {
+    if mode.is_some() {
+        let config = state.lock_config()?.clone();
+        take_bulbs(state, &config, ids);
+    }
     move_lights(state, ids, mode, true)
 }
 
@@ -464,11 +498,11 @@ pub fn restart(state: &AppState) -> AppResult<usize> {
     }
 }
 
-/// Take the bulb of `light_id` from whatever drives it, another computer or
-/// another app, as the user asked: the effect playing on the light here
-/// drives it again at once, and the other one waits instead. Only a light
-/// an effect plays on can be taken, or nothing would drive the bulb it
-/// took.
+/// Take the bulb of `light_id` back from whatever drives it, another
+/// computer or another app, as the user asked: the effect playing on the
+/// light here drives it again at once, and the other one waits instead.
+/// Only a light an effect plays on can be taken, or nothing would drive the
+/// bulb it took.
 pub fn take(state: &AppState, light_id: &str) -> AppResult<()> {
     if state.effects.mode_of(light_id).is_none() {
         return Err(AppError::new("light_not_playing"));
@@ -553,18 +587,58 @@ fn binding(state: &AppState, light_id: &str) -> AppResult<DeviceBinding> {
     Ok(binding)
 }
 
-/// Show `wish` on one light, corrected for the room's `wall`.
+/// Take the bulb of `binding` for the user, who sets it by hand to `wish`,
+/// and tell the other computers what it shows now. A light that follows the
+/// natural light is told as such, so it keeps following it there too.
+///
+/// Not while an effect plays on the light here (every light switched on
+/// from the tray, say): the effect goes on, and its claim says so already.
+fn announce(state: &AppState, binding: &DeviceBinding, wish: LightState) {
+    if state.effects.mode_of(&binding.light_id).is_some() {
+        return;
+    }
+    let natural = state
+        .lock_config()
+        .is_ok_and(|cfg| cfg.natural.contains(&binding.light_id));
+    let set = Set {
+        state: wish,
+        natural,
+    };
+    state.leases.set(&binding.device_id, set);
+}
+
+/// Show `wish` on one light, corrected for the room's `wall`. Asked by
+/// Lueur itself, a light whose bulb another computer holds is left as it
+/// is.
 fn apply_one(
     state: &AppState,
     binding: &DeviceBinding,
     wish: LightState,
     wall: Rgb,
+    asker: Asker,
 ) -> AppResult<()> {
     let ep = binding.endpoint();
+    let gate = state.leases.gate(&binding.device_id);
+    match asker {
+        Asker::User => {
+            // Let go first: a light held by hand ends its claim as it is
+            // released, and the one made here must outlast that.
+            if !wish.on {
+                state.manual.release(&binding.light_id);
+            }
+            announce(state, binding, wish);
+        }
+        Asker::App if !gate.is_free() => return Ok(()),
+        Asker::App => {}
+    }
     if wish.on {
+        let pass = match asker {
+            Asker::User => Pass::Claimed(gate),
+            Asker::App => Pass::Unclaimed(gate),
+        };
         state
             .manual
-            .set(&binding.light_id, &ep, wish.output().on_wall(wall))
+            .set(&binding.light_id, &ep, wish.output().on_wall(wall), pass)
             .map_err(|e| unreachable(&ep.ip, e))
     } else {
         state.manual.release(&binding.light_id);
@@ -572,9 +646,10 @@ fn apply_one(
     }
 }
 
-/// Show `wish` on one light, and record it. A slider drag calls this many
-/// times a second, so the record waits for the interface's next save to
-/// reach the disk.
+/// Show `wish` on one light, as the user asked, and record it. The bulb is
+/// taken from another computer that holds it, and the others are told. A
+/// slider drag calls this many times a second, so the record waits for the
+/// interface's next save to reach the disk.
 ///
 /// Holds the effects' change lock, so an effect starting meanwhile either
 /// sees the light taken by hand or takes it after: never both at once.
@@ -583,7 +658,8 @@ pub fn set_light(state: &AppState, light_id: &str, wish: LightState) -> AppResul
     let binding = manual_binding(state, light_id)?;
     let wish = wish.clamped();
     let wall = state.lock_config()?.room.wall;
-    apply_one(state, &binding, wish, wall).map_err(|e| named_for(state, light_id, e))?;
+    apply_one(state, &binding, wish, wall, Asker::User)
+        .map_err(|e| named_for(state, light_id, e))?;
     state
         .lock_config()?
         .states
@@ -603,13 +679,14 @@ pub fn show_lights(state: &AppState, wishes: &[(String, LightState)]) {
         for (id, wish) in wishes {
             if let Ok(binding) = manual_binding(state, id) {
                 let wish = wish.clamped();
-                scope.spawn(move || apply_one(state, &binding, wish, wall));
+                scope.spawn(move || apply_one(state, &binding, wish, wall, Asker::App));
             }
         }
     });
 }
 
-/// Switch one light on or off, leaving its colour to the bulb. Off takes the
+/// Switch one light on or off, as the user asked, leaving its colour to the
+/// bulb. The bulb is taken from another computer that holds it. Off takes the
 /// light out of the effect playing on it first: a stream does not leave a
 /// bulb off (a Yeelight leaves music mode and is opened again, a Tuya bulb
 /// is switched on with the next frame), so switching it off under the loop
@@ -621,6 +698,11 @@ pub fn set_light_power(state: &AppState, light_id: &str, on: bool) -> AppResult<
         move_lights(state, &[light_id.to_string()], None, false)?;
     }
     state.manual.release(light_id);
+    let saved = {
+        let cfg = state.lock_config()?;
+        cfg.states.get(light_id).copied().unwrap_or_default()
+    };
+    announce(state, &binding, LightState { on, ..saved });
     power_one(&binding.endpoint(), on).map_err(|e| named_for(state, light_id, e))?;
     remember(state, |states| {
         states.entry(light_id.to_string()).or_default().on = on;
@@ -628,11 +710,13 @@ pub fn set_light_power(state: &AppState, light_id: &str, on: bool) -> AppResult<
 }
 
 /// Every bound bulb with what `wish` says it should show (lights it skips
-/// are left alone), all at once.
+/// are left alone), all at once. With `power_only`, only whether it is on
+/// is taken from the wish: the rest stays what the light was set to.
 fn apply_many(
     state: &AppState,
     wish: impl Fn(&DeviceBinding) -> Option<LightState>,
     power_only: bool,
+    asker: Asker,
 ) -> AppResult<PowerResult> {
     // Each bulb with the name of the light it drives, which is what the
     // user calls it.
@@ -649,7 +733,17 @@ fn apply_many(
                     .find(|l| l.id == b.light_id)
                     .map(|l| l.name.clone())
                     .unwrap_or_else(|| b.ip.clone());
-                Some((b.clone(), name, wish(b)?))
+                let wish = wish(b)?;
+                let wish = if power_only {
+                    let saved = cfg.states.get(&b.light_id).copied().unwrap_or_default();
+                    LightState {
+                        on: wish.on,
+                        ..saved
+                    }
+                } else {
+                    wish
+                };
+                Some((b.clone(), name, wish))
             })
             .collect();
         (cfg.room.wall, jobs)
@@ -667,9 +761,12 @@ fn apply_many(
                 scope.spawn(move || {
                     if power_only {
                         state.manual.release(&b.light_id);
+                        if asker == Asker::User {
+                            announce(state, b, *w);
+                        }
                         power_one(&b.endpoint(), w.on)
                     } else {
-                        apply_one(state, b, *w, wall)
+                        apply_one(state, b, *w, wall, asker)
                     }
                 })
             })
@@ -699,7 +796,8 @@ fn apply_many(
     })
 }
 
-/// Turn every bound bulb on or off.
+/// Turn every bound bulb on or off, as the user asked: those another
+/// computer holds are taken from it.
 ///
 /// Turning everything off stops the effect first: the running loop would keep
 /// streaming colours (and its shutdown fade would light the bulbs back up),
@@ -718,12 +816,14 @@ pub fn set_all_power(state: &AppState, on: bool) -> AppResult<PowerResult> {
             })
         },
         true,
+        Asker::User,
     )
 }
 
 /// Switch off every light, for the sleep timer, but those whose bulb
 /// another computer drives: the timer puts this computer's room to bed,
-/// not the effect someone plays on the other one.
+/// not the effect someone plays on the other one. The others are told
+/// which lights went out, as for lights switched off by hand.
 pub fn sleep_all(state: &AppState) -> AppResult<PowerResult> {
     crate::auto::user_took_over(state);
     stop_effect(state, false);
@@ -740,6 +840,7 @@ pub fn sleep_all(state: &AppState) -> AppResult<PowerResult> {
                 })
         },
         true,
+        Asker::User,
     )
 }
 
@@ -769,7 +870,12 @@ pub fn apply_scene(state: &AppState, id: &str, ids: Option<&[String]>) -> AppRes
         }
     };
     set_natural(state, &ids, id == scene::NATURAL)?;
-    apply_many(state, |b| ids.contains(&b.light_id).then_some(wish), false)
+    apply_many(
+        state,
+        |b| ids.contains(&b.light_id).then_some(wish),
+        false,
+        Asker::User,
+    )
 }
 
 /// Have `ids` follow the natural light or stop following it, without
@@ -845,7 +951,12 @@ pub fn follow_natural(state: &AppState, wish: LightState) -> AppResult<bool> {
     if behind.is_empty() {
         return Ok(false);
     }
-    apply_many(state, |b| behind.get(&b.light_id).copied(), false)?;
+    apply_many(
+        state,
+        |b| behind.get(&b.light_id).copied(),
+        false,
+        Asker::App,
+    )?;
     Ok(true)
 }
 
@@ -864,6 +975,51 @@ pub fn rewall(state: &AppState) {
         Err(_) => return,
     };
     put_back(state, &ids, false);
+}
+
+/// Another computer's user set the bulb `device_id` by hand: it is theirs
+/// now. The effect playing on its light here stops on that light, the light
+/// is no longer held by hand, and what it was set to is recorded, so this
+/// computer shows the same as the other. Nothing is sent to the bulb: the
+/// other computer did that. `false` when no light here has that bulb.
+///
+/// The record waits for the caller to persist it: a slider dragged on the
+/// other computer is heard several times a second.
+pub fn follow_set(state: &AppState, device_id: &str, set: Set) -> bool {
+    let light_id = state.lock_config().ok().and_then(|cfg| {
+        let binding = cfg.bindings.iter().find(|b| b.device_id == device_id)?;
+        Some(binding.light_id.clone())
+    });
+    let Some(light_id) = light_id else {
+        return false;
+    };
+    if state.effects.mode_of(&light_id).is_some()
+        && let Err(e) = move_lights(state, std::slice::from_ref(&light_id), None, false)
+    {
+        log::warn!("cannot stop the effect on a light another computer set: {e}");
+    }
+    state.manual.release(&light_id);
+    let Ok(mut cfg) = state.lock_config() else {
+        return false;
+    };
+    let wish = set.state.clamped();
+    if set.natural {
+        cfg.natural.insert(light_id.clone());
+        // As much brighter or dimmer than the curve as it was set there.
+        // Switched off, its brightness says nothing new.
+        let curve = crate::natural::now().bright.max(1);
+        if wish.on && wish.bright == curve {
+            cfg.natural_scale.remove(&light_id);
+        } else if wish.on {
+            let scale = f32::from(wish.bright) / f32::from(curve);
+            cfg.natural_scale.insert(light_id.clone(), scale);
+        }
+    } else {
+        cfg.natural.remove(&light_id);
+        cfg.natural_scale.remove(&light_id);
+    }
+    cfg.states.insert(light_id, wish);
+    true
 }
 
 /// Record what lights were set to, and persist it.

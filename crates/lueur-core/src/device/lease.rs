@@ -7,8 +7,13 @@
 //! (a [`Claim`] each, in an [`Announce`] broadcast every second while it
 //! drives any), hears what the others drive, and leaves alone a bulb that
 //! someone else holds: its light waits, and picks up again once the other
-//! lets go. Only the user's word takes a bulb from another computer
-//! ([`Leases::take`]); nothing Lueur starts by itself ever does.
+//! lets go. Only what the user does takes a bulb from another computer:
+//! starting an effect on it ([`Leases::take`]) or setting it by hand
+//! ([`Leases::set`]). Nothing Lueur starts by itself ever does.
+//!
+//! A bulb set by hand is claimed with what it was set to (a [`Set`]), so
+//! the other computers do more than let go: they show the same state, and
+//! the effect they played on it stops there ([`Leases::heard_sets`]).
 //!
 //! Who holds a bulb is decided the same way on every computer, from what
 //! the claims say: the highest `round` wins, then the oldest `since`, then
@@ -23,9 +28,11 @@
 //! old claim a bulb another computer picked up meanwhile.
 //!
 //! Nothing here is secret or proved: anything on the network can claim a
-//! bulb. The worst it can do is make Lueur wait, which the user's take
-//! always overrides; it never gets to drive a bulb through Lueur.
+//! bulb. The worst it can do is make Lueur wait, or stop an effect on a
+//! light and change what the window says it was set to, which the user's
+//! next change overrides; it never gets to drive a bulb through Lueur.
 
+use crate::scene::LightState;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -73,6 +80,21 @@ pub struct Claim {
     /// When the claim was made, in milliseconds since 1970 by the
     /// claimer's clock.
     pub since: u64,
+    /// What the claimer's user set the bulb to by hand, when that is why
+    /// it holds it; none while an effect plays on it. A version from
+    /// before this field reads the claim as an effect's, and waits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set: Option<Set>,
+}
+
+/// What a bulb was set to by hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Set {
+    pub state: LightState,
+    /// Its light follows the natural light, and this is where the day has
+    /// brought it.
+    #[serde(default)]
+    pub natural: bool,
 }
 
 /// What an instance broadcasts: who it is, and the bulbs it drives.
@@ -113,6 +135,10 @@ impl Announce {
             return None;
         }
         a.host = clean_host(&a.host);
+        // Only what a bulb accepts is ever recorded from the network.
+        for set in a.claims.iter_mut().filter_map(|c| c.set.as_mut()) {
+            set.state = set.state.clamped();
+        }
         Some(a)
     }
 }
@@ -197,6 +223,12 @@ struct Table {
     mine: HashMap<String, Mine>,
     /// Bulbs the user took, whose next stream goes ahead whoever streams.
     forced: HashSet<String>,
+    /// The hand-set claim last followed on each bulb, and whose it is, so
+    /// its heartbeats are not followed again.
+    followed: HashMap<String, (String, Claim)>,
+    /// What other computers set by hand since [`Leases::heard_sets`] was
+    /// last asked.
+    sets: Vec<(String, Set)>,
     /// No claim is made before this: the instance is still listening.
     quiet_until: Instant,
     last_tick: Instant,
@@ -215,6 +247,8 @@ impl Table {
             peers: HashMap::new(),
             mine: HashMap::new(),
             forced: HashSet::new(),
+            followed: HashMap::new(),
+            sets: Vec::new(),
             quiet_until: now + listen,
             last_tick: now,
             last_sent: None,
@@ -239,8 +273,8 @@ impl Table {
         best
     }
 
-    /// Whether this instance may drive `device` now, claiming it if nobody
-    /// holds it. A claim another one outranks is dropped.
+    /// Whether an effect of this instance may drive `device` now, claiming
+    /// it if nobody holds it. A claim another one outranks is dropped.
     fn drive(&mut self, device: &str, now: Instant, clock: u64) -> bool {
         let rival = self
             .rival(device, now)
@@ -249,7 +283,9 @@ impl Table {
             Some(m) => {
                 if rival.is_none_or(|(id, c)| outranks(&m.claim, &self.me, &c, &id)) {
                     m.touched = now;
-                    if m.released.take().is_some() {
+                    // An effect plays on it now, whatever it was set to.
+                    let was_set = m.claim.set.take().is_some();
+                    if m.released.take().is_some() || was_set {
                         self.dirty = true;
                     }
                     true
@@ -266,6 +302,7 @@ impl Table {
                     device: device.to_string(),
                     round: 0,
                     since: clock,
+                    set: None,
                 };
                 self.mine.insert(
                     device.to_string(),
@@ -281,25 +318,72 @@ impl Table {
         }
     }
 
-    /// Claim `device` above whoever holds it.
-    fn take(&mut self, device: &str, now: Instant, clock: u64) {
-        let top = self.rival(device, now).map(|(_, _, c)| c.round);
-        let ours = self.mine.get(device).map(|m| m.claim.round);
-        let round = top.max(ours).map_or(0, |g| g.saturating_add(1));
-        self.mine.insert(
-            device.to_string(),
-            Mine {
-                claim: Claim {
-                    device: device.to_string(),
-                    round,
-                    since: clock,
-                },
-                touched: now,
-                released: None,
-            },
-        );
-        self.forced.insert(device.to_string());
+    /// Whether the claim this instance made on `device` by hand still
+    /// holds, keeping it alive if so. One that another outranks is dropped.
+    fn keep(&mut self, device: &str, now: Instant) -> bool {
+        let rival = self
+            .rival(device, now)
+            .map(|(id, _, c)| (id.to_string(), c.clone()));
+        let Some(m) = self.mine.get_mut(device) else {
+            return false;
+        };
+        if rival.is_none_or(|(id, c)| outranks(&m.claim, &self.me, &c, &id)) {
+            m.touched = now;
+            m.released = None;
+            return true;
+        }
+        self.mine.remove(device);
+        self.forced.remove(device);
         self.dirty = true;
+        false
+    }
+
+    /// Claim `device` for what the user just did: above whoever holds it,
+    /// or as it is already claimed when this instance holds it. `set` is
+    /// what the user set it to by hand; none for an effect, whose next
+    /// stream then goes ahead whoever streams.
+    fn take(&mut self, device: &str, set: Option<Set>, now: Instant, clock: u64) {
+        let rival = self
+            .rival(device, now)
+            .map(|(id, _, c)| (id.to_string(), c.clone()));
+        let held = match self.mine.get_mut(device) {
+            Some(m)
+                if rival
+                    .as_ref()
+                    .is_none_or(|(id, c)| outranks(&m.claim, &self.me, c, id)) =>
+            {
+                m.touched = now;
+                m.released = None;
+                if m.claim.set != set {
+                    m.claim.set = set;
+                    self.dirty = true;
+                }
+                true
+            }
+            _ => false,
+        };
+        if !held {
+            let round = rival.map_or(0, |(_, c)| c.round.saturating_add(1).min(MAX_ROUND));
+            self.mine.insert(
+                device.to_string(),
+                Mine {
+                    claim: Claim {
+                        device: device.to_string(),
+                        round,
+                        since: clock,
+                        set,
+                    },
+                    touched: now,
+                    released: None,
+                },
+            );
+            self.dirty = true;
+        }
+        if set.is_none() {
+            self.forced.insert(device.to_string());
+        } else {
+            self.forced.remove(device);
+        }
     }
 
     fn release(&mut self, device: &str, now: Instant) {
@@ -309,13 +393,44 @@ impl Table {
         self.forced.remove(device);
     }
 
-    /// The computer that holds `device`, when it is not us: the name of the
-    /// instance whose claim outranks ours, or that claims it while we don't.
-    fn holder(&self, device: &str, now: Instant) -> Option<String> {
+    /// The claim that holds `device`, when it is not ours: the one that
+    /// outranks ours, or that stands while we claim nothing.
+    fn held(&self, device: &str, now: Instant) -> Option<(&str, &Peer, &Claim)> {
         let (id, peer, claim) = self.rival(device, now)?;
         match self.mine.get(device) {
             Some(m) if outranks(&m.claim, &self.me, claim, id) => None,
-            _ => Some(peer.host.clone()),
+            _ => Some((id, peer, claim)),
+        }
+    }
+
+    /// The name of the computer that holds `device`, when it is not us.
+    fn holder(&self, device: &str, now: Instant) -> Option<String> {
+        self.held(device, now).map(|(_, peer, _)| peer.host.clone())
+    }
+
+    /// The name of the computer that plays an effect on `device`, when it
+    /// is not us. One that only set it by hand is not named.
+    fn player(&self, device: &str, now: Instant) -> Option<String> {
+        self.held(device, now)
+            .filter(|(_, _, claim)| claim.set.is_none())
+            .map(|(_, peer, _)| peer.host.clone())
+    }
+
+    /// Note what `devices` were set to by hand on the computer that holds
+    /// them, once for each change.
+    fn follow(&mut self, devices: Vec<String>, now: Instant) {
+        for device in devices {
+            let Some((id, _, claim)) = self.held(&device, now) else {
+                continue;
+            };
+            let Some(set) = claim.set else {
+                continue;
+            };
+            let seen = (id.to_string(), claim.clone());
+            if self.followed.get(&device) != Some(&seen) {
+                self.followed.insert(device.clone(), seen);
+                self.sets.push((device, set));
+            }
         }
     }
 
@@ -344,6 +459,12 @@ impl Table {
         if !same {
             self.version += 1;
         }
+        let set: Vec<String> = a
+            .claims
+            .iter()
+            .filter(|c| c.set.is_some())
+            .map(|c| c.device.clone())
+            .collect();
         self.peers.insert(
             a.id,
             Peer {
@@ -352,6 +473,7 @@ impl Table {
                 heard: now,
             },
         );
+        self.follow(set, now);
     }
 
     /// Forget who fell silent, and our claims nobody drives any more.
@@ -370,6 +492,11 @@ impl Table {
         if self.peers.len() != before {
             self.version += 1;
         }
+        // A claim that is gone will not be heard again: nothing to tell
+        // apart from, and a flood of bulb names does not pile up here.
+        let peers = &self.peers;
+        self.followed
+            .retain(|_, (id, claim)| peers.get(id).is_some_and(|p| p.claims.contains(claim)));
         let before = self.mine.len();
         self.mine.retain(|_, m| {
             let let_go = m
@@ -442,16 +569,45 @@ impl Leases {
         }
     }
 
-    /// Take `device` from whoever holds it, as the user asked.
+    /// Take `device` for an effect the user starts on it, from whoever
+    /// holds it.
     pub fn take(&self, device: &str) {
-        log::info!(device = device; "taking a bulb from another computer");
-        self.lock().take(device, Instant::now(), clock());
+        let mut t = self.lock();
+        let now = Instant::now();
+        if t.held(device, now).is_some() {
+            log::info!(device = device; "taking a bulb from another computer");
+        }
+        t.take(device, None, now, clock());
+    }
+
+    /// Take `device` because the user set it by hand to `set`, from whoever
+    /// holds it, and tell the other computers what it shows now. The claim
+    /// stands while a [`Gate`] keeps it ([`Gate::holds`]), or for [`IDLE`].
+    pub fn set(&self, device: &str, set: Set) {
+        let mut t = self.lock();
+        let now = Instant::now();
+        if t.held(device, now).is_some() {
+            log::info!(device = device; "taking a bulb from another computer");
+        }
+        t.take(device, Some(set), now, clock());
     }
 
     /// The name of the computer that holds `device`, when it is not this
     /// one.
     pub fn holder(&self, device: &str) -> Option<String> {
         self.lock().holder(device, Instant::now())
+    }
+
+    /// The name of the computer that plays an effect on `device`, when it
+    /// is not this one.
+    pub fn player(&self, device: &str) -> Option<String> {
+        self.lock().player(device, Instant::now())
+    }
+
+    /// The bulbs other computers set by hand since last asked, each with
+    /// what it was set to, in the order heard.
+    pub fn heard_sets(&self) -> Vec<(String, Set)> {
+        std::mem::take(&mut self.lock().sets)
     }
 
     /// Take in what another instance says.
@@ -499,6 +655,18 @@ impl Gate {
         self.leases
             .lock()
             .drive(&self.device, Instant::now(), clock())
+    }
+
+    /// Whether the claim made on the bulb when the user set it by hand
+    /// ([`Leases::set`]) still holds. Asked while the light is held by
+    /// hand, which keeps the claim alive.
+    pub fn holds(&self) -> bool {
+        self.leases.lock().keep(&self.device, Instant::now())
+    }
+
+    /// Whether no other computer holds the bulb.
+    pub fn is_free(&self) -> bool {
+        self.leases.holder(&self.device).is_none()
     }
 
     /// Whether the user took the bulb since last asked: its next stream
@@ -557,6 +725,7 @@ mod tests {
                 device: LAMP.into(),
                 round: 2,
                 since: 17,
+                set: None,
             }],
         };
         let back = Announce::decode(&a.encode()).unwrap();
@@ -631,7 +800,7 @@ mod tests {
         assert!(a.drive(LAMP, t0, 1000));
         relay(&mut a, &mut b, t0);
         assert!(!b.drive(LAMP, t0, 2000));
-        b.take(LAMP, t0, 3000);
+        b.take(LAMP, None, t0, 3000);
         assert!(b.drive(LAMP, t0, 3001));
         assert!(b.forced.remove(LAMP), "its next stream goes ahead");
         relay(&mut b, &mut a, t0);
@@ -642,10 +811,127 @@ mod tests {
         assert!(said.claims.is_empty());
         // Taking it back raises the stakes again.
         relay(&mut b, &mut a, t0 + ms(10));
-        a.take(LAMP, t0 + ms(10), 4000);
+        a.take(LAMP, None, t0 + ms(10), 4000);
         relay(&mut a, &mut b, t0 + ms(10));
         assert!(a.drive(LAMP, t0 + ms(10), 4001));
         assert!(!b.drive(LAMP, t0 + ms(10), 4001));
+    }
+
+    fn white(bright: u8) -> Set {
+        Set {
+            state: LightState {
+                bright,
+                ..LightState::default()
+            },
+            natural: false,
+        }
+    }
+
+    #[test]
+    fn what_a_bulb_was_set_to_survives_the_wire_within_what_bulbs_accept() {
+        let mut a = Announce {
+            lueur: PROTOCOL,
+            id: "a".into(),
+            host: "Salon".into(),
+            claims: vec![Claim {
+                device: LAMP.into(),
+                round: 0,
+                since: 1,
+                set: Some(Set {
+                    natural: true,
+                    ..white(40)
+                }),
+            }],
+        };
+        let back = Announce::decode(&a.encode()).unwrap();
+        assert_eq!(back.claims, a.claims);
+        a.claims[0].set = Some(white(250));
+        let back = Announce::decode(&a.encode()).unwrap();
+        assert_eq!(back.claims[0].set.unwrap().state.bright, 100);
+        // An effect's claim reads as it did before bulbs set by hand were
+        // told, and is written the same.
+        a.claims[0].set = None;
+        assert!(!String::from_utf8(a.encode()).unwrap().contains("set"));
+        let old =
+            br#"{"lueur":1,"id":"a","host":"Salon","claims":[{"device":"x","round":0,"since":1}]}"#;
+        assert_eq!(Announce::decode(old).unwrap().claims[0].set, None);
+    }
+
+    #[test]
+    fn a_bulb_set_by_hand_is_taken_from_the_effect_playing_on_it() {
+        let t0 = Instant::now();
+        let (mut a, mut b) = (table("a", t0), table("b", t0));
+        assert!(a.drive(LAMP, t0, 1000));
+        relay(&mut a, &mut b, t0);
+        assert_eq!(b.player(LAMP, t0).as_deref(), Some("PC-a"));
+        // b's user sets the lamp: no waiting, no button.
+        b.take(LAMP, Some(white(40)), t0, 2000);
+        assert!(b.keep(LAMP, t0));
+        assert!(!b.forced.contains(LAMP));
+        relay(&mut b, &mut a, t0);
+        assert!(!a.drive(LAMP, t0, 2001), "a's effect lets go");
+        assert_eq!(a.holder(LAMP, t0).as_deref(), Some("PC-b"));
+        assert_eq!(a.player(LAMP, t0), None, "b plays nothing on it");
+        assert_eq!(std::mem::take(&mut a.sets), vec![(LAMP.into(), white(40))]);
+    }
+
+    #[test]
+    fn a_hand_set_is_followed_once_and_again_when_it_changes() {
+        let t0 = Instant::now();
+        let (mut a, mut b) = (table("a", t0), table("b", t0));
+        b.take(LAMP, Some(white(40)), t0, 1000);
+        relay(&mut b, &mut a, t0);
+        assert_eq!(a.sets.len(), 1);
+        // Its heartbeats say nothing new.
+        b.keep(LAMP, t0 + ms(900));
+        relay(&mut b, &mut a, t0 + ms(1000));
+        assert_eq!(a.sets.len(), 1);
+        // The slider moves on: the same claim, another state.
+        b.take(LAMP, Some(white(60)), t0 + ms(1100), 2100);
+        assert_eq!(b.mine[LAMP].claim.round, 0, "holding it, nothing to outbid");
+        relay(&mut b, &mut a, t0 + ms(1100));
+        assert_eq!(
+            std::mem::take(&mut a.sets),
+            vec![(LAMP.into(), white(40)), (LAMP.into(), white(60))]
+        );
+        // Once the claim is gone, nothing is kept of it.
+        b.release(LAMP, t0 + ms(1200));
+        let t = t0 + ms(1200) + GRACE + ms(100);
+        b.tick(t);
+        relay(&mut b, &mut a, t);
+        a.tick(t);
+        assert!(a.followed.is_empty());
+        assert!(a.sets.is_empty());
+    }
+
+    #[test]
+    fn the_last_to_set_a_bulb_by_hand_has_it() {
+        let t0 = Instant::now();
+        let (mut a, mut b) = (table("a", t0), table("b", t0));
+        a.take(LAMP, Some(white(20)), t0, 1000);
+        relay(&mut a, &mut b, t0);
+        b.sets.clear();
+        b.take(LAMP, Some(white(80)), t0 + ms(500), 1500);
+        relay(&mut b, &mut a, t0 + ms(500));
+        assert!(!a.keep(LAMP, t0 + ms(500)), "a's hold on it ends");
+        assert!(b.keep(LAMP, t0 + ms(500)));
+        assert_eq!(a.sets, vec![(LAMP.into(), white(80))]);
+        // a's stale word, heard late, changes nothing for b.
+        relay(&mut a, &mut b, t0 + ms(500));
+        assert!(b.sets.is_empty());
+        assert!(b.keep(LAMP, t0 + ms(600)));
+    }
+
+    #[test]
+    fn an_effect_started_on_a_bulb_set_by_hand_says_so() {
+        let t0 = Instant::now();
+        let (mut a, mut b) = (table("a", t0), table("b", t0));
+        a.take(LAMP, Some(white(20)), t0, 1000);
+        relay(&mut a, &mut b, t0);
+        assert_eq!(b.player(LAMP, t0), None);
+        assert!(a.drive(LAMP, t0 + ms(100), 1100));
+        relay(&mut a, &mut b, t0 + ms(100));
+        assert_eq!(b.player(LAMP, t0 + ms(100)).as_deref(), Some("PC-a"));
     }
 
     #[test]
@@ -697,7 +983,7 @@ mod tests {
     fn a_claim_nothing_drives_runs_out() {
         let t0 = Instant::now();
         let mut a = table("a", t0);
-        a.take(LAMP, t0, 1000);
+        a.take(LAMP, None, t0, 1000);
         run(&mut a, t0, t0 + IDLE - ms(100));
         assert!(!a.mine.is_empty());
         run(&mut a, t0 + IDLE - ms(100), t0 + IDLE + ms(100));

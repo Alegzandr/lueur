@@ -68,8 +68,10 @@ Several things together, the first one leading:
   (discovery, identify, pairing, Smart Life import), **Settings**.
 - On Windows, Screen starts by itself when a game or video goes
   fullscreen and restores each light afterwards.
-- Several computers in the house can run Lueur; a bulb driven by one shows
-  that computer's name on the others, with *Take over*.
+- Several computers in the house can run Lueur; whoever changes a light
+  last has it. A light set by hand on one shows the same on the others; a
+  bulb one plays an effect on shows that computer's name on the others,
+  with *Take over*.
 - Keyboard: Ctrl/⌘ + 1–4 switches page, Ctrl/⌘ + Enter starts or stops;
   on the plan, arrows nudge, Delete removes, Esc deselects, Shift snaps.
 - Updates install themselves at launch, signed and forward-only.

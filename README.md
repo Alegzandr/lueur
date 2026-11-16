@@ -297,13 +297,17 @@ others in coarser steps.
   White flashes can be turned off, and never come more than three a
   second.
 - **Several computers.** Lueur can run on every computer in the house. Each
-  one tells the others which bulbs it is playing an effect on, and leaves
-  those alone: a light one computer drives shows *On* and that computer's
-  name on the other, and waits there, picking up again as soon as the first
-  one lets go. *Take over* moves it at once. Nothing Lueur starts by itself,
-  like following a fullscreen game, ever takes a bulb from another
-  computer, and the sleep timer only puts out the lights it drives. A
-  Yeelight that another app streams to is left alone the same way.
+  one tells the others which bulbs it drives, and whoever changes a light
+  last has it. Start an effect on a light another computer plays on and it
+  plays from yours at once: the light shows *On* and your computer's name on
+  the other, and waits there, picking up again as soon as you let go, or
+  when *Take over* is pressed there. Set a light by hand (its brightness, a
+  colour, a mood, on or off) and the other computer stops its effect on
+  that light and shows what you set, as you set it. Nothing Lueur starts by
+  itself, like following a fullscreen game or the natural light, ever takes
+  a bulb from another computer, and the sleep timer only puts out the
+  lights it drives. A Yeelight that another app streams to is left alone
+  the same way. Every computer needs this version or later for it.
 - **Backup.** **Settings → Configuration** exports your setup to a file and
   imports it back, to keep a copy or move to another computer. The file holds
   no password or key, so it is safe to share; on another computer, pair the
@@ -401,11 +405,14 @@ check to GitHub over HTTPS, and Tuya's sign-in while you import Smart Life
 bulbs. That sign-in identifies itself with the app id Home Assistant uses
 with Tuya, as Lueur has none of its own yet.
 
-While it plays an effect, Lueur also broadcasts to your local network, about
-once a second, which bulbs it drives and the computer's name, so other
-computers running Lueur leave them alone (UDP port 47474). Nothing secret
-goes out, and nothing in what it hears ever reaches a bulb: a forged message
-can at most make a light wait, which *Take over* always overrides.
+While it plays an effect, and for a few seconds after you set a light by
+hand, Lueur also broadcasts to your local network, about once a second,
+which bulbs it drives, what you set them to and the computer's name, so
+other computers running Lueur leave them alone and show the same (UDP port
+47474). Nothing secret goes out, and nothing Lueur hears is sent on to a
+bulb: a forged message can at most make a light wait or stop its effect,
+and change what the window says the light was set to, which your next
+change or *Take over* overrides.
 
 On your network, a Hue bridge is reached over HTTPS, and only ever with
 the certificate it showed the first time Lueur saw it (at pairing, or for
