@@ -292,9 +292,10 @@ impl<'a> Room<'a> {
         self.status.running && self.status.light_ids.iter().any(|l| l == id)
     }
 
-    /// A light an effect drives is on, whatever it was last set to by hand.
+    /// A light an effect drives is on, whatever it was last set to by hand,
+    /// and so is one another computer plays an effect on.
     pub fn on(&self, id: &str) -> bool {
-        self.driven(id) || self.state(id).on
+        self.driven(id) || self.elsewhere(id).is_some() || self.state(id).on
     }
 
     /// The mode a light plays, or None while it is set by hand.

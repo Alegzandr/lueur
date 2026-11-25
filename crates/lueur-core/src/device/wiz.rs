@@ -84,6 +84,33 @@ pub fn set_power(ip: &str, on: bool) -> io::Result<()> {
     Ok(())
 }
 
+/// Whether a WiZ bulb is switched on, as its `getPilot` says. Asked up to
+/// three times: UDP is lossy.
+pub fn power(ip: &str) -> io::Result<bool> {
+    let socket = udp_to(ip, PORT)?;
+    socket.set_read_timeout(Some(Duration::from_millis(400)))?;
+    let msg = json!({"method": "getPilot", "params": {}}).to_string();
+    let mut buf = [0u8; 2048];
+    for _ in 0..3 {
+        socket.send(msg.as_bytes())?;
+        if let Ok(n) = socket.recv(&mut buf)
+            && let Some(on) = parse_power(&buf[..n])
+        {
+            return Ok(on);
+        }
+    }
+    Err(io::Error::from(io::ErrorKind::TimedOut))
+}
+
+/// The `state` of a `getPilot` reply.
+fn parse_power(raw: &[u8]) -> Option<bool> {
+    let v: Value = serde_json::from_slice(raw).ok()?;
+    if v.get("method")?.as_str()? != "getPilot" {
+        return None;
+    }
+    v.get("result")?.get("state")?.as_bool()
+}
+
 pub struct WizStream {
     socket: UdpSocket,
     last: LastSent,
@@ -204,6 +231,20 @@ pub fn parse_reply(raw: &[u8], from: Ipv4Addr) -> Option<DiscoveredDevice> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pilot_says_whether_the_bulb_is_on() {
+        let reply = br#"{"method":"getPilot","env":"pro","result":{"mac":"a8bb50000000","rssi":-60,"state":false,"sceneId":0,"temp":2700,"dimming":40}}"#;
+        assert_eq!(parse_power(reply), Some(false));
+        let lit = br#"{"method":"getPilot","result":{"state":true}}"#;
+        assert_eq!(parse_power(lit), Some(true));
+        // Another reply, or none of its own, says nothing.
+        assert_eq!(
+            parse_power(br#"{"method":"setPilot","result":{"success":true}}"#),
+            None
+        );
+        assert_eq!(parse_power(b"garbage"), None);
+    }
     use crate::color::Rgb;
 
     #[test]

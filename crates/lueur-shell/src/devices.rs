@@ -66,6 +66,15 @@ pub fn set_power(ep: &Endpoint, on: bool) -> io::Result<()> {
     }
 }
 
+/// Whether the bulb is switched on, as it says (see `device::power`).
+pub fn power(ep: &Endpoint) -> io::Result<bool> {
+    if is_tuya(ep) {
+        tuya::power(ep)
+    } else {
+        device::power(ep)
+    }
+}
+
 pub fn identify(ep: &Endpoint, color: Rgb) -> io::Result<()> {
     if is_tuya(ep) {
         tuya::identify(ep, color)

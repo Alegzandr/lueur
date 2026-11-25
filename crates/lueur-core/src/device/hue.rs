@@ -237,6 +237,29 @@ pub fn set_power(ip: &str, username: &str, light: &str, cert: &str, on: bool) ->
     put_state(ip, username, light, cert, &json!({"on": on}))
 }
 
+/// Whether a lamp gives light, as its bridge says. A lamp the bridge cannot
+/// reach (cut at its wall switch) gives none, whatever it was last told.
+pub fn power(ip: &str, username: &str, light: &str, cert: &str) -> io::Result<bool> {
+    let path = format!("/api/{}/lights/{}", safe(username)?, safe(light)?);
+    let reply = check(call(ip, cert, "GET", &path, None)?)?;
+    parse_power(&reply).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the bridge did not say whether the lamp is on",
+        )
+    })
+}
+
+fn parse_power(reply: &Value) -> Option<bool> {
+    let state = reply.get("state")?;
+    let on = state.get("on")?.as_bool()?;
+    let reachable = state
+        .get("reachable")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    Some(on && reachable)
+}
+
 /// The model of the first, round bridge: the only one without HTTPS.
 pub const ROUND_BRIDGE: &str = "BSB001";
 
@@ -796,6 +819,16 @@ impl LightStream for HueStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lamp_the_bridge_cannot_reach_gives_no_light() {
+        let lamp = |on: bool, reachable: bool| json!({"state": {"on": on, "reachable": reachable}});
+        assert_eq!(parse_power(&lamp(true, true)), Some(true));
+        assert_eq!(parse_power(&lamp(false, true)), Some(false));
+        // Cut at its wall switch: the bridge still says what it last set.
+        assert_eq!(parse_power(&lamp(true, false)), Some(false));
+        assert_eq!(parse_power(&json!([{"error": {"type": 3}}])), None);
+    }
 
     #[test]
     fn primaries_land_in_the_right_corners() {

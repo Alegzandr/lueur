@@ -180,6 +180,11 @@ impl Manual {
         Ok(())
     }
 
+    /// Whether the light is held by hand now.
+    pub fn holds(&self, light_id: &str) -> bool {
+        self.lock().contains_key(light_id)
+    }
+
     /// Stop holding a light, so a power command or the ambilight can have it.
     pub fn release(&self, light_id: &str) {
         self.lock().remove(light_id);

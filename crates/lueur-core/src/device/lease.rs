@@ -598,6 +598,14 @@ impl Leases {
         self.lock().holder(device, Instant::now())
     }
 
+    /// What this instance last told the others it set `device` to by hand,
+    /// while that claim stands and nothing plays on the bulb here since.
+    pub fn own_set(&self, device: &str) -> Option<Set> {
+        let t = self.lock();
+        let m = t.mine.get(device)?;
+        m.released.is_none().then_some(m.claim.set).flatten()
+    }
+
     /// The name of the computer that plays an effect on `device`, when it
     /// is not this one.
     pub fn player(&self, device: &str) -> Option<String> {
@@ -920,6 +928,29 @@ mod tests {
         relay(&mut a, &mut b, t0 + ms(500));
         assert!(b.sets.is_empty());
         assert!(b.keep(LAMP, t0 + ms(600)));
+    }
+
+    #[test]
+    fn what_this_computer_set_by_hand_stands_until_something_else_plays() {
+        let leases = std::sync::Arc::new(Leases::new("a", "PC-a", Duration::ZERO));
+        assert_eq!(leases.own_set(LAMP), None);
+        let off = Set {
+            state: LightState {
+                on: false,
+                ..LightState::default()
+            },
+            natural: false,
+        };
+        leases.set(LAMP, off);
+        assert_eq!(leases.own_set(LAMP), Some(off));
+        leases.set(LAMP, white(30));
+        assert_eq!(leases.own_set(LAMP), Some(white(30)));
+        // An effect starts on it: nothing set by hand any more.
+        assert!(leases.gate(LAMP).may_drive());
+        assert_eq!(leases.own_set(LAMP), None);
+        leases.set(LAMP, off);
+        leases.gate(LAMP).release();
+        assert_eq!(leases.own_set(LAMP), None, "let go");
     }
 
     #[test]

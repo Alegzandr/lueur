@@ -27,6 +27,7 @@ pub mod manual;
 pub mod natural;
 pub mod paths;
 pub mod peers;
+mod power_watch;
 pub mod runner;
 pub mod secrets;
 pub mod service;
@@ -185,14 +186,16 @@ impl Shell {
         });
     }
 
-    /// Once the window is up: automatic mode, the natural light, and each
-    /// light picking up the mode it was left playing.
+    /// Once the window is up: automatic mode, the natural light, the watch
+    /// on whether the bulbs are on, and each light picking up the mode it
+    /// was left playing.
     pub fn start(self: &Arc<Self>) {
         // An install moved the executable: point the login item at the new
         // path.
         autostart::refresh();
         auto::spawn(self);
         natural::spawn(self);
+        power_watch::spawn(self);
         let shell = Arc::clone(self);
         std::thread::spawn(move || {
             if let Err(e) = lights::resume(&shell) {

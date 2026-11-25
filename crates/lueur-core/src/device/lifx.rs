@@ -21,6 +21,8 @@ pub const PORT: u16 = 56700;
 
 const GET_SERVICE: u16 = 2;
 const STATE_SERVICE: u16 = 3;
+const GET_POWER: u16 = 20;
+const STATE_POWER: u16 = 22;
 const GET_LABEL: u16 = 23;
 const STATE_LABEL: u16 = 25;
 const SET_COLOR: u16 = 102;
@@ -229,6 +231,27 @@ pub fn set_power(ip: &str, port: u16, target: &str, on: bool) -> io::Result<()> 
         socket.send(&msg)?;
     }
     Ok(())
+}
+
+/// Whether a LIFX bulb is switched on, as its `StatePower` says. Asked up
+/// to three times: UDP is lossy.
+pub fn power(ip: &str, port: u16, target: &str) -> io::Result<bool> {
+    let socket = udp_to(ip, port)?;
+    let target = target_of(target)?;
+    socket.set_read_timeout(Some(Duration::from_millis(400)))?;
+    let ask = frame(GET_POWER, target, false, 0, &[]);
+    let mut buf = [0u8; 1024];
+    for _ in 0..3 {
+        socket.send(&ask)?;
+        if let Ok(n) = socket.recv(&mut buf)
+            && let Some((STATE_POWER, mac, payload)) = parse_frame(&buf[..n])
+            && mac == target
+            && payload.len() >= 2
+        {
+            return Ok(u16::from_le_bytes([payload[0], payload[1]]) > 0);
+        }
+    }
+    Err(io::Error::from(io::ErrorKind::TimedOut))
 }
 
 pub struct LifxStream {

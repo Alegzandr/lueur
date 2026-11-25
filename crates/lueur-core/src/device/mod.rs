@@ -582,6 +582,30 @@ pub fn set_power(ep: &Endpoint, on: bool) -> io::Result<()> {
     }
 }
 
+/// Whether a bulb is switched on, as the bulb itself says. Something else
+/// may have switched it (its wall switch, its maker's app, another computer
+/// while this one slept), so what Lueur last told it is no proof.
+/// [`io::ErrorKind::Unsupported`] for a family that cannot say on its own.
+pub fn power(ep: &Endpoint) -> io::Result<bool> {
+    require_ready(ep)?;
+    match &ep.kind {
+        DeviceKind::Yeelight => YeelightControl::connect(&ep.ip, ep.port, CONTROL_TIMEOUT)?.power(),
+        DeviceKind::Wiz => wiz::power(&ep.ip),
+        DeviceKind::Lifx { target } => lifx::power(&ep.ip, ep.port, target),
+        DeviceKind::Hue {
+            username,
+            light,
+            cert,
+            ..
+        } => hue::power(&ep.ip, username, light, cert),
+        DeviceKind::Nanoleaf { token } => nanoleaf::power(&ep.ip, ep.port, token),
+        // Govee answers a status query to a port of its own, which the
+        // search listens on; not worth a second listener.
+        DeviceKind::Govee => Err(io::Error::from(io::ErrorKind::Unsupported)),
+        DeviceKind::Tuya { .. } => Err(shell_only()),
+    }
+}
+
 /// Switch a bulb on at `color`, full brightness, so the user can tell which
 /// one it is.
 pub fn identify(ep: &Endpoint, color: Rgb) -> io::Result<()> {

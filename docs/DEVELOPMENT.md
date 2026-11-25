@@ -343,6 +343,25 @@ never take a bulb: only what the user does takes one, and an effect then
 opens its stream impolitely. Restoring hand-set colours, the natural light
 and the sleep timer skip the bulbs another computer holds.
 
+A light switched off by hand on a bulb another computer's effect plays on
+is switched off a second time 400 ms later (`power_taken` in `lights.rs`):
+that effect streams until it hears the claim, and a frame sent meanwhile
+can light the bulb again (a WiZ lights up with any colour). The second off
+is skipped if the user changed the light since (`Leases::own_set`).
+
+### Whether the bulbs are on
+
+What a light was set to is recorded, but a bulb can be switched without
+Lueur: at the wall, from its maker's app, by another computer while this
+one was off. `power_watch.rs` asks the bulbs at rest whether they are on
+(`device::power`, `tuya::power`) 2 s after launch and every 30 s, and
+records only whether they are on where it differs (`lights::sync_power`).
+Lights an effect plays on here, held by hand, or held by another computer
+are not asked, and a record the user changed while the bulbs were asked is
+kept. A Hue lamp its bridge cannot reach counts as off. Govee cannot say
+without a second listener on its status port, and a bulb that does not
+answer keeps its record.
+
 ## Building & running
 
 ### Prerequisites

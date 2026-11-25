@@ -90,6 +90,20 @@ pub fn set_power(ip: &str, port: u16, token: &str, on: bool) -> io::Result<()> {
     put(ip, port, token, "state", &json!({"on": {"value": on}}))
 }
 
+/// Whether the panels are switched on, as the controller says.
+pub fn power(ip: &str, port: u16, token: &str) -> io::Result<bool> {
+    let resp = get(ip, port, token, "state/on")?;
+    serde_json::from_str::<Value>(&resp.body)
+        .ok()
+        .and_then(|v| v.get("value")?.as_bool())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the controller did not say whether it is on",
+            )
+        })
+}
+
 /// The state body that shows `rgb` on the whole layout at full brightness.
 pub fn identify_body(rgb: Rgb) -> Value {
     let (h, sat, _) = rgb_to_hsv(rgb);

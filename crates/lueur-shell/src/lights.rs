@@ -14,6 +14,8 @@ use lueur_core::device::lease::Set;
 use lueur_core::device::{Endpoint, common};
 use lueur_core::scene::{self, LightState};
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::Duration;
 
 /// Outcome of a command sent to several lights. Individual bulbs are allowed
 /// to fail (one may be unplugged); the UI reports the tally rather than
@@ -593,10 +595,15 @@ fn binding(state: &AppState, light_id: &str) -> AppResult<DeviceBinding> {
 ///
 /// Not while an effect plays on the light here (every light switched on
 /// from the tray, say): the effect goes on, and its claim says so already.
-fn announce(state: &AppState, binding: &DeviceBinding, wish: LightState) {
+///
+/// `true` when the bulb was taken from an effect another computer plays on
+/// it: that effect streams a moment longer, until it hears (see
+/// [`power_taken`]).
+fn announce(state: &AppState, binding: &DeviceBinding, wish: LightState) -> bool {
     if state.effects.mode_of(&binding.light_id).is_some() {
-        return;
+        return false;
     }
+    let taken = state.leases.player(&binding.device_id).is_some();
     let natural = state
         .lock_config()
         .is_ok_and(|cfg| cfg.natural.contains(&binding.light_id));
@@ -605,6 +612,38 @@ fn announce(state: &AppState, binding: &DeviceBinding, wish: LightState) {
         natural,
     };
     state.leases.set(&binding.device_id, set);
+    taken
+}
+
+/// How long the effect of another computer may go on streaming to a bulb
+/// taken from it: until this computer's claim goes out (`peers::POLL`), is
+/// heard, and the effect's next frame is stopped by it, with room to spare.
+const HANDOVER: Duration = Duration::from_millis(400);
+
+/// Switch `binding`'s bulb on or off for the user. When it was just taken
+/// from another computer's effect (`taken`, from [`announce`]), a frame of
+/// that effect may still arrive after the switch off and light the bulb
+/// again (a WiZ bulb lights up with any colour it is sent). So the off is
+/// said once more after [`HANDOVER`], on a thread of its own, unless the
+/// user changed the light again meanwhile.
+fn power_taken(state: &AppState, binding: &DeviceBinding, on: bool, taken: bool) -> AppResult<()> {
+    let ep = binding.endpoint();
+    power_one(&ep, on)?;
+    if taken && !on {
+        let leases = Arc::clone(&state.leases);
+        let device = binding.device_id.clone();
+        let _ = std::thread::Builder::new()
+            .name("lueur-off-again".into())
+            .spawn(move || {
+                std::thread::sleep(HANDOVER);
+                // Still off by this computer's word: no change since, no
+                // effect started, nobody took it back.
+                if leases.own_set(&device).is_some_and(|s| !s.state.on) {
+                    let _ = devices::set_power(&ep, false);
+                }
+            });
+    }
+    Ok(())
 }
 
 /// Show `wish` on one light, corrected for the room's `wall`. Asked by
@@ -619,6 +658,7 @@ fn apply_one(
 ) -> AppResult<()> {
     let ep = binding.endpoint();
     let gate = state.leases.gate(&binding.device_id);
+    let mut taken = false;
     match asker {
         Asker::User => {
             // Let go first: a light held by hand ends its claim as it is
@@ -626,7 +666,7 @@ fn apply_one(
             if !wish.on {
                 state.manual.release(&binding.light_id);
             }
-            announce(state, binding, wish);
+            taken = announce(state, binding, wish);
         }
         Asker::App if !gate.is_free() => return Ok(()),
         Asker::App => {}
@@ -642,7 +682,7 @@ fn apply_one(
             .map_err(|e| unreachable(&ep.ip, e))
     } else {
         state.manual.release(&binding.light_id);
-        power_one(&ep, false)
+        power_taken(state, binding, false, taken)
     }
 }
 
@@ -702,8 +742,8 @@ pub fn set_light_power(state: &AppState, light_id: &str, on: bool) -> AppResult<
         let cfg = state.lock_config()?;
         cfg.states.get(light_id).copied().unwrap_or_default()
     };
-    announce(state, &binding, LightState { on, ..saved });
-    power_one(&binding.endpoint(), on).map_err(|e| named_for(state, light_id, e))?;
+    let taken = announce(state, &binding, LightState { on, ..saved });
+    power_taken(state, &binding, on, taken).map_err(|e| named_for(state, light_id, e))?;
     remember(state, |states| {
         states.entry(light_id.to_string()).or_default().on = on;
     })
@@ -761,10 +801,8 @@ fn apply_many(
                 scope.spawn(move || {
                     if power_only {
                         state.manual.release(&b.light_id);
-                        if asker == Asker::User {
-                            announce(state, b, *w);
-                        }
-                        power_one(&b.endpoint(), w.on)
+                        let taken = asker == Asker::User && announce(state, b, *w);
+                        power_taken(state, b, w.on, taken)
                     } else {
                         apply_one(state, b, *w, wall, asker)
                     }
@@ -1022,6 +1060,90 @@ pub fn follow_set(state: &AppState, device_id: &str, set: Set) -> bool {
     true
 }
 
+/// Ask each light at rest whether its bulb is on, and record what it says
+/// where that differs from what was recorded: a wall switch, the maker's
+/// app or another computer may have switched it while Lueur was not
+/// looking, and the window would otherwise offer to switch off a dark room.
+/// `true` when anything changed, recorded and persisted.
+///
+/// Only whether it is on is read. A light an effect plays on here, one held
+/// by hand, and one another computer holds are left out: what they show is
+/// already known, or another computer's to tell (`follow_set`). So is one
+/// the user changed while the bulbs were being asked, whose change wins.
+pub fn sync_power(state: &AppState) -> bool {
+    let at_rest = |b: &DeviceBinding| {
+        state.effects.mode_of(&b.light_id).is_none()
+            && !state.manual.holds(&b.light_id)
+            && state.leases.holder(&b.device_id).is_none()
+    };
+    let asked: Vec<(DeviceBinding, Option<LightState>)> = match state.lock_config() {
+        Ok(cfg) => cfg
+            .bindings
+            .iter()
+            .filter(|b| at_rest(b))
+            .map(|b| (b.clone(), cfg.states.get(&b.light_id).copied()))
+            .collect(),
+        Err(_) => return false,
+    };
+    if asked.is_empty() {
+        return false;
+    }
+    let said: Vec<Option<bool>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = asked
+            .iter()
+            .map(|(b, _)| {
+                scope.spawn(move || match devices::power(&b.endpoint()) {
+                    Ok(on) => Some(on),
+                    Err(e) => {
+                        if e.kind() != std::io::ErrorKind::Unsupported {
+                            log::debug!(ip = b.ip.as_str(); "cannot read whether a bulb is on: {e}");
+                        }
+                        None
+                    }
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().ok().flatten())
+            .collect()
+    });
+    let changed = {
+        let Ok(mut cfg) = state.lock_config() else {
+            return false;
+        };
+        let mut changed = false;
+        for ((b, before), on) in asked.iter().zip(said) {
+            let Some(on) = on else { continue };
+            if !at_rest(b) {
+                continue;
+            }
+            let now = cfg.states.get(&b.light_id).copied();
+            if let Some(next) = read_power(*before, now, on) {
+                log::info!(light = b.light_id.as_str(), on = on; "a bulb was switched outside Lueur");
+                cfg.states.insert(b.light_id.clone(), next);
+                changed = true;
+            }
+        }
+        changed
+    };
+    if changed && let Err(e) = state.persist() {
+        log::warn!("cannot save whether the bulbs are on: {e}");
+    }
+    changed
+}
+
+/// What to record for a light whose bulb says it is `on`, given what was
+/// recorded when it was asked (`before`) and now (`now`); none to leave it.
+/// A record changed meanwhile was changed by the user, who knows better.
+fn read_power(before: Option<LightState>, now: Option<LightState>, on: bool) -> Option<LightState> {
+    if before != now {
+        return None;
+    }
+    let recorded = now.unwrap_or_default();
+    (recorded.on != on).then_some(LightState { on, ..recorded })
+}
+
 /// Record what lights were set to, and persist it.
 fn remember(state: &AppState, f: impl FnOnce(&mut BTreeMap<String, LightState>)) -> AppResult<()> {
     f(&mut state.lock_config()?.states);
@@ -1031,6 +1153,25 @@ fn remember(state: &AppState, f: impl FnOnce(&mut BTreeMap<String, LightState>))
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bulb_switched_elsewhere_is_recorded_as_it_says() {
+        let on = LightState::default();
+        let off = LightState { on: false, ..on };
+        // Off at its wall switch while recorded on, and the other way.
+        assert_eq!(read_power(Some(on), Some(on), false), Some(off));
+        assert_eq!(read_power(Some(off), Some(off), true), Some(on));
+        // A light never set reads as on: only an off is news.
+        assert_eq!(read_power(None, None, true), None);
+        assert_eq!(read_power(None, None, false), Some(off));
+        // What it was set to is kept, only whether it is on changes.
+        let dim = LightState { bright: 8, ..on };
+        assert_eq!(read_power(Some(dim), Some(dim), false).unwrap().bright, 8);
+        // Agreeing, nothing to record.
+        assert_eq!(read_power(Some(on), Some(on), true), None);
+        // The user changed the light while the bulb was asked: theirs wins.
+        assert_eq!(read_power(Some(on), Some(off), true), None);
+    }
 
     fn config() -> AppConfig {
         let mut cfg = AppConfig::default();

@@ -24,9 +24,10 @@ use std::time::Duration;
 
 static COMMAND_ID: AtomicU32 = AtomicU32::new(1);
 
-/// How long a bulb has to say whether it is in music mode. A bulb answers
-/// in a few milliseconds; past this, it is taken as not saying.
-const MUSIC_ON_WAIT: Duration = Duration::from_millis(1500);
+/// How long a bulb has to answer a question about itself (whether it is in
+/// music mode, whether it is on). A bulb answers in a few milliseconds; past
+/// this, it is taken as not saying.
+const REPLY_WAIT: Duration = Duration::from_millis(1500);
 
 fn next_id() -> u32 {
     COMMAND_ID.fetch_add(1, Ordering::Relaxed)
@@ -71,12 +72,29 @@ impl YeelightControl {
     /// Whether the bulb is in music mode, streamed to by someone: another
     /// computer, another app. An error if it does not say.
     pub fn music_on(&mut self) -> io::Result<bool> {
+        Ok(self.prop("music_on")? == "1")
+    }
+
+    /// Whether the bulb is switched on. An error if it does not say.
+    pub fn power(&mut self) -> io::Result<bool> {
+        match self.prop("power")?.as_str() {
+            "on" => Ok(true),
+            "off" => Ok(false),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the bulb did not say whether it is on",
+            )),
+        }
+    }
+
+    /// The value of one property, as the bulb words it.
+    fn prop(&mut self, name: &str) -> io::Result<String> {
         let id = next_id();
-        self.send_line(&protocol::get_prop(id, &["music_on"]))?;
+        self.send_line(&protocol::get_prop(id, &[name]))?;
         // Notifications may come first; the reply is a line of its own. One
         // deadline for the whole answer: a bulb, or something posing as one,
         // that trickles a byte at a time must not hold every light's start.
-        let deadline = std::time::Instant::now() + MUSIC_ON_WAIT;
+        let deadline = std::time::Instant::now() + REPLY_WAIT;
         let mut seen = Vec::new();
         let mut buf = [0u8; 512];
         while seen.len() < 4096 && std::time::Instant::now() < deadline {
@@ -87,12 +105,12 @@ impl YeelightControl {
             seen.extend_from_slice(&buf[..n]);
             let text = String::from_utf8_lossy(&seen);
             if let Some(result) = text.lines().find_map(|l| protocol::parse_result(l, id)) {
-                return Ok(result.first().is_some_and(|v| v == "1"));
+                return Ok(result.into_iter().next().unwrap_or_default());
             }
         }
         Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "the bulb did not say whether it is in music mode",
+            format!("the bulb did not say its {name}"),
         ))
     }
 

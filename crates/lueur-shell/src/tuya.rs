@@ -175,6 +175,23 @@ pub fn set_power(ep: &Endpoint, on: bool) -> io::Result<()> {
     write_once(ep, |layout| dps::power_dps(layout, on))
 }
 
+/// Whether the bulb is switched on, from the status it gives as it is
+/// reached.
+pub fn power(ep: &Endpoint) -> io::Result<bool> {
+    let (id, key, version, layout) = parts(ep)?;
+    let switch = layout.switch.to_string();
+    rt().block_on(async {
+        let (dev, status, _) = connect_any(id, key, &ep.ip, parse_version(version)).await?;
+        dev.close().await;
+        status.get(&switch).and_then(Value::as_bool).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the bulb did not say whether it is on",
+            )
+        })
+    })
+}
+
 /// Light the bulb at `color`, full brightness.
 pub fn identify(ep: &Endpoint, color: Rgb) -> io::Result<()> {
     let output = BulbOutput::Color {
