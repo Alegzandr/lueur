@@ -259,11 +259,14 @@ lower lowercase, so the scale sits one step above Inter's (14px body).
 the same on Windows, macOS and Linux rather than each platform's face.
 Hierarchy comes from size and weight steps, never a second family.
 
-**Icons:** Phosphor, rounded and even like the face, as SVG files in
-`crates/lueur-gpui/assets/icons/`, each named by its role in the interface
-(`bulb`, `screen`, `trash`…) in three weights, and always drawn through
-`ui::icon()`. Regular weight, bold at 12px and below so thin strokes keep
-their weight, filled for the current page in the sidebar.
+**Icons:** Iconoir (MIT), a soft round stroke that matches the face's
+warmth, as SVG files in `crates/lueur-gpui/assets/icons/`, each named by its
+role in the interface (`bulb`, `screen`, `trash`…) in three weights, and
+always drawn through `ui::icon()`. Regular is Iconoir's stroke at 1.6 (1.5
+blurs at 100 % scale), bold at 2 for 12px and below, and fill is Iconoir's
+solid glyph where it has one, the bold one otherwise; the current page in
+the sidebar takes it. Iconoir has no power symbol: `power` is drawn in its
+grid and stroke.
 
 ### Hierarchy
 - **Title** (700, 30px, line-height 1.1, -0.024em): the one large page
