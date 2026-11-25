@@ -171,6 +171,36 @@ pub fn light_dot(room: &Room, id: &str, diameter: f32, edge: bool, theme: &Theme
     }
 }
 
+/// The light a lit bulb casts on its own card: a wash of its real colour,
+/// strongest behind the disc and gone three quarters across, deeper as
+/// it brightens. None while it is off. Laid over the card, under its content.
+pub fn light_wash(room: &Room, id: &str, theme: &Theme) -> Option<Div> {
+    if !room.bound(id) || !room.on(id) {
+        return None;
+    }
+    let (c, strength) = if room.driven(id) {
+        (swatch(room.mode_of(id).unwrap_or("ambilight")).0, 1.0)
+    } else {
+        let s = room.state(id);
+        (tint_rgb(s.tint), (30.0 + 0.7 * f32::from(s.bright)) / 100.0)
+    };
+    // A dark room shows a lamp's spill more than a lit one.
+    let alpha = if theme.dark { 0.32 } else { 0.24 } * strength;
+    Some(
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .rounded(px(size::R_LG))
+            .bg(linear_gradient(
+                90.0,
+                linear_color_stop(rgb8(c, alpha), 0.0),
+                linear_color_stop(rgb8(c, 0.0), 0.75),
+            )),
+    )
+}
+
 /// The mark of a screen zone: its colour with its letter on it, so the zone
 /// reads without telling colours apart.
 pub fn zone_badge(

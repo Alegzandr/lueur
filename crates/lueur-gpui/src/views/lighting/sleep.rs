@@ -1,7 +1,7 @@
 //! The sleep timer. It is for bedtime:
 //! it puts the whole room out, whatever is picked (the tray sets it too,
-//! with no pick to follow). An occasional tool, so it waits behind a clock
-//! in the page's head and opens a small panel.
+//! with no pick to follow). It sits, named, beside the switch for every
+//! light, since both put the room out, and opens a small panel.
 
 use super::LightingPage;
 use super::controls::{Kind, btn};
@@ -108,27 +108,34 @@ impl LightingPage {
             .into(),
         };
         let page = cx.entity().downgrade();
-        let trigger = btn("sleep", Kind::Plain, true, false, theme)
+        // Named, never a bare clock: the word is what people look for. While
+        // a timer runs, the button says when the room goes out instead.
+        let label: SharedString = match left {
+            None => t(cx, "sleep_button"),
+            Some(s) => {
+                let n = if s <= 60.0 {
+                    "<1".to_string()
+                } else {
+                    ((s / 60.0).ceil() as u32).to_string()
+                };
+                fill(&t(cx, "sleep_button_left"), &[("n", &n)]).into()
+            }
+        };
+        let trigger = btn("sleep", Kind::Default, true, false, theme)
             .track_focus(&self.sleep_focus)
             .aria_label(match left {
                 None => title.clone(),
                 Some(_) => format!("{title}: {state}").into(),
             })
             .aria_expanded(self.sleep_open)
-            .tooltip(ui::tip(title.clone()))
-            .gap(px(5.0))
-            .child(ui::icon("clock", 15.0, false, theme.text_2))
-            .children(left.map(|s| {
-                let n = if s <= 60.0 {
-                    "<1".to_string()
-                } else {
-                    ((s / 60.0).ceil() as u32).to_string()
-                };
+            .tooltip(ui::tip(t(cx, "sleep_timer_tip")))
+            .gap(px(6.0))
+            .child(ui::icon("clock", 13.0, false, theme.text_2))
+            .child(
                 div()
-                    .text_size(px(size::T_SM))
-                    .text_color(theme.text)
-                    .child(format!("{n} min"))
-            }))
+                    .when(left.is_some(), |d| d.font_weight(FontWeight::MEDIUM))
+                    .child(label),
+            )
             .on_click({
                 let page = page.clone();
                 move |_, window, cx| {

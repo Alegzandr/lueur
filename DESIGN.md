@@ -306,7 +306,7 @@ hairlines; the control sits on the right in a column of at most 320px or half
 the row, wider only when what it holds needs it (three long French choices).
 The Lighting page is the one exception to the 820px column: up to
 1240px wide, its lights and scenes sit on the left and the settings of the
-lights picked on the right once the window is 1200px wide, one column below
+whole room or of the light opened on the right once the window is 1200px wide, one column below
 that. Its mode grids count their columns from the room they have: still
 modes in 3 or 5, animated ones in 3 or 6, at 8px gaps.
 
@@ -461,17 +461,35 @@ photographs reads as a wall of thumbnails, not an interface.
   stand still under reduced motion.
 - **Scene card.** The pictures of what its lights do side by side (up to
   three, 48px high), its name beneath, the same amber ring while the room
-  shows it, and a small round delete mark on hover or focus.
+  shows it, and a small round delete mark on hover or focus. With no scene
+  yet, the place one goes shows the same pictures of what the lights do
+  now: what the first scene will keep, before it is named. The section's
+  heading folds it away and back, with a turning chevron and, folded, the
+  number of scenes; the choice is kept.
 
 ### Light card
 Each light on the Lighting page: a disc of the light it gives (its white or
 colour, fainter as it dims, the gradient of its effect, a hollow ring while
 off, dashed with no bulb), its name, a line saying what it does and how
-bright, and a quiet power button (the disc already says whether it is on).
-Picked, the card takes a neutral ink edge and
-a tick on the disc, never amber. A click anywhere on the card picks it. Over
-the settings beside them, the lights picked are named once, with their discs;
-the sections under that heading carry no title of their own. The Bulbs page
+bright, and its own switch, as on a wall. A lit light washes its own card
+in its real colour, strongest behind the disc and gone three quarters
+across, deeper as it brightens and in the dark theme: the card looks lit by
+its bulb. What a bulb gives is content, so this is not amber as accent. The card does one thing, show and
+switch its light: it is never also a selector. Above the cards, the section
+head says how many lights shine ("2 of 3 on") and holds two named buttons,
+the sleep timer and *All off* / *All on*; a function behind a bare icon is
+one nobody finds.
+
+### Whole room or one light
+A click on a light's card opens the settings of that light alone; the card
+takes a neutral ink edge, never amber, and a second click, or *Whole room*
+with its back arrow over the settings, goes back to the whole room. The
+settings are headed by what they go to (*Whole room*, or the light's name
+and disc), what it does now, and, for the whole room, one line saying a
+light can be set alone. Settings go to one light or to all of them, as on
+the bulbs' own apps: a handful picked by hand was not understood. With a
+single light there is nothing to open, and its name stands alone. The
+Bulbs page
 shows the room's lights as the same cards, one per row, with the bulb each
 one has and its name to change in place.
 

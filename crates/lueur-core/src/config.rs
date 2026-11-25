@@ -170,6 +170,10 @@ pub struct InterfaceSettings {
     /// first-run guide keeps pointing at it.
     #[serde(default)]
     pub room_arranged: bool,
+    /// The scenes on the Lighting page are folded away: not everyone uses
+    /// them, and folded they leave the lights and their settings closer.
+    #[serde(default)]
+    pub scenes_folded: bool,
 }
 
 /// The full persisted configuration.

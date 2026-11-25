@@ -1,7 +1,9 @@
-//! The Lighting page: the room's lights as cards, the scenes saved, and beside them what to do
-//! with the lights picked (the modes, their settings, brightness, white and
-//! colour), with the sleep timer and one switch for the whole room in the
-//! page's head, and a getting-started card until the room is set up.
+//! The Lighting page: the scenes saved, folding away, then the room's
+//! lights as cards, each with its own switch, under the switch for every
+//! light and the sleep timer; and after them, or beside them, the settings
+//! (the modes, brightness, white and colour) for the whole room or for the
+//! one light whose card was clicked, with a getting-started card until the
+//! room is set up.
 //!
 //! The page also holds the two backdrops the window draws under itself
 //! (`backdrop.rs`), and restarts the running effects once the room they
@@ -16,19 +18,19 @@ mod model;
 mod modes;
 mod scenes;
 mod sleep;
+mod target;
 mod tune;
 
-use crate::i18n::{t, tn};
+use crate::i18n::t;
 use crate::state::{Lueur, View};
 use crate::theme::{Theme, size, theme};
 use crate::ui::{self, TextInput};
 use backdrop::{GlowBackdrop, RoomBackdrop};
-use controls::{Kind, btn, group_title, lamp, light_dot};
+use controls::{Kind, btn, group_title};
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, FontWeight, IntoElement, Render, Role,
-    SharedString, Subscription, Task, Window, canvas, div, prelude::*, px,
+    Subscription, Task, Window, canvas, div, prelude::*, px,
 };
-use model::Room;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -179,50 +181,15 @@ impl LightingPage {
         .h(px(1.0))
     }
 
-    /// The page's head: its title, and the sleep timer and the switch for
-    /// every light once there are bulbs.
-    fn head(&mut self, theme: &Theme, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// The page's head: its title. The switch for every light and the sleep
+    /// timer sit over the lights themselves.
+    fn head(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let l = self.lueur.read(cx);
         let bound = l.config.bindings.len();
         let live = l.status.running;
         let busy = l.busy;
-        let room = Room::of(l);
-        let any_on = l.config.bindings.iter().any(|b| room.on(&b.light_id));
         let lueur = self.lueur.clone();
-        let tools = if bound > 0 {
-            let label = t(cx, "all_lights");
-            let switch = ui::switch(
-                "all-lights",
-                label.clone(),
-                any_on,
-                theme,
-                move |_, _, cx| {
-                    if !busy {
-                        lueur.update(cx, |l, cx| l.set_all_power(!any_on, cx));
-                    }
-                },
-            )
-            .when(any_on, |d| d.tooltip(ui::tip(t(cx, "all_off_tip"))));
-            Some(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(size::S3))
-                    .child(self.sleep_button(theme, window, cx))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(size::S2))
-                            .text_size(px(size::T_MD))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text_2)
-                            .child(label)
-                            .child(switch),
-                    )
-                    .into_any_element(),
-            )
-        } else if live {
+        let tools = if bound == 0 && live {
             // Every bulb removed while an effect plays: the one way to stop
             // it left on the page, beside Ctrl+Enter and the tray.
             let label = t(cx, "stop_effects");
@@ -382,91 +349,6 @@ impl LightingPage {
                 .into_any_element(),
         )
     }
-
-    /// Who the settings go to: the lights picked, named once with their
-    /// discs, and what they do now.
-    fn selection(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let l = self.lueur.read(cx);
-        let room = Room::of(l);
-        let lang = l.lang();
-        let pickable: Vec<_> = l
-            .config
-            .room
-            .lights
-            .iter()
-            .filter(|x| room.bound(&x.id))
-            .collect();
-        let whole = room.picked().is_none();
-        let name: SharedString = if whole {
-            if pickable.len() == 1 {
-                pickable[0].name.clone().into()
-            } else {
-                t(cx, "whole_room")
-            }
-        } else {
-            let picked: Vec<_> = pickable
-                .iter()
-                .filter(|x| l.target.contains(&x.id))
-                .collect();
-            if picked.len() == 1 {
-                picked[0].name.clone().into()
-            } else {
-                tn(cx, "n_lights", picked.len()).into()
-            }
-        };
-        let ids = room.mood_targets();
-        let summary = room.summary(&ids, lang);
-        let dots = ids
-            .iter()
-            .take(5)
-            .enumerate()
-            .map(|(i, id)| light_dot(&room, id, 22.0, true, theme).when(i > 0, |d| d.ml(px(-9.0))))
-            .collect::<Vec<_>>();
-        let now = t(cx, "mode_now");
-        div()
-            .id("selection")
-            .role(Role::Heading)
-            .aria_level(2)
-            .aria_label(match &summary {
-                Some((text, _)) => SharedString::from(format!("{name}. {now} {text}")),
-                None => name.clone(),
-            })
-            .flex()
-            .items_center()
-            .gap(px(size::S3))
-            .min_h(px(44.0))
-            .mb(px(size::S5))
-            .child(div().flex().flex_none().children(dots))
-            .child(
-                div()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .text_size(px(size::T_LG))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.text)
-                            .truncate()
-                            .child(name),
-                    )
-                    .when_some(summary, |d, (text, live)| {
-                        d.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.0))
-                                .text_size(px(size::T_SM))
-                                .text_color(if live { theme.glow_text } else { theme.text_2 })
-                                .when(live, |d| {
-                                    d.font_weight(FontWeight::MEDIUM).child(lamp(6.0, theme))
-                                })
-                                .child(text),
-                        )
-                    }),
-            )
-            .into_any_element()
-    }
 }
 
 impl Render for LightingPage {
@@ -481,9 +363,9 @@ impl Render for LightingPage {
         } else {
             (content, content)
         };
-        let head = self.head(&theme, window, cx);
+        let head = self.head(&theme, cx);
         let setup = self.setup(&theme, cx);
-        let lights = self.lights(left_w, &theme, cx);
+        let lights = self.lights(left_w, &theme, window, cx);
         let scenes = (bound > 0).then(|| self.scenes(left_w, &theme, window, cx));
         let side = (bound > 0).then(|| {
             div()
@@ -492,7 +374,7 @@ impl Render for LightingPage {
                 .flex()
                 .flex_col()
                 .when(two, |d| d.w(px(right_w)).flex_none())
-                .child(self.selection(&theme, cx))
+                .child(self.targets(&theme, cx))
                 .child(self.modes(right_w, &theme, window, cx))
                 .children(self.tune(right_w, &theme, window, cx))
                 .into_any_element()

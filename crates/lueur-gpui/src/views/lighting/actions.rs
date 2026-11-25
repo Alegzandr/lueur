@@ -336,21 +336,21 @@ impl Lueur {
         self.show(crate::state::View::Room, cx);
     }
 
-    /// Pick a light for effects and moods, or put it back. Picking them all
-    /// is the same as the whole room.
-    pub fn toggle_target(&mut self, id: &str, cx: &mut Context<Self>) {
-        let mut ids = self.target.clone();
-        if let Some(i) = ids.iter().position(|t| t == id) {
-            ids.remove(i);
+    /// Open the settings of one light alone, or, when it is the one already
+    /// open, go back to the whole room. One light at a time, as on the
+    /// bulbs' own apps: choosing several at once was not understood.
+    pub fn pick_light(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.target = if self.target.len() == 1 && self.target[0] == id {
+            Vec::new()
         } else {
-            ids.push(id.to_string());
-        }
-        let all = self
-            .config
-            .bindings
-            .iter()
-            .all(|b| ids.contains(&b.light_id));
-        self.target = if all { Vec::new() } else { ids };
+            vec![id.to_string()]
+        };
+        cx.notify();
+    }
+
+    /// The settings go back to the whole room.
+    pub fn pick_room(&mut self, cx: &mut Context<Self>) {
+        self.target.clear();
         cx.notify();
     }
 

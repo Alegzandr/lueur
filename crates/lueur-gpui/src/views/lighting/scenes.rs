@@ -1,5 +1,5 @@
-//! The scenes the user saved, first on the page: the whole room as it was,
-//! back in one click.
+//! The scenes the user saved, first on the page: what every light did,
+//! back in one click. The section folds away for those who do without.
 //! Saving asks for a name in place; deleting asks first, in the scene's own
 //! place, with an undo after.
 
@@ -77,6 +77,7 @@ impl LightingPage {
         let l = self.lueur.read(cx);
         let room = Room::of(l);
         let scenes = l.config.scenes.clone();
+        let folded = l.config.interface.scenes_folded;
         let busy = l.busy;
         let pending = l.pending.clone();
         // A scene as the room it makes: the photograph of each thing its
@@ -96,6 +97,16 @@ impl LightingPage {
             })
             .collect();
         let showing: Vec<bool> = scenes.iter().map(|s| room.shows_scene(s)).collect();
+        // What the lights do now, as a scene would keep it.
+        let now_looks = distinct_looks(
+            l.config
+                .room
+                .lights
+                .iter()
+                .filter(|x| room.bound(&x.id))
+                .map(|x| Look::of(&room.doing_of(&x.id))),
+            3,
+        );
         let typed = self
             .naming
             .as_ref()
@@ -108,7 +119,7 @@ impl LightingPage {
         let page = cx.entity().downgrade();
 
         let save_label = t(cx, "scene_save");
-        let head_button = (self.naming.is_none() && !scenes.is_empty()).then(|| {
+        let head_button = (!folded && self.naming.is_none() && !scenes.is_empty()).then(|| {
             let page = page.clone();
             btn("scene-save", Kind::Plain, true, false, theme)
                 .track_focus(&self.save_focus)
@@ -204,36 +215,44 @@ impl LightingPage {
                 .items_center()
                 .gap(px(size::S3))
                 .w_full()
-                .min_h(px(90.0))
-                .p(px(size::S3))
+                .p(px(5.0))
+                .pr(px(size::S4))
                 .rounded(px(size::R_LG))
                 .border_1()
                 .border_color(theme.line_strong)
                 .hover(|s| s.bg(theme.material_hover))
+                // The room as it is now, the way a scene card shows its own:
+                // what the first scene will keep, before it is named.
                 .child(
                     div()
                         .flex_none()
-                        .size(px(28.0))
-                        .rounded_full()
+                        .w(px(150.0))
+                        .h(px(64.0))
                         .flex()
-                        .items_center()
-                        .justify_center()
-                        .border_1()
-                        .border_dashed()
-                        .border_color(theme.line_strong)
-                        .child(ui::icon("plus", 14.0, false, theme.text_2)),
+                        .gap(px(2.0))
+                        .children(now_looks.iter().map(|look| {
+                            picture(look.picture, Rc::new(Cell::new(1.0)), look.tint, 6.0)
+                                .flex_1()
+                                .min_w_0()
+                                .h_full()
+                                .bg(theme.sunken)
+                        })),
                 )
                 .child(
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(1.0))
+                        .gap(px(2.0))
                         .min_w_0()
                         .child(
                             div()
+                                .flex()
+                                .items_center()
+                                .gap(px(6.0))
                                 .text_size(px(size::T_MD))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(theme.text)
+                                .child(ui::icon("plus", 13.0, false, theme.text_2))
                                 .child(save_label.clone()),
                         )
                         .child(
@@ -446,6 +465,61 @@ impl LightingPage {
         }
 
         let title = t(cx, "scenes");
+        // The heading folds the section away and back: a chevron that turns,
+        // and, folded, how many scenes wait behind it.
+        let fold = {
+            let lueur = self.lueur.clone();
+            let count = (folded && !scenes.is_empty()).then(|| {
+                div()
+                    .text_size(px(size::T_SM))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(theme.text_3)
+                    .child(scenes.len().to_string())
+            });
+            ui::pressable("scenes-fold", theme)
+                .role(Role::Button)
+                .aria_label(title.clone())
+                .aria_expanded(!folded)
+                .tooltip(ui::tip(t(
+                    cx,
+                    if folded { "fold_show" } else { "fold_hide" },
+                )))
+                .flex()
+                .items_center()
+                .gap(px(size::S2))
+                .h(px(28.0))
+                .pl(px(size::S1))
+                .pr(px(size::S2))
+                .ml(px(-size::S1))
+                .rounded(px(size::R_MD))
+                .hover(|s| s.bg(theme.material_hover))
+                .child(group_title(title.clone(), theme))
+                .children(count)
+                .child(
+                    ui::icon("chevron", 12.0, false, theme.text_2).with_transformation(
+                        gpui::Transformation::rotate(gpui::percentage(if folded {
+                            0.0
+                        } else {
+                            0.25
+                        })),
+                    ),
+                )
+                .on_click(move |_, _, cx| {
+                    lueur.update(cx, |l, cx| {
+                        l.edit(cx, |c| c.interface.scenes_folded = !folded)
+                    })
+                })
+        };
+        if folded {
+            return div()
+                .id("scenes")
+                .role(Role::Group)
+                .aria_label(title)
+                .flex()
+                .px(px(size::S1))
+                .child(fold)
+                .into_any_element();
+        }
         div()
             .id("scenes")
             .role(Role::Group)
@@ -458,10 +532,10 @@ impl LightingPage {
                     .items_center()
                     .justify_between()
                     .gap(px(size::S3))
-                    .min_h(px(24.0))
+                    .min_h(px(28.0))
                     .px(px(size::S1))
                     .pb(px(size::S2))
-                    .child(group_title(title, theme))
+                    .child(fold)
                     .children(head_button),
             )
             .children(naming)

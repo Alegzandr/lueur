@@ -1,19 +1,22 @@
-//! Every light in the room as a card that shows its light and says what it
-//! does, and picks the lights the settings beside it go to.
+//! Every light in the room as a card that shows its light, says what it
+//! does and holds its own switch, under a head with the switch for every
+//! light and the sleep timer. A click on a card opens that light's settings
+//! alone; a second click goes back to the whole room.
 
 use super::LightingPage;
-use super::controls::{Kind, btn, group_title, light_dot};
+use super::controls::{Kind, btn, group_title, light_dot, light_wash};
 use super::model::Room;
-use crate::i18n::{fill, pct, t};
+use crate::i18n::{fill, pct, t, tn};
 use crate::state::View;
 use crate::theme::{Theme, size};
 use crate::ui;
 use gpui::{
-    AnyElement, Context, FontWeight, IntoElement, Role, SharedString, Toggled, div, prelude::*, px,
+    AnyElement, Context, FontWeight, IntoElement, Role, SharedString, Toggled, Window, div,
+    prelude::*, px,
 };
 
 /// The narrowest a light's card gets before the row takes one fewer.
-const CARD_MIN: f32 = 160.0;
+const CARD_MIN: f32 = 240.0;
 
 /// How many cards of at least `min` fit in `width`, `gap` apart.
 pub(super) fn columns(width: f32, min: f32, gap: f32) -> usize {
@@ -21,24 +24,27 @@ pub(super) fn columns(width: f32, min: f32, gap: f32) -> usize {
 }
 
 impl LightingPage {
-    pub(super) fn lights(&self, width: f32, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn lights(
+        &mut self,
+        width: f32,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if self.lueur.read(cx).config.room.lights.is_empty() {
+            return div().into_any_element();
+        }
+        let any_bound = !self.lueur.read(cx).config.bindings.is_empty();
+        // The sleep timer sits beside the switch for every light: both put
+        // the room out, one now, one later.
+        let sleep = any_bound.then(|| self.sleep_button(theme, window, cx));
         let l = self.lueur.read(cx);
         let room = Room::of(l);
         let lang = l.lang();
-        if l.config.room.lights.is_empty() {
-            return div().into_any_element();
-        }
-        let pickable = l
-            .config
-            .room
-            .lights
-            .iter()
-            .filter(|x| room.bound(&x.id))
-            .count();
-        // Picking only means something with two lights or more.
-        let selectable = pickable > 1;
-        let whole = room.picked().is_none();
         let lueur = self.lueur.clone();
+        // Opening one light's settings only means something with two or more.
+        let pickable = l.config.bindings.len() > 1;
+        let open = room.picked().filter(|p| p.len() == 1).map(|p| p[0].clone());
 
         let mut cards = Vec::new();
         for light in &l.config.room.lights {
@@ -47,7 +53,6 @@ impl LightingPage {
             let bound = room.bound(&id);
             let mode = room.mode_of(&id);
             let other = if bound { room.elsewhere(&id) } else { None };
-            let picked = selectable && !whole && l.target.contains(&id);
             let on = room.on(&id);
             let busy = l.power_busy.contains(&id);
 
@@ -100,8 +105,8 @@ impl LightingPage {
             let labelled = |what: &str| -> SharedString {
                 fill(&t(cx, "labelled"), &[("name", &name), ("what", what)]).into()
             };
-            // The one button on the card: a place for a bulb, taking a bulb
-            // back, or the light's power.
+            // The one control on the card: a place for a bulb, taking a bulb
+            // back, or the light's own switch.
             let action = if !bound {
                 let tip = t(cx, "assign");
                 let lueur = lueur.clone();
@@ -130,49 +135,28 @@ impl LightingPage {
                     })
                     .into_any_element()
             } else {
-                // Whether it is on, the disc shows: the button stays quiet.
-                let what = t(cx, if on { "turn_off" } else { "turn_on" });
+                // A switch, as on a wall: its position says whether the
+                // light is on, without reading the disc's colour.
                 let lueur = lueur.clone();
                 let id = id.clone();
-                btn(("power", cards.len()), Kind::Plain, true, busy, theme)
-                    .w(px(24.0))
-                    .px_0()
-                    .aria_label(labelled(&what))
-                    .tooltip(ui::tip(what))
-                    .child(ui::icon("power", 14.0, false, theme.text_3))
-                    .when(!busy, |b| {
-                        b.on_click(move |_, _, cx| {
-                            cx.stop_propagation();
+                ui::switch(
+                    ("power", cards.len()),
+                    name.clone(),
+                    on,
+                    theme,
+                    move |_, _, cx| {
+                        cx.stop_propagation();
+                        if !busy {
                             let id = id.clone();
                             lueur.update(cx, |l, cx| l.set_light_power(id, !on, cx));
-                        })
-                    })
-                    .into_any_element()
-            };
-
-            let disc = div()
-                .relative()
+                        }
+                    },
+                )
                 .flex_none()
-                .child(light_dot(&room, &id, 28.0, false, theme))
-                // Picked: a tick on the light and a neutral edge, like a
-                // checkbox.
-                .when(picked, |d| {
-                    d.child(
-                        div()
-                            .absolute()
-                            .right(px(-4.0))
-                            .bottom(px(-4.0))
-                            .size(px(15.0))
-                            .rounded_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(theme.select)
-                            .border_2()
-                            .border_color(theme.surface)
-                            .child(ui::icon("check", 9.0, false, theme.on_ink)),
-                    )
-                });
+                .when(busy, |d| d.opacity(0.6))
+                .tooltip(ui::tip(t(cx, if on { "turn_off" } else { "turn_on" })))
+                .into_any_element()
+            };
 
             let text = div()
                 .flex_1()
@@ -226,23 +210,28 @@ impl LightingPage {
                 Some(b) => format!("{sub}, {b}").into(),
                 None => sub.clone(),
             };
+            // A click on the card opens this light's settings alone, as on
+            // the bulbs' own apps; its switch and button stay its own.
+            let opens = bound && pickable;
+            let is_open = open.as_deref() == Some(id.as_str());
             let card = ui::pressable(("light", cards.len()), theme)
                 .relative()
+                .aria_label(name.clone())
+                .aria_description(description)
                 .flex()
                 .items_center()
                 .gap(px(size::S3))
                 .min_w_0()
                 .min_h(px(60.0))
                 .py(px(size::S2))
-                .pr(px(size::S2))
-                .pl(px(size::S3))
+                .px(px(size::S3))
                 .rounded(px(size::R_LG))
                 .map(|d| {
                     if !bound {
                         // No bulb yet: an outline waiting for one, not a card.
                         d.border_1().border_color(theme.line_strong)
-                    } else if picked {
-                        // The tint of a selection, never the room's glow.
+                    } else if is_open {
+                        // Open: a neutral ink edge, never the amber of light.
                         d.bg(theme.material_hover)
                             .border_2()
                             .border_color(theme.select)
@@ -252,93 +241,67 @@ impl LightingPage {
                             .border_color(theme.separator)
                     }
                 })
-                .child(disc)
+                .children(light_wash(&room, &id, theme))
+                .child(light_dot(&room, &id, 28.0, false, theme))
                 .child(text)
                 .child(action);
-            let card = if bound && selectable {
-                // The whole card picks the light; its button sits above it.
+            let card = if opens {
                 let lueur = lueur.clone();
                 let id = id.clone();
                 card.role(Role::Button)
-                    .aria_label(name.clone())
-                    .aria_description(description)
-                    .aria_toggled(if picked {
+                    .aria_toggled(if is_open {
                         Toggled::True
                     } else {
                         Toggled::False
                     })
+                    .tooltip(ui::tip(t(
+                        cx,
+                        if is_open {
+                            "back_to_room_tip"
+                        } else {
+                            "light_settings_tip"
+                        },
+                    )))
                     .hover(|s| s.bg(theme.material_hover))
-                    .on_click(move |_, _, cx| lueur.update(cx, |l, cx| l.toggle_target(&id, cx)))
+                    .on_click(move |_, _, cx| lueur.update(cx, |l, cx| l.pick_light(&id, cx)))
             } else {
-                // Nothing to pick: a group the keyboard passes by.
-                card.role(Role::Group)
-                    .aria_label(name.clone())
-                    .aria_description(description)
-                    .tab_stop(false)
-                    .cursor_default()
+                // Nothing to open: a group the keyboard passes by, straight
+                // to its switch or button.
+                card.role(Role::Group).tab_stop(false).cursor_default()
             };
             cards.push(card.into_any_element());
         }
 
-        let chip = selectable.then(|| {
-            // Who the settings go to, not what plays: a neutral edge and a
-            // tick, never the amber of something running.
-            let label = t(cx, "select_all");
+        // How many lights shine, so the switch for all of them says what it
+        // will do before it is pressed.
+        let total = l.config.bindings.len();
+        let lit = l
+            .config
+            .bindings
+            .iter()
+            .filter(|b| room.on(&b.light_id))
+            .count();
+        let count: Option<SharedString> = any_bound.then(|| {
+            if lit == 0 {
+                t(cx, "lights_none_on")
+            } else {
+                fill(&tn(cx, "lights_on", lit), &[("total", &total.to_string())]).into()
+            }
+        });
+        let power = any_bound.then(|| {
+            let busy = l.busy;
+            let any_on = lit > 0;
+            let label = t(cx, if any_on { "all_off" } else { "all_on" });
             let lueur = lueur.clone();
-            ui::pressable("select-all", theme)
-                .role(Role::Button)
+            btn("all-power", Kind::Default, true, busy, theme)
                 .aria_label(label.clone())
-                .aria_toggled(if whole { Toggled::True } else { Toggled::False })
-                .tooltip(ui::tip(t(cx, "select_all_tip")))
-                .flex()
-                .items_center()
+                .when(any_on, |b| b.tooltip(ui::tip(t(cx, "all_off_tip"))))
                 .gap(px(6.0))
-                .h(px(24.0))
-                .pl(px(size::S2))
-                .pr(px(size::S3))
-                .rounded_full()
-                .text_size(px(size::T_SM))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(theme.text)
-                .whitespace_nowrap()
-                .map(|d| {
-                    if whole {
-                        d.bg(theme.material_hover)
-                            .border_2()
-                            .border_color(theme.select)
-                    } else {
-                        d.bg(theme.material)
-                            .border_1()
-                            .border_color(theme.separator)
-                            .hover(|s| s.bg(theme.material_hover))
-                    }
-                })
-                .child(
-                    div()
-                        .flex_none()
-                        .size(px(14.0))
-                        .rounded_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .map(|d| {
-                            if whole {
-                                d.bg(theme.select).child(ui::icon(
-                                    "check",
-                                    10.0,
-                                    false,
-                                    theme.on_ink,
-                                ))
-                            } else {
-                                d.border_1().border_color(theme.control_line)
-                            }
-                        }),
-                )
+                .child(ui::icon("power", 13.0, false, theme.text_2))
                 .child(label)
-                .on_click(move |_, _, cx| {
-                    lueur.update(cx, |l, cx| {
-                        l.target.clear();
-                        cx.notify();
+                .when(!busy, |b| {
+                    b.on_click(move |_, _, cx| {
+                        lueur.update(cx, |l, cx| l.set_all_power(!any_on, cx))
                     })
                 })
         });
@@ -352,14 +315,36 @@ impl LightingPage {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .justify_between()
                     .gap(px(size::S3))
-                    .min_h(px(24.0))
+                    .min_h(px(28.0))
                     .px(px(size::S1))
                     .pb(px(size::S2))
-                    .child(group_title(t(cx, "lights"), theme))
-                    .children(chip),
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(px(size::S2))
+                            .child(group_title(t(cx, "lights"), theme))
+                            .children(count.map(|c| {
+                                div()
+                                    .id("lights-count")
+                                    .role(Role::Status)
+                                    .text_size(px(size::T_SM))
+                                    .text_color(theme.text_2)
+                                    .child(c)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(size::S2))
+                            .children(sleep)
+                            .children(power),
+                    ),
             )
             .child(
                 div()

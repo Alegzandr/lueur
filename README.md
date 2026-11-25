@@ -33,19 +33,23 @@ it, with no cloud once a bulb is set up. Each light has its power,
 brightness, white and colour, here or in the tray menu, and is called by
 its name, never by its address.
 
-Pick lights on the Lighting page, and what you choose next goes to them: a
+On the Lighting page every light has its own switch, and *All off* and the
+*Sleep timer* sit right above them. What you choose next goes to the whole
+room, or, once you click a light's card, to that light alone: a
 mode, still (Natural light, which follows the time of day, Daylight,
 Reading, Relax and Night light) or animated (Screen, Music, which plays the
 track on your lights like a stage, Rainbow, Sunset, Ocean and Candle), a
-brightness, a white or a colour. Save the whole room as a scene, say Film
-with the TV light on Screen, the kitchen off and the desk on Night light,
-and bring it back in one click. A sleep timer, behind the clock, fades
-everything off at night after a preset or any number of minutes.
+brightness, a white or a colour. Save the current lighting as a scene, say
+Film with the TV light on Screen, the kitchen off and the desk on Night
+light, and bring it back in one click; if you never use scenes, fold them
+away. The sleep timer fades everything off
+at night after 15, 30 or 60 minutes, or any number you type.
 
 The small things are taken care of. Lueur corrects every light for the
 colour of your walls. Quit it, and on most bulbs a light playing Rainbow or
 Candle goes on playing it by itself. Run it on several computers, and they
-share the bulbs instead of fighting over them. Remove a light by mistake,
+share the bulbs instead of fighting over them. Switch a bulb off at the
+wall or from its maker's app, and Lueur shows it off too. Remove a light by mistake,
 and one click brings it back. Whatever plays, no light flashes more than
 three times a second.
 
@@ -71,7 +75,7 @@ date.
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/lighting-light.png">
-        <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: saved scenes and every light as a card with what it does, beside the modes, still and animated, each a photograph of the same room in its light, and the brightness of the lights picked.">
+        <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: every light as a card with what it does and its own switch, the saved scenes, which fold away, and beside them the settings of the whole room or of one light: the modes, still and animated, each a photograph of the same room in its light, and their brightness.">
       </picture>
       <p><b>Lighting</b>: pick lights, give them a mode and a
       brightness, or bring back a scene you saved.</p>
