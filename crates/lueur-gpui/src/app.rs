@@ -35,9 +35,9 @@ actions!(
 );
 
 /// The interface face, built in (see `assets/fonts`).
-pub const FONT: &str = "Inter";
+pub const FONT: &str = "Hanken Grotesk";
 
-/// Inter, from the binary: the same face on every system. Loaded once, by
+/// Hanken Grotesk, from the binary: the same face on every system. Loaded once, by
 /// `update::launch`, before the splash or the window draws a word.
 pub fn load_fonts(cx: &mut App) {
     let fonts = crate::assets::ASSETS
@@ -46,7 +46,7 @@ pub fn load_fonts(cx: &mut App) {
         .map(|(_, bytes)| std::borrow::Cow::Borrowed(*bytes))
         .collect();
     if let Err(e) = cx.text_system().add_fonts(fonts) {
-        log::error!("cannot load Inter: {e}");
+        log::error!("cannot load the interface font: {e}");
     }
 }
 

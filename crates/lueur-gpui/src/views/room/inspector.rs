@@ -86,7 +86,7 @@ fn zone_words(edge: ScreenEdge, cx: &App) -> String {
     )
 }
 
-/// A group's small title over its card.
+/// A group's title over its card, with how many it holds.
 fn group_title(text: SharedString, count: Option<usize>, theme: &Theme) -> Div {
     div()
         .flex()

@@ -184,11 +184,11 @@ pub mod size {
     pub const R_SM: f32 = 5.0;
     pub const R_MD: f32 = 8.0;
     pub const R_LG: f32 = 14.0;
-    pub const T_XS: f32 = 11.0;
-    pub const T_SM: f32 = 12.0;
-    pub const T_MD: f32 = 13.0;
-    pub const T_LG: f32 = 15.0;
-    pub const T_XL: f32 = 28.0;
+    pub const T_XS: f32 = 12.0;
+    pub const T_SM: f32 = 13.0;
+    pub const T_MD: f32 = 14.0;
+    pub const T_LG: f32 = 16.0;
+    pub const T_XL: f32 = 30.0;
 }
 
 #[cfg(test)]

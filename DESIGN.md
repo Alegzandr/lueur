@@ -35,27 +35,27 @@ colors:
   night-filament-amber: "oklch(0.8 0.14 72)"
 typography:
   title:
-    fontFamily: "Inter"
-    fontSize: "1.75rem"
+    fontFamily: "Hanken Grotesk"
+    fontSize: "1.875rem"
     fontWeight: 700
     lineHeight: 1.1
     letterSpacing: "-0.024em"
   heading:
-    fontFamily: "Inter"
-    fontSize: "0.9375rem"
+    fontFamily: "Hanken Grotesk"
+    fontSize: "1rem"
     fontWeight: 600
   body:
-    fontFamily: "Inter"
-    fontSize: "0.8125rem"
+    fontFamily: "Hanken Grotesk"
+    fontSize: "0.875rem"
     fontWeight: 400
     lineHeight: 1.45
   label:
-    fontFamily: "Inter"
-    fontSize: "0.75rem"
+    fontFamily: "Hanken Grotesk"
+    fontSize: "0.8125rem"
     fontWeight: 600
   caption:
-    fontFamily: "Inter"
-    fontSize: "0.6875rem"
+    fontFamily: "Hanken Grotesk"
+    fontSize: "0.75rem"
     fontWeight: 600
 rounded:
   sm: "5px"
@@ -160,7 +160,7 @@ the screen, and it is often opened at night, between two games, in that same
 dim room.
 
 The system is quiet and smooth, in the manner of Apple's own apps: one even
-typeface (Inter) at a desktop density, frosted cards that take on the
+typeface (Hanken Grotesk, a warm grotesque) at a desktop density, frosted cards that take on the
 room's light, large titles, rounded corners. Polish comes from the details rather
 than decoration: controls with a faint lit top edge and a real pressed state,
 motion that is short and physical, numbers that line up. Light and dark are
@@ -185,8 +185,8 @@ and a hue slider).
 - Neutral chrome (zero chroma greys) in both themes; amber is the one colour.
 - Amber always means light. Neutral ink means "picked". Red means error or
   destruction. Nothing is ever told by colour alone.
-- Inter, 13px body, desktop density (28px controls, 44px rows), a 28px
-  large title per page.
+- Hanken Grotesk, 14px body, desktop density (28px controls, 44px rows), a
+  30px large title per page.
 - Frosted cards over the room's light: its glow on Lighting, its photograph
   elsewhere.
 - Depth from hairlines and soft contact shadows, never from heavy drop shadows.
@@ -248,12 +248,12 @@ dark theme and give it away.
 
 ## Typography
 
-**Body Font:** Inter, in four static weights (Regular, Medium, SemiBold,
-Bold) built into the executable from `crates/lueur-gpui/assets/fonts/`, and
-loaded before the splash or the window draws a word (`load_fonts` in
-`app.rs`). Nothing is fetched from the network. The `cv11` (single-storey a)
-and `ss01` (open digits) alternates and the optical size axis the Tauri
-version used are not on in GPUI.
+**Body Font:** Hanken Grotesk (SIL OFL), in four static weights (Regular,
+Medium, SemiBold, Bold) cut from its variable font and built into the
+executable from `crates/lueur-gpui/assets/fonts/`, loaded before the splash
+or the window draws a word (`load_fonts` in `app.rs`). Nothing is fetched
+from the network. It replaced Inter: warmer, less seen everywhere, with
+lower lowercase, so the scale sits one step above Inter's (14px body).
 
 **Character:** smooth and even, close to the faces of Apple's own apps, and
 the same on Windows, macOS and Linux rather than each platform's face.
@@ -266,20 +266,20 @@ Hierarchy comes from size and weight steps, never a second family.
 their weight, filled for the current page in the sidebar.
 
 ### Hierarchy
-- **Title** (700, 28px, line-height 1.1, -0.024em): the one large page
+- **Title** (700, 30px, line-height 1.1, -0.024em): the one large page
   title per view ("Lighting", "Room"), as on the platforms' own apps.
-- **Section heading** (700, 15px, `text`): the shelves of a page ("Scenes",
+- **Section heading** (700, 16px, `text`), the same on every page: the shelves of a page ("Scenes",
   "Lights", "Screen"), bold so the cards under them can stay quiet. Sub-
-  headings under a heading ("Still", "Animated") step down to 13px `text-2`.
-- **Heading** (600, 15px): the app name in the sidebar, dialog titles.
-- **Body** (400, 13px, 1.45): rows, buttons (500), fields, nav.
-- **Label** (600, 12px): small buttons, tooltips at 400.
-- **Caption** (600, 11px): count badges and the tiniest metadata.
+  headings under a heading ("Still", "Animated") step down to 14px `text-2`.
+- **Heading** (600, 16px): the app name in the sidebar, dialog titles.
+- **Body** (400, 14px, 1.45): rows, buttons (500), fields, nav.
+- **Label** (600, 13px): small buttons, tooltips at 400.
+- **Caption** (600, 12px): count badges and the tiniest metadata.
 
 ### Named Rules
 **The Lined-Up Numbers Rule.** Every changing number (percentages, minutes,
 degrees, addresses) uses tabular figures, so values don't jitter as they
-change. GPUI does not turn on Inter's tabular figures yet; meanwhile a
+change. GPUI does not turn on tabular figures yet; meanwhile a
 slider's value keeps a minimum width, so the track does not move as the
 number changes.
 

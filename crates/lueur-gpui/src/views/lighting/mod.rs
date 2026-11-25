@@ -42,6 +42,12 @@ const TWO_COLUMNS: f32 = 1200.0;
 /// The gap between the two columns (`--s-7`).
 const COLUMN_GAP: f32 = 40.0;
 
+/// The light a lit bulb casts on its own card, for the other pages that show
+/// a light as a card (the Bulbs page).
+pub(crate) fn light_wash(l: &crate::state::Lueur, id: &str, theme: &Theme) -> Option<gpui::Div> {
+    controls::light_wash(&model::Room::of(l), id, theme)
+}
+
 pub struct LightingPage {
     lueur: Entity<Lueur>,
     glow: Entity<GlowBackdrop>,

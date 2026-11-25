@@ -529,6 +529,8 @@ impl Render for RoomBackdrop {
                 )
             })
             // Gone by the time the cards gather: the page's own ground below.
+            // A veil from the very top, so the title and the small text over
+            // the photograph's brightest part keep their contrast.
             .child(
                 div()
                     .absolute()
@@ -538,8 +540,8 @@ impl Render for RoomBackdrop {
                     .h(gpui::relative(0.45))
                     .bg(linear_gradient(
                         180.0,
-                        linear_color_stop(bg.opacity(0.0), 0.0),
-                        linear_color_stop(bg.opacity(0.45), 1.0),
+                        linear_color_stop(bg.opacity(0.35), 0.0),
+                        linear_color_stop(bg.opacity(0.55), 1.0),
                     )),
             )
             .child(
@@ -551,7 +553,7 @@ impl Render for RoomBackdrop {
                     .bottom_0()
                     .bg(linear_gradient(
                         180.0,
-                        linear_color_stop(bg.opacity(0.45), 0.0),
+                        linear_color_stop(bg.opacity(0.55), 0.0),
                         linear_color_stop(bg, 1.0),
                     )),
             )

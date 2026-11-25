@@ -209,11 +209,13 @@ pub fn row(
         .child(div().flex().justify_end().child(control))
 }
 
-/// A section's small heading over its card.
+/// A section's heading over its card, the same on every page: bold, in the
+/// text's own colour, so it holds over the room's photograph as well as on
+/// the plain ground.
 pub fn section(title: SharedString, theme: &Theme) -> Div {
     div()
-        .text_size(px(size::T_SM))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(theme.text_3)
+        .text_size(px(size::T_LG))
+        .font_weight(FontWeight::BOLD)
+        .text_color(theme.text)
         .child(title)
 }

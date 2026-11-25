@@ -473,7 +473,7 @@ fn group(title: SharedString, rows: Vec<AnyElement>, theme: &Theme) -> gpui::Div
         .flex()
         .flex_col()
         .gap(px(size::S2))
-        .child(ui::section(title, theme))
+        .child(ui::section(title, theme).px(px(size::S1)))
         .child(ui::card(theme).children(rows))
 }
 

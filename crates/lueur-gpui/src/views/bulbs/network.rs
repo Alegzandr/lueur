@@ -56,8 +56,11 @@ impl BulbsPage {
         let mut col = div().flex().flex_col().gap(px(size::S6));
         if !unbound.is_empty() || no_lights {
             let head = self.handle("network-head", false, cx);
-            let count = (self.has_scanned && !self.scanning)
-                .then(|| note(tn(cx, "n_found", unbound.len()), &theme).into_any_element());
+            let count = (self.has_scanned && !self.scanning).then(|| {
+                note(tn(cx, "n_found", unbound.len()), &theme)
+                    .text_color(theme.text_2)
+                    .into_any_element()
+            });
             let body = if unbound.is_empty() {
                 self.empty_state(&theme, cx)
             } else {

@@ -139,6 +139,7 @@ impl BulbsPage {
         let l = self.lueur.read(cx);
         let binding = l.config.binding_for(&id).cloned();
         let dot = light_dot(l, &id, 28.0, &theme);
+        let wash = crate::views::lighting::light_wash(l, &id, &theme);
         // Addresses only show to tell apart two bulbs described alike.
         let meta = match &binding {
             Some(b) => {
@@ -268,6 +269,7 @@ impl BulbsPage {
             .py(px(size::S2))
             .pr(px(size::S2))
             .pl(px(size::S3))
+            .relative()
             .rounded(px(size::R_LG))
             .border_1()
             .map(|d| {
@@ -278,6 +280,8 @@ impl BulbsPage {
                     d.border_color(theme.line_strong)
                 }
             })
+            // Lit, the card takes its light, as on the Lighting page.
+            .children(wash)
             .child(dot)
             .child(
                 div()

@@ -75,7 +75,7 @@ lueur/
 │   ├─ ui/                Shared controls (button, switch, slider, segmented,
 │   │                     select, text field, row)
 │   ├─ views/             Lighting, Room, Bulbs, Settings, a folder each
-│   └─ assets/            Inter, the Phosphor icons, the mode photographs,
+│   └─ assets/            Hanken Grotesk, the Phosphor icons, the mode photographs,
 │                         built into the binary by build.rs
 └─ locales/               en.json and fr.json: every string the window shows
 ```
