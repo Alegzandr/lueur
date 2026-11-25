@@ -31,7 +31,9 @@ Yeelight, Philips Hue, WiZ, LIFX, Govee, Nanoleaf and Smart Life / Tuya
 bulbs sit side by side in one window, found on your network and driven over
 it, with no cloud once a bulb is set up. Each light has its power,
 brightness, white and colour, here or in the tray menu, and is called by
-its name, never by its address.
+its name, never by its address. A light switched at the wall, from its
+maker's app or by another computer shows as it is within half a minute
+(all but Govee, which cannot say).
 
 On the Lighting page every light has its own switch, and *All off* and the
 *Sleep timer* sit right above them. What you choose next goes to the whole
