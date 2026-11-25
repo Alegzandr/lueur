@@ -418,7 +418,7 @@ cargo build -p lueur-gpui
 ```
 
 The README screenshots are taken at the app's default window size
-(1180×800, 2× scale).
+(1180×800, 1× scale), from `scripts/dev/snap.ps1` cropped to the window's own 1180×800.
 
 ### Logs
 

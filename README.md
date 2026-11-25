@@ -77,8 +77,8 @@ date.
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/lighting-light.png">
         <img src="docs/screenshots/lighting-dark.png" alt="The Lighting page: every light as a card with what it does and its own switch, the saved scenes, which fold away, and beside them the settings of the whole room or of one light: the modes, still and animated, each a photograph of the same room in its light, and their brightness.">
       </picture>
-      <p><b>Lighting</b>: pick lights, give them a mode and a
-      brightness, or bring back a scene you saved.</p>
+      <p><b>Lighting</b>: switch each light, give the whole room or one
+      light a mode and a brightness, or bring back a scene you saved.</p>
     </td>
     <td width="50%">
       <picture>
@@ -93,7 +93,7 @@ date.
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/bulbs-light.png">
-        <img src="docs/screenshots/bulbs-dark.png" alt="The Bulbs page: a bulb found on the network, and the lights in the room with their addresses.">
+        <img src="docs/screenshots/bulbs-dark.png" alt="The Bulbs page: two bulbs found on the network, and the lights in the room, each lit card in its own light.">
       </picture>
       <p><b>Bulbs</b>: Lueur finds the bulbs on your network. Identify one
       to see which is which, then give it a place in the room.</p>
@@ -101,10 +101,11 @@ date.
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/settings-light.png">
-        <img src="docs/screenshots/settings-dark.png" alt="The Settings page: following fullscreen games and videos, language, appearance, startup and configuration export.">
+        <img src="docs/screenshots/settings-dark.png" alt="The Settings page: following fullscreen games and videos, the screen, the music's sound source, language, appearance and startup.">
       </picture>
-      <p><b>Settings</b>: following fullscreen games, English or French,
-      light or dark, start at login, and a backup of your setup.</p>
+      <p><b>Settings</b>: following fullscreen games, the sound the music
+      follows, English or French, light or dark, start at login, and a backup
+      of your setup.</p>
     </td>
   </tr>
 </table>
