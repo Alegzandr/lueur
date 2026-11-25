@@ -2,7 +2,7 @@
 //! and the select (a raised button that opens its list).
 
 use crate::theme::{Theme, size};
-use crate::ui::{icon, pressable};
+use crate::ui::{SmoothScroll, SmoothScrollY, icon, pressable};
 use gpui::{
     AnyElement, App, ElementId, FontWeight, IntoElement, KeyDownEvent, Role, SharedString, Window,
     anchored, deferred, div, prelude::*, px,
@@ -155,6 +155,14 @@ pub fn select<T: Clone + PartialEq + 'static>(
         |_, _| Open(false),
     );
     let is_open = open.read(cx).0;
+    let scroll = window
+        .use_keyed_state(
+            ElementId::Name(SharedString::from(format!("{id}-scroll"))),
+            cx,
+            |_, _| SmoothScroll::default(),
+        )
+        .read(cx)
+        .clone();
     let on_change = Rc::new(on_change);
     let index = options.iter().position(|o| Some(&o.value) == value);
     let current = index.map(|i| options[i].label.clone()).unwrap_or_default();
@@ -254,7 +262,7 @@ pub fn select<T: Clone + PartialEq + 'static>(
                     .mt(px(4.0))
                     .min_w(px(180.0))
                     .max_h(px(320.0))
-                    .overflow_y_scroll()
+                    .smooth_scroll_y(&scroll)
                     .p(px(4.0))
                     .rounded(px(size::R_MD))
                     .bg(theme.surface)

@@ -8,7 +8,7 @@ use crate::i18n::{self, t};
 use crate::state::{Lueur, Toast, View, model};
 use crate::theme::{Theme, size, theme};
 use crate::titlebar;
-use crate::ui;
+use crate::ui::{self, SmoothScrollY};
 use crate::views::Pages;
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, FontWeight, IntoElement, Render, Role,
@@ -19,6 +19,8 @@ pub struct MainWindow {
     lueur: Entity<Lueur>,
     pages: Pages,
     focus: FocusHandle,
+    /// The page column's scroll, kept from one frame to the next.
+    scroll: ui::SmoothScroll,
 }
 
 impl MainWindow {
@@ -38,6 +40,7 @@ impl MainWindow {
             lueur,
             pages: Pages::new(window, cx),
             focus,
+            scroll: ui::SmoothScroll::default(),
         }
     }
 
@@ -380,7 +383,7 @@ impl Render for MainWindow {
                         div()
                             .id("page")
                             .flex_1()
-                            .overflow_y_scroll()
+                            .smooth_scroll_y(&self.scroll)
                             .px(px(size::S6 + size::S2))
                             .pt(px(size::S3))
                             .pb(px(size::S6))

@@ -8,7 +8,7 @@ use super::pairing::PairStep;
 use super::{BulbsPage, actions};
 use crate::i18n::{fill, t, tn};
 use crate::theme::{Theme, size, theme};
-use crate::ui;
+use crate::ui::{self, SmoothScrollY};
 use gpui::{
     AnyElement, App, Context, ElementId, FocusHandle, FontWeight, KeyDownEvent, Role, SharedString,
     anchored, deferred, div, prelude::*, px,
@@ -350,6 +350,7 @@ impl BulbsPage {
             } else {
                 // Opened, the keyboard goes to its first choice.
                 this.focus_next = Some(format!("use-{id}-0"));
+                this.menu_scroll = ui::SmoothScroll::default();
                 Some(id.clone())
             };
             cx.notify();
@@ -449,7 +450,7 @@ impl BulbsPage {
                             .mt(px(30.0))
                             .min_w(px(180.0))
                             .max_h(px(320.0))
-                            .overflow_y_scroll()
+                            .smooth_scroll_y(&self.menu_scroll)
                             .p(px(4.0))
                             .rounded(px(size::R_MD))
                             .bg(theme.surface)

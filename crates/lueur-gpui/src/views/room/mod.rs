@@ -17,7 +17,7 @@ pub mod plan;
 use crate::i18n::{fill, t};
 use crate::state::{Lueur, ToastAction, View, model};
 use crate::theme::{size, theme};
-use crate::ui::{self, InputEvent, TextInput};
+use crate::ui::{self, InputEvent, SmoothScroll, SmoothScrollY, TextInput};
 use colors::PlanColors;
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, FocusHandle, Focusable, FontWeight, IntoElement,
@@ -119,6 +119,7 @@ pub struct RoomPage {
     announce: Option<Task<()>>,
     plan_focus: FocusHandle,
     inspector_focus: FocusHandle,
+    inspector_scroll: SmoothScroll,
     heading_focus: FocusHandle,
     rows: HashMap<String, FocusHandle>,
     pending_focus: Option<PendingFocus>,
@@ -157,6 +158,7 @@ impl RoomPage {
             announce: None,
             plan_focus: cx.focus_handle().tab_stop(true),
             inspector_focus: cx.focus_handle(),
+            inspector_scroll: SmoothScroll::default(),
             heading_focus: cx.focus_handle(),
             rows: HashMap::new(),
             pending_focus: None,
@@ -965,9 +967,6 @@ impl Render for RoomPage {
         self.apply_pending_focus(window, cx);
         let now = self.now(cx);
 
-        // The plan takes the height the window gives the page, less its
-        // title and margins, so it fills the window.
-        let body_h = (f32::from(window.viewport_size().height) - 132.0).max(440.0);
         let coach = (!now.config.interface.room_arranged && !now.config.room.lights.is_empty())
             .then(|| {
                 let page = cx.entity().downgrade();
@@ -992,6 +991,10 @@ impl Render for RoomPage {
         div()
             .id("room-page")
             .on_key_down(cx.listener(Self::on_key))
+            // At least the page column's height, so the plan fills the window
+            // to its bottom margin and the page has nothing to scroll; below
+            // 440 pixels the plan stops shrinking and the page scrolls.
+            .min_h_full()
             .flex()
             .flex_col()
             .gap(px(size::S3))
@@ -1000,7 +1003,8 @@ impl Render for RoomPage {
                 div()
                     .flex()
                     .gap(px(size::S5))
-                    .h(px(body_h))
+                    .flex_1()
+                    .min_h(px(440.0))
                     .child(
                         div()
                             .flex_1()
@@ -1018,7 +1022,7 @@ impl Render for RoomPage {
                             .w(px(296.0))
                             .flex_none()
                             .h_full()
-                            .overflow_y_scroll()
+                            .smooth_scroll_y(&self.inspector_scroll)
                             .flex()
                             .flex_col()
                             .child(side),

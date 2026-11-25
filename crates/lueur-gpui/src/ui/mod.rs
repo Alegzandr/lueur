@@ -4,10 +4,12 @@
 
 pub mod choice;
 pub mod input;
+pub mod scroll;
 pub mod slider;
 
 pub use choice::{choice, segmented, select};
 pub use input::{InputEvent, TextInput};
+pub use scroll::{SmoothScroll, SmoothScrollY};
 pub use slider::slider;
 
 use crate::theme::{Theme, size, theme};

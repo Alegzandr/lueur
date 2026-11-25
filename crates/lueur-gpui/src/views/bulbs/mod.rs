@@ -18,7 +18,7 @@ mod pairing;
 use crate::i18n::{fill, t};
 use crate::state::{Lueur, View};
 use crate::theme::{size, theme};
-use crate::ui::{self, TextInput};
+use crate::ui::{self, SmoothScroll, TextInput};
 use controls::{Look, btn, spinner};
 use gpui::{
     AnyElement, AsyncApp, Context, Entity, FocusHandle, IntoElement, Render, Role, SharedString,
@@ -59,6 +59,8 @@ pub struct BulbsPage {
     detail_open: bool,
     /// The bulb whose "Use for…" list is open.
     menu: Option<String>,
+    /// That list's scroll, back at the top each time a list opens.
+    menu_scroll: SmoothScroll,
     /// True while a device check's answer is being sent.
     check_busy: bool,
     /// Unverified devices already seen, so only news is read out.
@@ -101,6 +103,7 @@ impl BulbsPage {
             tips_open: None,
             detail_open: false,
             menu: None,
+            menu_scroll: SmoothScroll::default(),
             check_busy: false,
             check_seen: Vec::new(),
             check_news: SharedString::default(),
