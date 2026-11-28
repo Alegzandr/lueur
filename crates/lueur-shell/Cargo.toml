@@ -30,7 +30,7 @@ hmac = "0.13.0"
 md-5 = "0.11.0"
 sha2 = "0.11.1"
 uuid = { version = "1.29.0", features = ["v4"] }
-qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+qrcode = { version = "0.15.0", default-features = false, features = ["svg"] }
 # The key that seals the credentials on disk (src/vault.rs), in the OS's own
 # keyring: Credential Manager, Keychain, Secret Service.
 keyring = "4.2.0"
@@ -87,7 +87,7 @@ windows = { version = "0.62", features = [
 ] }
 # The `#[implement]` of src/audio/apps.rs names it; the version `windows`
 # itself uses.
-windows-core = "0.62"
+windows-core = "0.100"
 self-replace = "1.5"
 winreg = "0.56"
 
@@ -107,5 +107,5 @@ tar = "0.4"
 # the portal over D-Bus, its video over PipeWire. The versions xcap already
 # pulls in on Linux, so neither adds a second copy.
 [target.'cfg(target_os = "linux")'.dependencies]
-zbus = "5.17"
+zbus = "6.3"
 pipewire = "0.10"
